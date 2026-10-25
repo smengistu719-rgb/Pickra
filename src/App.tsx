@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
   BookOpen,
@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import {
+  BOOTSTRAPPED_ADMIN_EMAIL,
   OfferDraftInput,
   FirebaseProvider,
   useFirebaseApp,
@@ -71,6 +72,8 @@ function resolveInitialSection(): ActiveSection {
 function PickraShell() {
   const {
     user,
+    authReady,
+    adminRoleReady,
     loadingData,
     isCreatorAdmin,
     profile,
@@ -93,6 +96,13 @@ function PickraShell() {
     deletePost,
     deleteDirectProduct,
   } = useFirebaseApp();
+
+  const canAccessCreatorAdmin = Boolean(
+    user &&
+      !user.isAnonymous &&
+      (isCreatorAdmin ||
+        user.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase())
+  );
 
   const [activeSection, setActiveSection] = useState<ActiveSection>(
     resolveInitialSection
@@ -246,11 +256,32 @@ function PickraShell() {
     return map;
   }, [publishedPosts]);
 
+  useEffect(() => {
+    if (!authReady || !adminRoleReady) return;
+    if (activeSection === 'studio' && !canAccessCreatorAdmin) {
+      setActiveSection('blog');
+      try {
+        const url = new URL(window.location.href);
+        if (url.searchParams.get('section') === 'studio') {
+          url.searchParams.delete('section');
+          window.history.replaceState({}, '', url.toString());
+        }
+      } catch {
+        // ignore URL history errors
+      }
+    }
+  }, [authReady, adminRoleReady, activeSection, canAccessCreatorAdmin]);
+
   function navigateToSection(
     section: ActiveSection,
     targetStoreSubView: StoreSubView = 'catalog'
   ) {
     setSelectedPostId(null);
+    if (section === 'studio' && !canAccessCreatorAdmin) {
+      setActiveSection('blog');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
     if (section === 'write') {
       setStoryBeingEdited(null);
     }
@@ -468,17 +499,19 @@ function PickraShell() {
             >
               Services
             </button>
-            <button
-              type="button"
-              onClick={() => navigateToSection('studio')}
-              className={`py-1 border-b-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                activeSection === 'studio'
-                  ? 'border-[#9A3412] text-stone-900'
-                  : 'border-transparent hover:text-stone-900'
-              }`}
-            >
-              Backend
-            </button>
+            {canAccessCreatorAdmin && (
+              <button
+                type="button"
+                onClick={() => navigateToSection('studio')}
+                className={`py-1 border-b-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                  activeSection === 'studio'
+                    ? 'border-[#9A3412] text-stone-900'
+                    : 'border-transparent hover:text-stone-900'
+                }`}
+              >
+                Backend
+              </button>
+            )}
           </nav>
 
           {/* Zone 3: 1 primary action — Medium-style Write Blog */}
@@ -541,15 +574,17 @@ function PickraShell() {
           >
             Write
           </button>
-          <button
-            type="button"
-            onClick={() => navigateToSection('studio')}
-            className={`whitespace-nowrap shrink-0 ${
-              activeSection === 'studio' ? 'text-[#9A3412] font-semibold' : ''
-            }`}
-          >
-            Backend
-          </button>
+          {canAccessCreatorAdmin && (
+            <button
+              type="button"
+              onClick={() => navigateToSection('studio')}
+              className={`whitespace-nowrap shrink-0 ${
+                activeSection === 'studio' ? 'text-[#9A3412] font-semibold' : ''
+              }`}
+            >
+              Backend
+            </button>
+          )}
         </div>
       </header>
 
@@ -581,7 +616,7 @@ function PickraShell() {
             }}
             onOpenStore={() => navigateToSection('store')}
           />
-        ) : activeSection === 'studio' ? (
+        ) : activeSection === 'studio' && canAccessCreatorAdmin ? (
           <PublisherStudio
             onOpenPublishedPost={openPost}
             onOpenBlockEditor={openBlockEditorForPost}
@@ -1499,13 +1534,15 @@ function PickraShell() {
                   >
                     Affiliate Services →
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => navigateToSection('studio')}
-                    className="text-[#9A3412] hover:text-stone-900 cursor-pointer whitespace-nowrap shrink-0"
-                  >
-                    Owner Backend →
-                  </button>
+                  {canAccessCreatorAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => navigateToSection('studio')}
+                      className="text-[#9A3412] hover:text-stone-900 cursor-pointer whitespace-nowrap shrink-0"
+                    >
+                      Owner Backend →
+                    </button>
+                  )}
                 </div>
               </div>
             </section>
@@ -1859,13 +1896,15 @@ function PickraShell() {
             >
               Services
             </button>
-            <button
-              type="button"
-              onClick={() => navigateToSection('studio')}
-              className="hover:text-stone-900 cursor-pointer whitespace-nowrap shrink-0"
-            >
-              Backend
-            </button>
+            {canAccessCreatorAdmin && (
+              <button
+                type="button"
+                onClick={() => navigateToSection('studio')}
+                className="hover:text-stone-900 cursor-pointer whitespace-nowrap shrink-0"
+              >
+                Backend
+              </button>
+            )}
             {!user ? (
               <button
                 type="button"
