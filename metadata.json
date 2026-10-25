@@ -1,0 +1,6 @@
+{
+  "name": "Pickra",
+  "description": "Independent affiliate editorial journal and curated directory featuring vetted physical products, digital tools, and freelance services across Amazon, Digistore24, Upwork, and Fiverr.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

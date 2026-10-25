@@ -1,0 +1,357 @@
+{
+  "entities": {
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Trusted administrator membership record keyed by Firebase Auth UID.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Administrator Firebase Auth UID."
+        },
+        "grantedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the administrator who granted access."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when admin access was recorded."
+        }
+      },
+      "required": ["uid", "grantedBy", "createdAt"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Public author profile strictly isolated from PII.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Owner Firebase Auth UID."
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Public editorial byline name."
+        },
+        "bio": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 300,
+          "description": "Short public author biography."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": ["uid", "displayName", "bio", "createdAt", "updatedAt"]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "Owner-only private account PII and default affiliate tracking tags.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Owner Firebase Auth UID."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 254,
+          "description": "Verified account email address."
+        },
+        "defaultAmazonTag": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 60,
+          "description": "Default Amazon Associates tracking tag."
+        },
+        "defaultDigistoreId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 60,
+          "description": "Default Digistore24 affiliate ID."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": ["uid", "email", "defaultAmazonTag", "defaultDigistoreId", "createdAt", "updatedAt"]
+    },
+    "AffiliateOffer": {
+      "title": "AffiliateOffer",
+      "description": "Curated physical product, digital product, or freelance service with outbound affiliate link.",
+      "type": "object",
+      "properties": {
+        "authorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Creator Firebase Auth UID."
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Creator public display name."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 140,
+          "description": "Product or freelance service title."
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["physical", "digital", "service"],
+          "description": "Offering classification."
+        },
+        "platform": {
+          "type": "string",
+          "enum": ["Amazon", "Digistore24", "Upwork", "Fiverr", "Gumroad", "ClickBank", "Custom"],
+          "description": "Partner marketplace or affiliate network."
+        },
+        "category": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "description": "Editorial department or vertical."
+        },
+        "priceLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "Formatted price or starting rate."
+        },
+        "commissionNote": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 80,
+          "description": "Optional commission structure note."
+        },
+        "affiliateUrl": {
+          "type": "string",
+          "format": "uri",
+          "minLength": 8,
+          "maxLength": 500,
+          "pattern": "^https://.+",
+          "description": "HTTPS outbound affiliate destination URL."
+        },
+        "imageKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "Preset asset key or HTTPS image URL."
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 400,
+          "description": "Editorial verdict and evaluation summary."
+        },
+        "highlights": {
+          "type": "array",
+          "description": "Up to 4 concise product or service highlights."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["draft", "published", "archived"],
+          "description": "Publication lifecycle status with terminal archived state."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "authorId",
+        "authorName",
+        "title",
+        "kind",
+        "platform",
+        "category",
+        "priceLabel",
+        "commissionNote",
+        "affiliateUrl",
+        "imageKey",
+        "summary",
+        "highlights",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "BlogPost": {
+      "title": "BlogPost",
+      "description": "Editorial blog article with inline and rail-attached affiliate product and service links.",
+      "type": "object",
+      "properties": {
+        "authorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Author Firebase Auth UID."
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Author byline name."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 160,
+          "description": "Headline of the editorial post."
+        },
+        "subtitle": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 280,
+          "description": "Editorial deck or standfirst."
+        },
+        "slug": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 140,
+          "pattern": "^[a-z0-9\\-]+$",
+          "description": "URL-safe article slug."
+        },
+        "category": {
+          "type": "string",
+          "enum": ["Hardware & Gear", "Digital Systems", "Freelance Talent", "Field Guides"],
+          "description": "Primary editorial category."
+        },
+        "readTimeMinutes": {
+          "type": "integer",
+          "description": "Estimated reading time in minutes (1 to 60)."
+        },
+        "coverImageKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "Preset asset key or HTTPS cover image URL."
+        },
+        "content": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 25000,
+          "description": "Long-form markdown prose supporting [[offer:ID]] inline affiliate embeds."
+        },
+        "attachedOfferIds": {
+          "type": "array",
+          "description": "Bounded list (max 8) of attached AffiliateOffer IDs."
+        },
+        "disclosureText": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 400,
+          "description": "Explicit affiliate commission disclosure shown on the article."
+        },
+        "featured": {
+          "type": "boolean",
+          "description": "Whether this article is eligible for lead hero placement."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["draft", "published", "archived"],
+          "description": "Publication lifecycle status with terminal archived state."
+        },
+        "publishedLabel": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 40,
+          "description": "Human-readable editorial publication date."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "authorId",
+        "authorName",
+        "title",
+        "subtitle",
+        "slug",
+        "category",
+        "readTimeMinutes",
+        "coverImageKey",
+        "content",
+        "attachedOfferIds",
+        "disclosureText",
+        "featured",
+        "status",
+        "publishedLabel",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Trusted admin role lookup collection."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Public author profile records without PII."
+    },
+    "/users/{userId}/private/{infoId}": {
+      "schema": { "$ref": "#/entities/UserPrivateInfo" },
+      "description": "Owner-only PII and default affiliate network tags."
+    },
+    "/offers/{offerId}": {
+      "schema": { "$ref": "#/entities/AffiliateOffer" },
+      "description": "Curated physical products, digital products, and freelance services."
+    },
+    "/posts/{postId}": {
+      "schema": { "$ref": "#/entities/BlogPost" },
+      "description": "Editorial blog dispatches with attached affiliate offerings."
+    }
+  }
+}
