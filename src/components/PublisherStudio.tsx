@@ -53,6 +53,7 @@ import {
   PublishStatus,
   SERVICE_AFFILIATE_PLATFORMS,
 } from '../types';
+import { AuthPanel } from './AuthModal';
 import { ImageUploadPicker } from './ImageUploadPicker';
 
 interface PublisherStudioProps {
@@ -136,7 +137,10 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     productBagCounts,
     analyticsEvents,
     hasFirestoreContent,
+    openAuthModal,
     signInWithGoogle,
+    resendOwnerVerificationEmail,
+    refreshAuthUser,
     signOutUser,
     saveOffer,
     updateOfferStatus,
@@ -1155,65 +1159,78 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
   // GATE 1: Signed-out Creator Authentication Prompt
   if (!user) {
     return (
-      <section className="max-w-[960px] mx-auto px-5 sm:px-8 py-14 sm:py-20">
-        <div className="bg-white border border-stone-200/90 rounded-xl p-8 sm:p-12">
-          <p className="text-xs font-medium text-[#9A3412]">
-            Pickra Creator Backend · Management &amp; Monitoring Console
-          </p>
-          <h1 className="mt-2 font-serif text-3xl sm:text-4xl font-medium text-stone-900">
-            Manage and monitor your entire Pickra publication and store
-          </h1>
-          <p className="mt-4 text-base text-stone-600 leading-relaxed max-w-2xl">
-            Sign in with your verified creator Google account to monitor real-time traffic, outbound affiliate clicks, direct store revenue, customer orders, inventory levels, promotional campaigns, and global site settings.
-          </p>
+      <section className="max-w-[1160px] mx-auto px-5 sm:px-8 py-12 sm:py-16">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          <div className="lg:col-span-7 bg-white border border-stone-200/90 rounded-2xl p-8 sm:p-10 space-y-6">
+            <div>
+              <p className="text-xs font-medium text-[#9A3412]">
+                Pickra Creator Backend · Management &amp; Monitoring Console
+              </p>
+              <h1 className="mt-2 font-serif text-3xl sm:text-4xl font-medium text-stone-900">
+                Manage and monitor your entire Pickra publication and store
+              </h1>
+              <p className="mt-4 text-sm sm:text-base text-stone-600 leading-relaxed">
+                Sign in with your verified Website Owner account to monitor
+                real-time traffic, outbound affiliate clicks, multi-creator
+                store revenue, customer orders, creator payouts, promotional
+                campaigns, and global site settings.
+              </p>
+            </div>
 
-          <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-6 pt-8 border-t border-stone-200/80">
-            <div>
-              <h3 className="text-sm font-semibold text-stone-900">
-                01. Live Traffic &amp; Revenue Monitor
-              </h3>
-              <p className="mt-1.5 text-xs text-stone-600 leading-relaxed">
-                Track article reads, Amazon/Digistore24/Upwork/Fiverr clicks, bag additions, promo redemptions, and net direct sales in real time.
-              </p>
+            <div className="space-y-5 pt-6 border-t border-stone-200/80">
+              <div>
+                <h3 className="text-sm font-semibold text-stone-900">
+                  01. Live Traffic &amp; Revenue Monitor
+                </h3>
+                <p className="mt-1 text-xs text-stone-600 leading-relaxed">
+                  Track blog reads, Amazon/Digistore24/Upwork/Fiverr clicks, bag
+                  additions, promo redemptions, and net store sales in real
+                  time.
+                </p>
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-stone-900">
+                  02. Unified CMS, Store &amp; Creator Payouts
+                </h3>
+                <p className="mt-1 text-xs text-stone-600 leading-relaxed">
+                  Publish Medium-style rich blogs, manage physical and digital
+                  SKUs, settle 90% creator payouts, and update customer order
+                  tracking.
+                </p>
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-stone-900">
+                  03. Site-Wide Governance &amp; Access
+                </h3>
+                <p className="mt-1 text-xs text-stone-600 leading-relaxed">
+                  Control site-wide announcement banners, shipping thresholds,
+                  checkout master switch, FTC disclosures, and Co-Admin
+                  permissions.
+                </p>
+              </div>
             </div>
-            <div>
-              <h3 className="text-sm font-semibold text-stone-900">
-                02. Unified CMS, Store &amp; Fulfillment
-              </h3>
-              <p className="mt-1.5 text-xs text-stone-600 leading-relaxed">
-                Publish Medium-style block stories, manage physical and digital SKUs, adjust stock counts, and update customer order tracking.
-              </p>
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-stone-900">
-                03. Site-Wide Governance &amp; Access
-              </h3>
-              <p className="mt-1.5 text-xs text-stone-600 leading-relaxed">
-                Control site-wide announcement banners, shipping thresholds, checkout master switch, FTC disclosures, and Co-Admin permissions.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-8 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={() => void signInWithGoogle()}
-              className="inline-flex items-center gap-2.5 px-5 py-3 text-sm font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
-            >
-              <LogIn className="w-4 h-4" />
-              <span>Sign In to Creator Backend</span>
-            </button>
 
             {onOpenDirectStore && (
-              <button
-                type="button"
-                onClick={onOpenDirectStore}
-                className="inline-flex items-center gap-2 px-5 py-3 text-sm font-medium text-stone-800 bg-[#F3EFE8] hover:bg-stone-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
-              >
-                <ShoppingBag className="w-4 h-4 text-[#9A3412]" />
-                <span>Browse Public Storefront</span>
-              </button>
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={onOpenDirectStore}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-medium text-stone-800 bg-[#F3EFE8] hover:bg-stone-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  <ShoppingBag className="w-4 h-4 text-[#9A3412]" />
+                  <span>Browse Public Storefront</span>
+                </button>
+              </div>
             )}
+          </div>
+
+          <div className="lg:col-span-5">
+            <AuthPanel
+              defaultMode="signin"
+              defaultAsSeller={false}
+              heading="Sign in to Creator Backend"
+              subheading="Sign in with your verified owner account (Email & Password or Google) to manage all Pickra systems."
+            />
           </div>
         </div>
       </section>
@@ -1233,31 +1250,101 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     );
   }
 
-  // GATE 3: Signed-in Customer (Non-Creator) Restricted Access Screen
+  // GATE 3: Signed-in Non-Owner / Unverified Owner Screen
   if (!isCreatorAdmin) {
+    const isUnverifiedOwnerEmail =
+      user.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase() &&
+      !user.emailVerified;
+
     return (
       <section className="max-w-[820px] mx-auto px-5 sm:px-8 py-14 sm:py-20">
         <div className="bg-white border border-stone-200/90 rounded-xl p-8 sm:p-10 space-y-5">
           <div className="flex items-center gap-2 text-xs font-medium text-[#9A3412]">
             <Lock className="w-3.5 h-3.5" />
-            <span>Restricted Creator Console</span>
+            <span>
+              {isUnverifiedOwnerEmail
+                ? 'Verify Owner Email to Unlock Backend'
+                : 'Restricted Creator Console'}
+            </span>
           </div>
           <h1 className="font-serif text-2xl sm:text-3xl font-medium text-stone-900">
-            This management &amp; monitoring console is restricted to the site creator
+            {isUnverifiedOwnerEmail
+              ? 'Confirm your owner email address to unlock full Backend control'
+              : 'This management & monitoring console is restricted to the site creator'}
           </h1>
           <p className="text-sm text-stone-600 leading-relaxed">
             You are signed in as{' '}
-            <span className="font-mono text-stone-900">{user.email}</span>.
-            Customer accounts can shop Pickra Direct editions and track orders
-            under <strong>Store &rarr; My Purchases</strong>, while backend
-            publishing, inventory, and telemetry are reserved for verified
-            creator accounts.
+            <span className="font-mono text-stone-900">{user.email}</span>.{' '}
+            {isUnverifiedOwnerEmail
+              ? 'For zero-trust security, owner privileges require a verified email token. Click the verification link sent to your inbox and press "Refresh Verification Status", or sign in directly with Google.'
+              : 'Creator Seller and Customer accounts can publish products and get paid under Store -> Sell on Pickra, or track orders under Store -> My Purchases, while site-wide Backend governance is reserved for the website owner.'}
           </p>
+
+          {feedbackBanner && (
+            <div
+              className={`px-4 py-3 rounded-lg border text-xs ${
+                feedbackBanner.tone === 'ok'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                  : 'bg-red-50 border-red-200 text-red-900'
+              }`}
+            >
+              {feedbackBanner.text}
+            </div>
+          )}
+
+          {isUnverifiedOwnerEmail && (
+            <div className="p-4 bg-[#FBF9F5] border border-stone-200 rounded-xl flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={async () => {
+                  await refreshAuthUser();
+                  setFeedbackBanner({
+                    tone: 'ok',
+                    text: 'Checked latest verification status from Firebase Auth.',
+                  });
+                }}
+                className="px-4 py-2 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg cursor-pointer"
+              >
+                I Verified My Email — Refresh Access
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await resendOwnerVerificationEmail();
+                    setFeedbackBanner({
+                      tone: 'ok',
+                      text: `Verification link sent to ${user.email}.`,
+                    });
+                  } catch (err) {
+                    setFeedbackBanner({
+                      tone: 'err',
+                      text:
+                        err instanceof Error
+                          ? err.message
+                          : 'Could not resend verification email.',
+                    });
+                  }
+                }}
+                className="px-3.5 py-2 text-xs font-medium text-stone-800 bg-white border border-stone-300 hover:bg-stone-100 rounded-lg cursor-pointer"
+              >
+                Resend Verification Email
+              </button>
+              <button
+                type="button"
+                onClick={() => void signInWithGoogle()}
+                className="px-3.5 py-2 text-xs font-medium text-stone-800 bg-white border border-stone-300 hover:bg-stone-100 rounded-lg cursor-pointer"
+              >
+                Verify Instantly with Google
+              </button>
+            </div>
+          )}
 
           <div className="p-4 bg-[#FBF9F5] border border-stone-200 rounded-lg flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="text-[11px] text-stone-500">
-                Your Firebase UID (share with the owner if requesting Co-Admin access)
+                Your Firebase UID (share with the owner if requesting Co-Admin
+                access)
               </div>
               <div className="font-mono text-xs text-stone-900 truncate">
                 {user.uid}
@@ -1293,11 +1380,14 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
           <div className="pt-2 flex flex-wrap items-center gap-3">
             <button
               type="button"
-              onClick={() => void signOutUser()}
+              onClick={async () => {
+                await signOutUser();
+                openAuthModal('signin', false);
+              }}
               className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
             >
               <LogOut className="w-3.5 h-3.5" />
-              <span>Switch Google Account</span>
+              <span>Switch Account / Sign Out</span>
             </button>
 
             {onOpenDirectStore && (
@@ -1307,7 +1397,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                 className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-medium text-stone-800 bg-[#F3EFE8] hover:bg-stone-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
               >
                 <ShoppingBag className="w-3.5 h-3.5 text-[#9A3412]" />
-                <span>Go to Store &amp; My Purchases</span>
+                <span>Go to Store &amp; Sell Products</span>
               </button>
             )}
           </div>

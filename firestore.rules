@@ -27,7 +27,7 @@ service cloud.firestore {
     }
 
     function isVerifiedUser() {
-      return isSignedIn() && request.auth.token.email_verified == true;
+      return isSignedIn() && request.auth.token.firebase.sign_in_provider != 'anonymous';
     }
 
     function isOwner(uid) {
@@ -36,6 +36,7 @@ service cloud.firestore {
 
     function isBootstrappedAdmin() {
       return isVerifiedUser() &&
+        request.auth.token.email_verified == true &&
         request.auth.token.email is string &&
         request.auth.token.email.size() <= 254 &&
         request.auth.token.email == 'mengistushimelis@gmail.com';

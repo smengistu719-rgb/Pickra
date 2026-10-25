@@ -13,6 +13,7 @@ import {
 import { useFirebaseApp } from '../context/FirebaseContext';
 import { formatPriceCents } from '../firebase';
 import { DirectOrder } from '../types';
+import { AuthPanel } from './AuthModal';
 import { ResilientImage } from './ResilientImage';
 
 interface ShoppingBagDrawerProps {
@@ -42,7 +43,6 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
     removeFromCart,
     applyPromoCode,
     clearPromoCode,
-    signInWithGoogle,
     placeDirectOrder,
     siteConfig,
   } = useFirebaseApp();
@@ -436,7 +436,7 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
             </div>
           ) : (
             /* Step === 'checkout' */
-            <form id="direct-checkout-form" onSubmit={handleCompleteOrder} className="space-y-5">
+            <div className="space-y-5">
               <button
                 type="button"
                 onClick={() => {
@@ -455,24 +455,18 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
               )}
 
               {!user ? (
-                <div className="p-5 bg-white border border-stone-200 rounded-xl space-y-3">
-                  <h3 className="font-serif text-lg font-medium text-stone-900">
-                    Sign in to place your direct order
-                  </h3>
-                  <p className="text-xs text-stone-600 leading-relaxed">
-                    Pickra links every direct purchase and instant digital download to your verified Google account so you can access receipts and updates anytime.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => void signInWithGoogle()}
-                    className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-lg transition-colors cursor-pointer whitespace-nowrap"
-                  >
-                    <LogIn className="w-4 h-4" />
-                    <span>Sign In with Google</span>
-                  </button>
-                </div>
+                <AuthPanel
+                  defaultMode="signup"
+                  defaultAsSeller={false}
+                  heading="Create account or sign in"
+                  subheading="Link your direct purchase and instant digital downloads to your Pickra account."
+                />
               ) : (
-                <div className="p-5 bg-white border border-stone-200 rounded-xl space-y-4">
+                <form
+                  id="direct-checkout-form"
+                  onSubmit={handleCompleteOrder}
+                  className="p-5 bg-white border border-stone-200 rounded-xl space-y-4"
+                >
                   <div>
                     <label className="block text-xs font-medium text-stone-700 mb-1.5">
                       Full Name
@@ -522,12 +516,13 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                     </div>
                   ) : (
                     <div className="p-3 bg-[#F5F2EB] rounded-lg text-xs text-stone-700">
-                      Digital-only order — instant download access will unlock immediately upon confirmation with $0 shipping.
+                      Digital-only order — instant download access will unlock
+                      immediately upon confirmation with $0 shipping.
                     </div>
                   )}
-                </div>
+                </form>
               )}
-            </form>
+            </div>
           )}
         </div>
 

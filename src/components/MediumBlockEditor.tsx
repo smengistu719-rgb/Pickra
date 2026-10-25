@@ -163,7 +163,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
     studioDirectProducts,
     publishedDirectProducts,
     allAccessibleDirectProductsMap,
-    signInWithGoogle,
+    openAuthModal,
     signOutUser,
     savePost,
     deletePost,
@@ -758,7 +758,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
 
   async function handleQuickCreateOfferForBlock(targetBlockId: string) {
     if (!user) {
-      await signInWithGoogle();
+      openAuthModal('signin', false);
       return;
     }
     setBusy(true);
@@ -804,7 +804,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
 
   async function handleQuickCreateProductForBlock(targetBlockId: string) {
     if (!user) {
-      await signInWithGoogle();
+      openAuthModal('signin', false);
       return;
     }
     const parsedUsd = Number.parseFloat(quickProdPriceUsd);
@@ -866,14 +866,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
 
   async function handleSaveOrPublish(targetStatus: PublishStatus) {
     if (!user) {
-      try {
-        await signInWithGoogle();
-      } catch {
-        setStatusMessage({
-          tone: 'err',
-          text: 'Google Sign-In was cancelled. Your blog remains saved in your browser draft.',
-        });
-      }
+      openAuthModal('signin', false);
       return;
     }
 
@@ -1017,11 +1010,14 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
           <div className="pt-2 flex flex-wrap items-center gap-3">
             <button
               type="button"
-              onClick={() => void signOutUser()}
+              onClick={async () => {
+                await signOutUser();
+                openAuthModal('signin', false);
+              }}
               className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-lg transition-colors cursor-pointer whitespace-nowrap"
             >
               <LogOut className="w-3.5 h-3.5" />
-              <span>Switch Google Account</span>
+              <span>Switch Account / Sign Out</span>
             </button>
             <button
               type="button"
@@ -1330,15 +1326,15 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                 {!user ? (
                   <div className="flex flex-wrap items-center justify-between gap-3 w-full">
                     <span className="text-xs text-stone-600">
-                      Sign in with Google to publish this blog live to Pickra for global readers.
+                      Sign in to your Website Owner account to publish this blog live for global readers.
                     </span>
                     <button
                       type="button"
-                      onClick={() => void signInWithGoogle()}
+                      onClick={() => openAuthModal('signin', false)}
                       className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-lg cursor-pointer"
                     >
                       <LogIn className="w-4 h-4" />
-                      <span>Sign In with Google to Publish</span>
+                      <span>Sign In to Publish</span>
                     </button>
                   </div>
                 ) : (
@@ -2433,7 +2429,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                                 >
                                   {user
                                     ? 'Save & Embed Offer'
-                                    : 'Sign In with Google to Save Offer'}
+                                    : 'Sign In to Save Offer'}
                                 </button>
                               </div>
                             </div>
@@ -2605,7 +2601,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                                 >
                                   {user
                                     ? 'Save & Embed Store Product'
-                                    : 'Sign In with Google to Save Product'}
+                                    : 'Sign In to Save Product'}
                                 </button>
                               </div>
                             </div>

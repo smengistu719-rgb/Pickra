@@ -4,7 +4,7 @@ import {
   Copy,
   DollarSign,
   Edit3,
-  LogIn,
+  LogOut,
   Package,
   Plus,
   Search,
@@ -12,6 +12,7 @@ import {
   Store,
   Tag,
   Trash2,
+  UserPlus,
   X,
 } from 'lucide-react';
 import {
@@ -29,6 +30,7 @@ import {
   PublishStatus,
   SellerPayoutMethod,
 } from '../types';
+import { AuthPanel } from './AuthModal';
 import { DirectProductCard } from './DirectProductCard';
 import { ImageUploadPicker } from './ImageUploadPicker';
 import { ResilientImage } from './ResilientImage';
@@ -80,7 +82,8 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
     setIsCartOpen,
     addToCart,
     applyPromoCode,
-    signInWithGoogle,
+    openAuthModal,
+    signOutUser,
     registerOrUpdateSellerAccount,
     saveDirectProduct,
     updateDirectProductStatus,
@@ -270,6 +273,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
   function openNewProductModal() {
     if (!user) {
       setSubView('sell');
+      openAuthModal('signup', true);
       return;
     }
     setEditingProductId(undefined);
@@ -613,6 +617,37 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
               My Purchases ({myPurchases.length})
             </button>
           </div>
+
+          {!user ? (
+            <button
+              type="button"
+              onClick={() => openAuthModal('signup', true)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-stone-900 bg-white border border-stone-300 hover:bg-[#F3EFE8] rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            >
+              <UserPlus className="w-3.5 h-3.5 text-[#9A3412]" />
+              <span>Create Account / Sign In</span>
+            </button>
+          ) : (
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-stone-200 rounded-lg text-xs text-stone-700">
+              <span className="max-w-[140px] truncate font-medium text-stone-900">
+                {profile?.storeName ||
+                  profile?.displayName ||
+                  user.email?.split('@')[0] ||
+                  'Account'}
+              </span>
+              <span aria-hidden="true" className="text-stone-300">
+                ·
+              </span>
+              <button
+                type="button"
+                onClick={() => void signOutUser()}
+                className="inline-flex items-center gap-1 text-stone-500 hover:text-[#9A3412] cursor-pointer whitespace-nowrap"
+              >
+                <LogOut className="w-3 h-3" />
+                <span>Sign Out</span>
+              </button>
+            </div>
+          )}
 
           <button
             type="button"
@@ -974,69 +1009,104 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
       {subView === 'sell' && (
         <div className="mt-8 space-y-8">
           {!user ? (
-            <div className="bg-white border border-stone-200/90 rounded-2xl p-8 sm:p-10 space-y-6">
-              <div className="max-w-2xl">
-                <div className="text-xs font-medium text-[#9A3412]">
-                  Creator Commerce Program · Physical &amp; Digital Products
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+              <div className="lg:col-span-7 bg-white border border-stone-200/90 rounded-2xl p-8 sm:p-10 space-y-6">
+                <div>
+                  <div className="text-xs font-medium text-[#9A3412]">
+                    Creator Commerce Program · Physical &amp; Digital Products
+                  </div>
+                  <h2 className="mt-2 font-serif text-2xl sm:text-3xl font-medium text-stone-900">
+                    Create your Pickra Seller Account, publish products, and get
+                    paid on every sale
+                  </h2>
+                  <p className="mt-3 text-sm text-stone-600 leading-relaxed">
+                    Independent creators, designers, and hardware makers can
+                    open a storefront on Pickra in under a minute. Register with
+                    your Email &amp; Password or Google account, upload photos
+                    of your physical goods or digital downloads, set your
+                    pricing, and receive automatic 90% net payouts when
+                    customers buy your work.
+                  </p>
                 </div>
-                <h2 className="mt-2 font-serif text-2xl sm:text-3xl font-medium text-stone-900">
-                  Create your Pickra Seller Account, publish products, and get
-                  paid on every sale
-                </h2>
-                <p className="mt-3 text-sm text-stone-600 leading-relaxed">
-                  Independent creators, designers, and hardware makers can open
-                  a storefront on Pickra in under a minute. Upload photos of
-                  your physical goods or digital downloads, set your pricing,
-                  and receive automatic 90% net payouts to your preferred
-                  payment account when customers buy your work.
-                </p>
+
+                <div className="space-y-5 pt-6 border-t border-stone-200/80">
+                  <div>
+                    <h3 className="text-sm font-semibold text-stone-900">
+                      01. Create Account &amp; Payout Profile
+                    </h3>
+                    <p className="mt-1 text-xs text-stone-600 leading-relaxed">
+                      Create an account with Email &amp; Password or Google, set
+                      your creator store name, and add your Stripe, PayPal,
+                      Wise, or bank payout destination.
+                    </p>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-stone-900">
+                      02. Publish Physical or Digital Goods
+                    </h3>
+                    <p className="mt-1 text-xs text-stone-600 leading-relaxed">
+                      Upload product photography, configure stock or instant
+                      digital download delivery notes, and edit or remove items
+                      anytime.
+                    </p>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-stone-900">
+                      03. Earn 90% Net Creator Payouts
+                    </h3>
+                    <p className="mt-1 text-xs text-stone-600 leading-relaxed">
+                      Every sale records your 90% net payout in your live ledger
+                      (10% Pickra marketplace fee) with transparent settlement
+                      tracking.
+                    </p>
+                  </div>
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-6 border-t border-stone-200/80">
-                <div>
-                  <h3 className="text-sm font-semibold text-stone-900">
-                    01. Create Account &amp; Payout Profile
-                  </h3>
-                  <p className="mt-1.5 text-xs text-stone-600 leading-relaxed">
-                    Sign in with Google, set your creator store name, and add
-                    your Stripe, PayPal, Wise, or bank payout destination.
-                  </p>
-                </div>
-                <div>
-                  <h3 className="text-sm font-semibold text-stone-900">
-                    02. Publish Physical or Digital Goods
-                  </h3>
-                  <p className="mt-1.5 text-xs text-stone-600 leading-relaxed">
-                    Upload product photography, configure stock or instant
-                    digital download delivery notes, and edit or remove items
-                    anytime.
-                  </p>
-                </div>
-                <div>
-                  <h3 className="text-sm font-semibold text-stone-900">
-                    03. Earn 90% Net Creator Payouts
-                  </h3>
-                  <p className="mt-1.5 text-xs text-stone-600 leading-relaxed">
-                    Every sale records your 90% net payout in your live ledger
-                    (10% Pickra marketplace fee) with transparent settlement
-                    tracking.
-                  </p>
-                </div>
-              </div>
-
-              <div>
-                <button
-                  type="button"
-                  onClick={() => void signInWithGoogle()}
-                  className="inline-flex items-center gap-2 px-5 py-3 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-lg transition-colors cursor-pointer whitespace-nowrap"
-                >
-                  <LogIn className="w-4 h-4" />
-                  <span>Create Creator Account / Sign In with Google</span>
-                </button>
+              <div className="lg:col-span-5">
+                <AuthPanel
+                  defaultMode="signup"
+                  defaultAsSeller={true}
+                  heading="Create Creator Account"
+                  subheading="Register your seller account with Email & Password or Google to start publishing products immediately."
+                />
               </div>
             </div>
           ) : (
             <>
+              <div className="px-5 py-3.5 bg-white border border-stone-200/90 rounded-xl flex flex-wrap items-center justify-between gap-3">
+                <div className="text-xs text-stone-600">
+                  Signed in as{' '}
+                  <strong className="text-stone-900">
+                    {profile?.storeName || profile?.displayName || user.email}
+                  </strong>
+                  {user.email ? (
+                    <span className="font-mono text-stone-500">
+                      {' '}
+                      ({user.email})
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={openNewProductModal}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg cursor-pointer whitespace-nowrap"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Publish New Product</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void signOutUser()}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-stone-600 hover:text-stone-900 cursor-pointer whitespace-nowrap"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>Sign Out</span>
+                  </button>
+                </div>
+              </div>
+
               {/* Creator Earnings & Payout Summary Strip */}
               <div className="bg-white border border-stone-200/90 rounded-xl grid grid-cols-2 lg:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-stone-200/80">
                 <div className="p-5">
@@ -1572,23 +1642,13 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
       {subView === 'purchases' && (
         <div className="mt-8">
           {!user ? (
-            <div className="p-8 bg-white border border-stone-200 rounded-2xl max-w-xl">
-              <Package className="w-6 h-6 text-[#9A3412]" />
-              <h2 className="mt-3 font-serif text-2xl font-medium text-stone-900">
-                Sign in to view your Pickra orders
-              </h2>
-              <p className="mt-2 text-sm text-stone-600 leading-relaxed">
-                Access order receipts, live courier dispatch updates, and
-                instant digital downloads tied to your verified account.
-              </p>
-              <button
-                type="button"
-                onClick={() => void signInWithGoogle()}
-                className="mt-5 inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-lg transition-colors cursor-pointer whitespace-nowrap"
-              >
-                <LogIn className="w-4 h-4" />
-                <span>Sign In with Google</span>
-              </button>
+            <div className="max-w-lg">
+              <AuthPanel
+                defaultMode="signin"
+                defaultAsSeller={false}
+                heading="Sign in to view your Pickra orders"
+                subheading="Sign in or create an account to access order receipts, live courier dispatch updates, and instant digital downloads."
+              />
             </div>
           ) : myPurchases.length === 0 ? (
             <div className="p-10 bg-white border border-stone-200 rounded-2xl text-center">

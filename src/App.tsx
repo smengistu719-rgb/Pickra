@@ -42,6 +42,7 @@ import { ArticleReader } from './components/ArticleReader';
 import { PublisherStudio } from './components/PublisherStudio';
 import { MediumBlockEditor } from './components/MediumBlockEditor';
 import { ImageUploadPicker } from './components/ImageUploadPicker';
+import { AuthModal, AuthPanel } from './components/AuthModal';
 
 function resolveInitialSection(): ActiveSection {
   try {
@@ -72,6 +73,7 @@ function PickraShell() {
     user,
     loadingData,
     isCreatorAdmin,
+    profile,
     privateInfo,
     siteConfig,
     publishedPosts,
@@ -84,7 +86,8 @@ function PickraShell() {
     cartTotalCents,
     setIsCartOpen,
     applyPromoCode,
-    signInWithGoogle,
+    openAuthModal,
+    signOutUser,
     saveOffer,
     deleteOffer,
     deletePost,
@@ -1546,19 +1549,13 @@ function PickraShell() {
             </div>
 
             {!user ? (
-              <div className="py-6 space-y-4">
-                <p className="text-sm text-stone-600 leading-relaxed">
-                  Sign in with your website owner Google account to publish,
-                  edit, or remove affiliate product and service links.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => void signInWithGoogle()}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-lg cursor-pointer"
-                >
-                  <LogIn className="w-4 h-4" />
-                  <span>Sign In with Google</span>
-                </button>
+              <div className="pt-4">
+                <AuthPanel
+                  defaultMode="signin"
+                  defaultAsSeller={false}
+                  heading="Sign in to publish affiliate links"
+                  subheading="Sign in with your Website Owner account to publish, edit, or remove affiliate product and service links."
+                />
               </div>
             ) : !isCreatorAdmin ? (
               <div className="py-6 space-y-3">
@@ -1804,6 +1801,9 @@ function PickraShell() {
         onNavigateToPurchases={() => navigateToSection('store', 'purchases')}
       />
 
+      {/* Global Create Account / Sign In Modal */}
+      <AuthModal />
+
       {/* Quiet Archival Footer */}
       <footer className="border-t border-stone-200/90 bg-[#F5F2EB] mt-12">
         <div className="max-w-[1200px] mx-auto px-5 sm:px-8 py-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
@@ -1866,6 +1866,27 @@ function PickraShell() {
             >
               Backend
             </button>
+            {!user ? (
+              <button
+                type="button"
+                onClick={() => openAuthModal('signup', true)}
+                className="font-semibold text-[#9A3412] hover:text-stone-900 cursor-pointer whitespace-nowrap shrink-0"
+              >
+                Create Account / Sign In
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void signOutUser()}
+                className="font-medium text-stone-700 hover:text-[#9A3412] cursor-pointer whitespace-nowrap shrink-0"
+              >
+                Sign Out (
+                {profile?.displayName ||
+                  user.email?.split('@')[0] ||
+                  'Account'}
+                )
+              </button>
+            )}
             <span className="text-stone-400 whitespace-nowrap shrink-0">
               © {new Date().getFullYear()} Pickra
             </span>

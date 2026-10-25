@@ -27,7 +27,7 @@ export const DIRTY_DOZEN_SUITE: DirtyDozenAssertion[] = [
     collectionPath: '/posts/post_1',
     operation: 'create',
     expectedOutcome: 'PERMISSION_DENIED',
-    enforcedGate: 'isVerifiedUser() -> request.auth.token.email_verified == true',
+    enforcedGate: 'isBootstrappedAdmin() -> request.auth.token.email_verified == true',
   },
   {
     id: 3,

@@ -7,6 +7,63 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: 'select_account' });
+
+export function formatFirebaseAuthError(error: unknown): string {
+  const rawMessage = error instanceof Error ? error.message : String(error || '');
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error
+      ? String((error as { code?: unknown }).code || '')
+      : '';
+
+  if (
+    code === 'auth/popup-blocked' ||
+    rawMessage.includes('auth/popup-blocked')
+  ) {
+    return 'Your browser blocked the Google sign-in popup window. Create or sign in with your Email & Password right here (no popup needed), or allow popups for this site.';
+  }
+  if (
+    code === 'auth/popup-closed-by-user' ||
+    code === 'auth/cancelled-popup-request' ||
+    rawMessage.includes('popup-closed-by-user')
+  ) {
+    return 'Google sign-in popup was closed before finishing. You can try again or use Email & Password below.';
+  }
+  if (
+    code === 'auth/unauthorized-domain' ||
+    rawMessage.includes('unauthorized-domain')
+  ) {
+    return 'Google popup sign-in is restricted on this preview domain. Please use Email & Password right below to create your account or sign in immediately.';
+  }
+  if (
+    code === 'auth/email-already-in-use' ||
+    rawMessage.includes('EMAIL_EXISTS') ||
+    rawMessage.includes('email-already-in-use')
+  ) {
+    return 'An account with this email already exists on Pickra. Switch to the "Sign In" tab to log in with your password or Google.';
+  }
+  if (
+    code === 'auth/invalid-credential' ||
+    code === 'auth/wrong-password' ||
+    code === 'auth/user-not-found' ||
+    rawMessage.includes('INVALID_LOGIN_CREDENTIALS')
+  ) {
+    return 'Incorrect email or password. Double-check your credentials, use "Forgot password?", or switch to "Create Account" if you are new.';
+  }
+  if (code === 'auth/invalid-email' || rawMessage.includes('INVALID_EMAIL')) {
+    return 'Please enter a valid email address (for example, name@domain.com).';
+  }
+  if (code === 'auth/weak-password' || rawMessage.includes('WEAK_PASSWORD')) {
+    return 'Please choose a stronger password with at least 6 characters.';
+  }
+  if (code === 'auth/too-many-requests') {
+    return 'Too many attempts from this browser. Wait a moment and try again, or reset your password.';
+  }
+  if (code === 'auth/network-request-failed') {
+    return 'Network connection interrupted while reaching Firebase Authentication. Check your connection and try again.';
+  }
+  return rawMessage || 'Unable to complete authentication. Please try again.';
+}
 
 export enum OperationType {
   CREATE = 'create',

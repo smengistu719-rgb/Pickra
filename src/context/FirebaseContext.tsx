@@ -7,9 +7,14 @@ import React, {
   useState,
 } from 'react';
 import {
+  createUserWithEmailAndPassword,
   onAuthStateChanged,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
+  updateProfile,
   User,
 } from 'firebase/auth';
 import {
@@ -28,6 +33,7 @@ import {
 import {
   auth,
   db,
+  formatFirebaseAuthError,
   generateOrderNumber,
   generateSafeDocId,
   googleProvider,
@@ -147,6 +153,18 @@ export interface SellerAccountInput {
   payoutAccount: string;
 }
 
+export type AuthModalMode = 'signup' | 'signin';
+
+export interface EmailRegistrationInput {
+  fullName: string;
+  email: string;
+  password: string;
+  asSeller?: boolean;
+  storeName?: string;
+  payoutMethod?: SellerPayoutMethod;
+  payoutAccount?: string;
+}
+
 export interface SiteConfigInput {
   siteTagline: string;
   announcementEnabled: boolean;
@@ -225,7 +243,20 @@ interface FirebaseContextValue {
   applyPromoCode: (rawCode: string) => { ok: boolean; message: string };
   clearPromoCode: () => void;
   // Auth & Mutations
-  signInWithGoogle: () => Promise<void>;
+  authBusy: boolean;
+  authError: string | null;
+  clearAuthError: () => void;
+  isAuthModalOpen: boolean;
+  authModalMode: AuthModalMode;
+  authModalSellerPreset: boolean;
+  openAuthModal: (mode?: AuthModalMode, sellerPreset?: boolean) => void;
+  closeAuthModal: () => void;
+  signInWithGoogle: () => Promise<boolean>;
+  registerWithEmailPassword: (input: EmailRegistrationInput) => Promise<boolean>;
+  signInWithEmailPassword: (email: string, password: string) => Promise<boolean>;
+  sendPasswordReset: (email: string) => Promise<void>;
+  resendOwnerVerificationEmail: () => Promise<void>;
+  refreshAuthUser: () => Promise<void>;
   signOutUser: () => Promise<void>;
   registerOrUpdateSellerAccount: (input: SellerAccountInput) => Promise<void>;
   saveOffer: (input: OfferDraftInput) => Promise<string>;
@@ -579,16 +610,36 @@ function sanitizeSafeId(raw: string, fallback = 'editorial_desk'): string {
   return cleaned.length >= 1 ? cleaned : fallback;
 }
 
+function isNonAnonymousUser(u: User | null): u is User {
+  return Boolean(u && !u.isAnonymous);
+}
+
+interface PendingRegistrationSeed {
+  fullName: string;
+  asSeller: boolean;
+  storeName: string;
+  payoutMethod: SellerPayoutMethod;
+  payoutAccount: string;
+}
+
 export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState<AuthModalMode>('signup');
+  const [authModalSellerPreset, setAuthModalSellerPreset] = useState(false);
   const [loadingData, setLoadingData] = useState(true);
 
   const [isCoAdmin, setIsCoAdmin] = useState(false);
   const [adminRoleReady, setAdminRoleReady] = useState(false);
   const [adminRegistry, setAdminRegistry] = useState<AdminRecord[]>([]);
+
+  const bootstrapInFlightRef = useRef<Map<string, Promise<string>>>(new Map());
+  const pendingRegSeedRef = useRef<PendingRegistrationSeed | null>(null);
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [privateInfo, setPrivateInfo] = useState<UserPrivateInfo | null>(null);
@@ -708,7 +759,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 
   const isCreatorAdmin = Boolean(
-    user && user.emailVerified && (isBootstrappedCreator || isCoAdmin)
+    isNonAnonymousUser(user) && (isBootstrappedCreator || isCoAdmin)
   );
 
   const siteConfig: SiteConfig = useMemo(() => {
@@ -780,12 +831,15 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   // Verify Co-Admin Role Membership on /admins/{uid}
   useEffect(() => {
     if (!authReady) return;
-    if (!user || !user.emailVerified) {
+    if (!isNonAnonymousUser(user)) {
       setIsCoAdmin(false);
       setAdminRoleReady(true);
       return;
     }
-    if (user.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()) {
+    if (
+      user.emailVerified &&
+      user.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()
+    ) {
       setIsCoAdmin(false);
       setAdminRoleReady(true);
       return;
@@ -814,25 +868,26 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     };
   }, [authReady, user]);
 
-  // Ensure User Public Profile & Split Private Info exist upon verified Google Sign-In
-  useEffect(() => {
-    if (!authReady || !user || !user.emailVerified) {
-      setProfile(null);
-      setPrivateInfo(null);
-      return;
+  async function ensureUserBootstrapped(currentUser: User): Promise<string> {
+    const existingPromise = bootstrapInFlightRef.current.get(currentUser.uid);
+    if (existingPromise) {
+      return existingPromise;
     }
 
-    let cancelled = false;
-
-    async function bootstrapUserRecords(currentUser: User) {
+    const runBootstrap = async (): Promise<string> => {
       const userPath = `users/${currentUser.uid}`;
       const privatePath = `users/${currentUser.uid}/private/info`;
+      const regSeed = pendingRegSeedRef.current;
+      pendingRegSeedRef.current = null;
+
+      let resolvedName = 'Member';
 
       try {
         const userRef = doc(db, 'users', currentUser.uid);
         const userSnap = await getDoc(userRef);
 
         const defaultName = (
+          regSeed?.fullName ||
           currentUser.displayName ||
           currentUser.email?.split('@')[0] ||
           'Member'
@@ -841,31 +896,48 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           .slice(0, VALIDATION_LIMITS.DISPLAY_NAME_MAX);
 
         if (!userSnap.exists()) {
+          const initialIsSeller = Boolean(regSeed?.asSeller);
+          const initialStoreName = initialIsSeller
+            ? (regSeed?.storeName || defaultName)
+                .trim()
+                .slice(0, VALIDATION_LIMITS.STORE_NAME_MAX)
+            : '';
+
           await setDoc(userRef, {
             uid: currentUser.uid,
             displayName: defaultName,
-            bio: 'Pickra editorial & creator store member.',
+            bio: initialIsSeller
+              ? 'Independent creator selling on Pickra Store.'
+              : 'Pickra editorial & creator store member.',
+            isSeller: initialIsSeller,
+            storeName: initialStoreName,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
-          if (!cancelled) {
-            setProfile({
-              uid: currentUser.uid,
-              displayName: defaultName,
-              bio: 'Pickra editorial & creator store member.',
-              isSeller: false,
-              storeName: '',
-            });
-          }
-        } else if (!cancelled) {
-          const d = userSnap.data();
+
           setProfile({
+            uid: currentUser.uid,
+            displayName: defaultName,
+            bio: initialIsSeller
+              ? 'Independent creator selling on Pickra Store.'
+              : 'Pickra editorial & creator store member.',
+            isSeller: initialIsSeller,
+            storeName: initialStoreName,
+          });
+          resolvedName = initialStoreName || defaultName;
+        } else {
+          const d = userSnap.data();
+          const nextProfile: UserProfile = {
             uid: currentUser.uid,
             displayName: String(d.displayName || defaultName),
             bio: String(d.bio || ''),
             isSeller: Boolean(d.isSeller),
             storeName: String(d.storeName || ''),
-          });
+          };
+          setProfile(nextProfile);
+          resolvedName = String(
+            d.storeName || d.displayName || defaultName
+          ).slice(0, VALIDATION_LIMITS.DISPLAY_NAME_MAX);
         }
       } catch (err) {
         handleFirestoreError(err, OperationType.WRITE, userPath);
@@ -874,32 +946,47 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       try {
         const privRef = doc(db, 'users', currentUser.uid, 'private', 'info');
         const privSnap = await getDoc(privRef);
-        const safeEmail = (currentUser.email || 'member@example.com').slice(0, 254);
+        const safeEmail = (currentUser.email || 'member@example.com').slice(
+          0,
+          254
+        );
 
         if (!privSnap.exists()) {
+          const initMethod: SellerPayoutMethod =
+            regSeed?.asSeller &&
+            regSeed.payoutMethod &&
+            VALID_PAYOUT_METHODS.includes(regSeed.payoutMethod)
+              ? regSeed.payoutMethod
+              : 'None';
+          const initAccount = regSeed?.asSeller
+            ? (regSeed.payoutAccount || '')
+                .trim()
+                .slice(0, VALIDATION_LIMITS.PAYOUT_ACCOUNT_MAX)
+            : '';
+
           await setDoc(privRef, {
             uid: currentUser.uid,
             email: safeEmail,
             defaultAmazonTag: '',
             defaultDigistoreId: '',
-            payoutMethod: 'None',
-            payoutAccount: '',
+            payoutMethod: initMethod,
+            payoutAccount: initAccount,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
-          if (!cancelled) {
-            setPrivateInfo({
-              uid: currentUser.uid,
-              email: safeEmail,
-              defaultAmazonTag: '',
-              defaultDigistoreId: '',
-              payoutMethod: 'None',
-              payoutAccount: '',
-            });
-          }
-        } else if (!cancelled) {
+          setPrivateInfo({
+            uid: currentUser.uid,
+            email: safeEmail,
+            defaultAmazonTag: '',
+            defaultDigistoreId: '',
+            payoutMethod: initMethod,
+            payoutAccount: initAccount,
+          });
+        } else {
           const pd = privSnap.data();
-          const rawMethod = String(pd.payoutMethod || 'None') as SellerPayoutMethod;
+          const rawMethod = String(
+            pd.payoutMethod || 'None'
+          ) as SellerPayoutMethod;
           setPrivateInfo({
             uid: currentUser.uid,
             email: String(pd.email || safeEmail),
@@ -923,8 +1010,9 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           const parsedQueue = JSON.parse(rawQueued);
           if (Array.isArray(parsedQueue)) {
             const actorScope: 'customer' | 'creator' =
+              currentUser.emailVerified &&
               currentUser.email?.toLowerCase() ===
-              BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()
+                BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()
                 ? 'creator'
                 : 'customer';
             for (const item of parsedQueue.slice(0, 15)) {
@@ -959,12 +1047,28 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       } catch {
         // ignore session queue parsing issues
       }
+
+      return resolvedName;
+    };
+
+    const promise = runBootstrap().finally(() => {
+      bootstrapInFlightRef.current.delete(currentUser.uid);
+    });
+    bootstrapInFlightRef.current.set(currentUser.uid, promise);
+    return promise;
+  }
+
+  // Ensure User Public Profile & Split Private Info exist upon authenticated Sign-In
+  useEffect(() => {
+    if (!authReady || !isNonAnonymousUser(user)) {
+      setProfile(null);
+      setPrivateInfo(null);
+      return;
     }
 
-    void bootstrapUserRecords(user);
-    return () => {
-      cancelled = true;
-    };
+    void ensureUserBootstrapped(user).catch((err) => {
+      console.error('User bootstrap warning:', err);
+    });
   }, [authReady, user]);
 
   // Public listeners: SiteConfig singleton, Published Offers, Posts, Direct Products, & Campaigns
@@ -1077,9 +1181,9 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     };
   }, [authReady, hideSeeds]);
 
-  // Verified Customer Purchases + Creator Seller Hub + Website Owner Backend Listeners
+  // Authenticated Customer Purchases + Creator Seller Hub + Website Owner Backend Listeners
   useEffect(() => {
-    if (!authReady || !user || !user.emailVerified) {
+    if (!authReady || !isNonAnonymousUser(user)) {
       setAuthorFirestoreOffers([]);
       setAuthorFirestorePosts([]);
       setOwnSellerProducts([]);
@@ -1580,33 +1684,17 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   }, [cartSubtotalCents, cartDiscountCents, cartShippingCents]);
 
   async function ensureParentUserProfileExists(currentUser: User): Promise<string> {
-    const userRef = doc(db, 'users', currentUser.uid);
-    const snap = await getDoc(userRef);
-    const fallbackName = (
+    const bootstrappedName = await ensureUserBootstrapped(currentUser);
+    return (
       profile?.storeName ||
       profile?.displayName ||
+      bootstrappedName ||
       currentUser.displayName ||
       currentUser.email?.split('@')[0] ||
       'Creator'
     )
       .trim()
       .slice(0, VALIDATION_LIMITS.DISPLAY_NAME_MAX);
-
-    if (!snap.exists()) {
-      await setDoc(userRef, {
-        uid: currentUser.uid,
-        displayName: fallbackName,
-        bio: 'Pickra editorial & creator store member.',
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      return fallbackName;
-    }
-    const d = snap.data();
-    return String(d.storeName || d.displayName || fallbackName).slice(
-      0,
-      VALIDATION_LIMITS.DISPLAY_NAME_MAX
-    );
   }
 
   async function persistTelemetryEvent(payload: PendingTelemetryPayload) {
@@ -1625,7 +1713,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       Math.min(50000000, Math.round(Number(payload.valueCents) || 0))
     );
 
-    if (!user || !user.emailVerified) {
+    if (!isNonAnonymousUser(user)) {
       try {
         const raw = sessionStorage.getItem(PENDING_TELEMETRY_KEY);
         const existingQueue: PendingTelemetryPayload[] = raw
@@ -1801,19 +1889,184 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     setAppliedPromoCode('');
   }
 
-  async function signInWithGoogle() {
-    await signInWithPopup(auth, googleProvider);
+  function clearAuthError() {
+    setAuthError(null);
+  }
+
+  function openAuthModal(mode: AuthModalMode = 'signup', sellerPreset = false) {
+    setAuthError(null);
+    setAuthModalMode(mode);
+    setAuthModalSellerPreset(sellerPreset);
+    setIsAuthModalOpen(true);
+  }
+
+  function closeAuthModal() {
+    setIsAuthModalOpen(false);
+    setAuthError(null);
+  }
+
+  async function signInWithGoogle(): Promise<boolean> {
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      const cred = await signInWithPopup(auth, googleProvider);
+      await ensureUserBootstrapped(cred.user);
+      setIsAuthModalOpen(false);
+      return true;
+    } catch (err) {
+      const friendly = formatFirebaseAuthError(err);
+      setAuthError(friendly);
+      setIsAuthModalOpen(true);
+      return false;
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function registerWithEmailPassword(
+    input: EmailRegistrationInput
+  ): Promise<boolean> {
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      const cleanName = input.fullName
+        .trim()
+        .slice(0, VALIDATION_LIMITS.DISPLAY_NAME_MAX);
+      if (cleanName.length < 2) {
+        throw new Error('Please enter your name (at least 2 characters).');
+      }
+      const cleanEmail = input.email.trim().slice(0, 254);
+      if (!cleanEmail.includes('@') || cleanEmail.length < 5) {
+        throw new Error('Please enter a valid email address.');
+      }
+      if (input.password.length < 6) {
+        throw new Error('Password must be at least 6 characters.');
+      }
+
+      pendingRegSeedRef.current = {
+        fullName: cleanName,
+        asSeller: Boolean(input.asSeller),
+        storeName: (input.storeName || cleanName)
+          .trim()
+          .slice(0, VALIDATION_LIMITS.STORE_NAME_MAX),
+        payoutMethod: input.payoutMethod || 'Stripe',
+        payoutAccount: (input.payoutAccount || cleanEmail)
+          .trim()
+          .slice(0, VALIDATION_LIMITS.PAYOUT_ACCOUNT_MAX),
+      };
+
+      const cred = await createUserWithEmailAndPassword(
+        auth,
+        cleanEmail,
+        input.password
+      );
+      try {
+        await updateProfile(cred.user, { displayName: cleanName });
+      } catch {
+        // non-fatal profile sync
+      }
+      await ensureUserBootstrapped(cred.user);
+
+      // If registering with the Website Owner email, dispatch verification email so email_verified can be confirmed
+      if (
+        cleanEmail.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase() &&
+        !cred.user.emailVerified
+      ) {
+        try {
+          await sendEmailVerification(cred.user);
+        } catch {
+          // ignore rate limits
+        }
+      }
+
+      setIsAuthModalOpen(false);
+      return true;
+    } catch (err) {
+      pendingRegSeedRef.current = null;
+      setAuthError(formatFirebaseAuthError(err));
+      return false;
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function signInWithEmailPassword(
+    email: string,
+    password: string
+  ): Promise<boolean> {
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      const cleanEmail = email.trim().slice(0, 254);
+      if (!cleanEmail.includes('@')) {
+        throw new Error('Please enter a valid email address.');
+      }
+      if (!password) {
+        throw new Error('Please enter your password.');
+      }
+      const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
+      await ensureUserBootstrapped(cred.user);
+      setIsAuthModalOpen(false);
+      return true;
+    } catch (err) {
+      setAuthError(formatFirebaseAuthError(err));
+      return false;
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function sendPasswordReset(email: string): Promise<void> {
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      const cleanEmail = email.trim();
+      if (!cleanEmail || !cleanEmail.includes('@')) {
+        throw new Error('Enter your account email address first to receive a password reset link.');
+      }
+      await sendPasswordResetEmail(auth, cleanEmail);
+    } catch (err) {
+      const msg = formatFirebaseAuthError(err);
+      setAuthError(msg);
+      throw new Error(msg);
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function resendOwnerVerificationEmail(): Promise<void> {
+    if (!auth.currentUser) {
+      throw new Error('Sign in first to request an email verification link.');
+    }
+    await sendEmailVerification(auth.currentUser);
+  }
+
+  async function refreshAuthUser(): Promise<void> {
+    if (!auth.currentUser) return;
+    await auth.currentUser.reload();
+    const refreshed = auth.currentUser;
+    // Trigger shallow state refresh so user.emailVerified updates in React
+    setUser(refreshed ? ({ ...refreshed } as User) : null);
   }
 
   async function signOutUser() {
+    setAuthError(null);
     await signOut(auth);
   }
 
   function assertCreatorAccess() {
-    if (!user || !user.emailVerified) {
-      throw new Error('Sign in with your verified Website Owner Google account first.');
+    if (!isNonAnonymousUser(user)) {
+      throw new Error('Please sign in to your Website Owner account first.');
     }
     if (!isCreatorAdmin) {
+      if (
+        user.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase() &&
+        !user.emailVerified
+      ) {
+        throw new Error(
+          'Please verify your owner email address (or sign in with Google) to unlock Website Owner Backend write permissions.'
+        );
+      }
       throw new Error(
         'Website Owner permission required: only authorized Pickra administrators can modify global blog stories, affiliate links, or backend settings.'
       );
@@ -1821,8 +2074,8 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   function assertVerifiedSeller() {
-    if (!user || !user.emailVerified) {
-      throw new Error('Sign in with a verified Google account to publish and sell products.');
+    if (!isNonAnonymousUser(user)) {
+      throw new Error('Create a Creator Account or sign in first to publish and sell products.');
     }
   }
 
@@ -1839,7 +2092,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       // ignore storage quota errors
     }
 
-    if (user && user.emailVerified && isCreatorAdmin) {
+    if (isNonAnonymousUser(user) && isCreatorAdmin) {
       await saveSiteConfig({
         siteTagline: siteConfig.siteTagline,
         announcementEnabled: siteConfig.announcementEnabled,
@@ -2554,8 +2807,8 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   async function placeDirectOrder(input: DirectCheckoutInput): Promise<DirectOrder> {
-    if (!user || !user.emailVerified) {
-      throw new Error('Please sign in with Google to place your direct order.');
+    if (!isNonAnonymousUser(user)) {
+      throw new Error('Please create an account or sign in to place your direct order.');
     }
     if (!siteConfig.storeCheckoutEnabled) {
       throw new Error(
@@ -3286,7 +3539,20 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         clearCart,
         applyPromoCode,
         clearPromoCode,
+        authBusy,
+        authError,
+        clearAuthError,
+        isAuthModalOpen,
+        authModalMode,
+        authModalSellerPreset,
+        openAuthModal,
+        closeAuthModal,
         signInWithGoogle,
+        registerWithEmailPassword,
+        signInWithEmailPassword,
+        sendPasswordReset,
+        resendOwnerVerificationEmail,
+        refreshAuthUser,
         signOutUser,
         registerOrUpdateSellerAccount,
         saveOffer,
