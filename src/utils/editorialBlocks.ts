@@ -1,10 +1,18 @@
 import { generateSafeDocId } from '../firebase';
+import { CalloutColorTheme } from '../types';
 
 export type StoryBlock =
   | { id: string; type: 'paragraph'; text: string }
   | { id: string; type: 'heading'; text: string }
   | { id: string; type: 'subheading'; text: string }
   | { id: string; type: 'quote'; text: string }
+  | {
+      id: string;
+      type: 'callout';
+      theme: CalloutColorTheme;
+      title: string;
+      text: string;
+    }
   | {
       id: string;
       type: 'image';
@@ -28,7 +36,16 @@ export type StoryBlock =
       ctaLabel: string;
     }
   | { id: string; type: 'offer'; offerId: string }
+  | { id: string; type: 'product'; productId: string }
   | { id: string; type: 'divider' };
+
+const VALID_CALLOUT_THEMES: CalloutColorTheme[] = [
+  'amber',
+  'sage',
+  'terracotta',
+  'slate',
+  'midnight',
+];
 
 export function createBlockId(): string {
   return generateSafeDocId('blk');
@@ -73,6 +90,21 @@ export function blocksToMarkdown(blocks: StoryBlock[]): string {
         }
         break;
       }
+      case 'callout': {
+        const cleanTitle = sanitizeBracketText(block.title || 'Editorial Note');
+        const cleanBody = block.text.trim();
+        if (cleanTitle || cleanBody) {
+          const theme: CalloutColorTheme = VALID_CALLOUT_THEMES.includes(block.theme)
+            ? block.theme
+            : 'amber';
+          const bodyLines = (cleanBody || cleanTitle)
+            .split('\n')
+            .map((l) => `> ${l.trim()}`)
+            .join('\n');
+          serialized.push(`> [!${theme}] ${cleanTitle}\n${bodyLines}`);
+        }
+        break;
+      }
       case 'divider': {
         serialized.push('---');
         break;
@@ -80,6 +112,12 @@ export function blocksToMarkdown(blocks: StoryBlock[]): string {
       case 'offer': {
         if (block.offerId.trim()) {
           serialized.push(`[[offer:${block.offerId.trim()}]]`);
+        }
+        break;
+      }
+      case 'product': {
+        if (block.productId.trim()) {
+          serialized.push(`[[product:${block.productId.trim()}]]`);
         }
         break;
       }
@@ -128,6 +166,11 @@ function parseSingleChunk(chunk: string): StoryBlock {
   const offerMatch = trimmed.match(/^\[\[offer:([a-zA-Z0-9_-]+)\]\]$/);
   if (offerMatch) {
     return { id: createBlockId(), type: 'offer', offerId: offerMatch[1] };
+  }
+
+  const productMatch = trimmed.match(/^\[\[product:([a-zA-Z0-9_-]+)\]\]$/);
+  if (productMatch) {
+    return { id: createBlockId(), type: 'product', productId: productMatch[1] };
   }
 
   const videoMatch = trimmed.match(/^@\[video:([^\]]*)\]\((https?:\/\/[^)]+)\)$/);
@@ -202,6 +245,31 @@ function parseSingleChunk(chunk: string): StoryBlock {
     };
   }
 
+  // Inline Color Theme Callout: > [!sage] Heading \n > Body
+  const calloutHeaderMatch = trimmed.match(
+    /^>\s*\[!(amber|sage|terracotta|slate|midnight)\]\s*(.*)$/m
+  );
+  if (calloutHeaderMatch && trimmed.startsWith('>')) {
+    const lines = trimmed.split('\n');
+    const firstLineMatch = lines[0].match(
+      /^>\s*\[!(amber|sage|terracotta|slate|midnight)\]\s*(.*)$/
+    );
+    const theme = (firstLineMatch?.[1] as CalloutColorTheme) || 'amber';
+    const title = (firstLineMatch?.[2] || 'Editorial Note').trim();
+    const bodyText = lines
+      .slice(1)
+      .map((line) => line.replace(/^>\s?/, '').trim())
+      .filter(Boolean)
+      .join('\n');
+    return {
+      id: createBlockId(),
+      type: 'callout',
+      theme,
+      title,
+      text: bodyText,
+    };
+  }
+
   if (trimmed.startsWith('> ')) {
     return {
       id: createBlockId(),
@@ -233,8 +301,13 @@ export function markdownToBlocks(raw: string): StoryBlock[] {
   const blocks: StoryBlock[] = [];
 
   for (const chunk of rawChunks) {
-    if (chunk.includes('[[offer:') && !chunk.match(/^\[\[offer:[a-zA-Z0-9_-]+\]\]$/)) {
-      const subParts = chunk.split(/(\[\[offer:[a-zA-Z0-9_-]+\]\])/g);
+    const hasEmbeddedToken =
+      (chunk.includes('[[offer:') && !chunk.match(/^\[\[offer:[a-zA-Z0-9_-]+\]\]$/)) ||
+      (chunk.includes('[[product:') &&
+        !chunk.match(/^\[\[product:[a-zA-Z0-9_-]+\]\]$/));
+
+    if (hasEmbeddedToken) {
+      const subParts = chunk.split(/(\[\[(?:offer|product):[a-zA-Z0-9_-]+\]\])/g);
       for (const sp of subParts) {
         if (sp.trim()) {
           blocks.push(parseSingleChunk(sp));
@@ -273,7 +346,6 @@ export function parseVideoEmbedUrl(rawUrl: string): ParsedVideoDescriptor | null
     const u = new URL(normalized);
     const host = u.hostname.replace(/^www\./, '').toLowerCase();
 
-    // YouTube watch, short, embed, or youtu.be
     if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'youtube-nocookie.com') {
       const vParam = u.searchParams.get('v');
       if (vParam && /^[a-zA-Z0-9_-]{6,}$/.test(vParam)) {
@@ -304,7 +376,6 @@ export function parseVideoEmbedUrl(rawUrl: string): ParsedVideoDescriptor | null
       }
     }
 
-    // Vimeo
     if (host === 'vimeo.com' || host === 'player.vimeo.com') {
       const vimeoMatch = u.pathname.match(/\/(?:video\/)?(\d+)/);
       if (vimeoMatch) {
@@ -316,7 +387,6 @@ export function parseVideoEmbedUrl(rawUrl: string): ParsedVideoDescriptor | null
       }
     }
 
-    // Loom
     if (host === 'loom.com') {
       const loomMatch = u.pathname.match(/\/(?:share|embed)\/([a-zA-Z0-9]+)/);
       if (loomMatch) {
@@ -328,7 +398,6 @@ export function parseVideoEmbedUrl(rawUrl: string): ParsedVideoDescriptor | null
       }
     }
 
-    // Direct HTML5 video stream (.mp4, .webm, .ogg, .mov)
     if (/\.(mp4|webm|ogg|mov)(\?.*)?$/i.test(u.pathname)) {
       return {
         kind: 'video',
@@ -360,6 +429,8 @@ export function computeWordCountAndReadTime(blocks: StoryBlock[]): {
       b.type === 'quote'
     ) {
       textAccumulator += ` ${b.text}`;
+    } else if (b.type === 'callout') {
+      textAccumulator += ` ${b.title} ${b.text}`;
     } else if (b.type === 'image' || b.type === 'video') {
       textAccumulator += ` ${b.caption}`;
     } else if (b.type === 'bookmark') {
@@ -379,6 +450,16 @@ export function extractOfferIdsFromBlocks(blocks: StoryBlock[]): string[] {
   for (const b of blocks) {
     if (b.type === 'offer' && b.offerId && !ids.includes(b.offerId)) {
       ids.push(b.offerId);
+    }
+  }
+  return ids;
+}
+
+export function extractProductIdsFromBlocks(blocks: StoryBlock[]): string[] {
+  const ids: string[] = [];
+  for (const b of blocks) {
+    if (b.type === 'product' && b.productId && !ids.includes(b.productId)) {
+      ids.push(b.productId);
     }
   }
   return ids;

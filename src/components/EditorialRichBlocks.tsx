@@ -1,6 +1,12 @@
 import React from 'react';
 import { ArrowUpRight, ExternalLink, Play } from 'lucide-react';
-import { AffiliateOffer } from '../types';
+import {
+  AffiliateOffer,
+  BlogColorTheme,
+  BLOG_THEME_PALETTES,
+  CalloutColorTheme,
+  DirectProduct,
+} from '../types';
 import {
   extractHostnameLabel,
   parseVideoEmbedUrl,
@@ -8,12 +14,56 @@ import {
 } from '../utils/editorialBlocks';
 import { ResilientImage } from './ResilientImage';
 import { OfferCard } from './OfferCard';
+import { DirectProductCard } from './DirectProductCard';
+
+export const CALLOUT_STYLES: Record<
+  CalloutColorTheme,
+  { label: string; boxClass: string; titleClass: string; bodyClass: string; swatch: string }
+> = {
+  amber: {
+    label: 'Warm Amber',
+    swatch: '#FEF3C7',
+    boxClass: 'bg-[#FFFBEB] border border-amber-200/90',
+    titleClass: 'text-amber-950',
+    bodyClass: 'text-amber-900/90',
+  },
+  sage: {
+    label: 'Botanical Sage',
+    swatch: '#DCFCE7',
+    boxClass: 'bg-[#F1F7F3] border border-[#C6DEC9]',
+    titleClass: 'text-[#14301D]',
+    bodyClass: 'text-[#284733]',
+  },
+  terracotta: {
+    label: 'Terracotta Clay',
+    swatch: '#FFEDD5',
+    boxClass: 'bg-[#FDF3EC] border border-[#EBCBB8]',
+    titleClass: 'text-[#5C1F0B]',
+    bodyClass: 'text-[#73321C]',
+  },
+  slate: {
+    label: 'Editorial Slate',
+    swatch: '#E2E8F0',
+    boxClass: 'bg-slate-50 border border-slate-200',
+    titleClass: 'text-slate-900',
+    bodyClass: 'text-slate-700',
+  },
+  midnight: {
+    label: 'Midnight Ink',
+    swatch: '#1E293B',
+    boxClass: 'bg-[#181B20] border border-stone-700',
+    titleClass: 'text-stone-100',
+    bodyClass: 'text-stone-300',
+  },
+};
 
 /**
  * Safely renders inline links [label](https://...), **bold**, and *italic* without dangerouslySetInnerHTML.
  */
-export const InlineFormattedText: React.FC<{ text: string }> = ({ text }) => {
-  // Tokenize [label](https://...), **bold**, and *italic*
+export const InlineFormattedText: React.FC<{
+  text: string;
+  isDarkSurface?: boolean;
+}> = ({ text, isDarkSurface = false }) => {
   const tokenRegex = /(\[[^\]]+\]\(https?:\/\/[^)\s]+\)|\*\*[^*]+\*\*|\*[^*\n]+\*)/g;
   const parts = text.split(tokenRegex);
 
@@ -32,7 +82,11 @@ export const InlineFormattedText: React.FC<{ text: string }> = ({ text }) => {
               href={href}
               target="_blank"
               rel="noopener noreferrer sponsored"
-              className="text-stone-900 underline decoration-[#9A3412]/70 decoration-[1.5px] underline-offset-4 hover:text-[#9A3412] hover:decoration-[#9A3412] transition-colors"
+              className={
+                isDarkSurface
+                  ? 'text-amber-300 underline decoration-amber-400/70 decoration-[1.5px] underline-offset-4 hover:text-amber-200 transition-colors'
+                  : 'text-stone-900 underline decoration-[#9A3412]/70 decoration-[1.5px] underline-offset-4 hover:text-[#9A3412] hover:decoration-[#9A3412] transition-colors'
+              }
             >
               {label}
             </a>
@@ -41,7 +95,12 @@ export const InlineFormattedText: React.FC<{ text: string }> = ({ text }) => {
 
         if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
           return (
-            <strong key={index} className="font-semibold text-stone-950">
+            <strong
+              key={index}
+              className={`font-semibold ${
+                isDarkSurface ? 'text-white' : 'text-stone-950'
+              }`}
+            >
               {part.slice(2, -2)}
             </strong>
           );
@@ -64,7 +123,8 @@ export const InlineFormattedText: React.FC<{ text: string }> = ({ text }) => {
 export const VideoEmbedFigure: React.FC<{
   url: string;
   caption?: string;
-}> = ({ url, caption }) => {
+  isDarkSurface?: boolean;
+}> = ({ url, caption, isDarkSurface = false }) => {
   const descriptor = parseVideoEmbedUrl(url);
 
   if (!descriptor) {
@@ -121,7 +181,11 @@ export const VideoEmbedFigure: React.FC<{
       )}
 
       {caption && (
-        <figcaption className="mt-2.5 text-center text-xs font-serif italic text-stone-500">
+        <figcaption
+          className={`mt-2.5 text-center text-xs font-serif italic ${
+            isDarkSurface ? 'text-stone-400' : 'text-stone-500'
+          }`}
+        >
           {caption}
         </figcaption>
       )}
@@ -171,7 +235,8 @@ export const EditorialImageFigure: React.FC<{
   caption?: string;
   linkUrl?: string;
   wide?: boolean;
-}> = ({ src, caption, linkUrl, wide }) => {
+  isDarkSurface?: boolean;
+}> = ({ src, caption, linkUrl, wide, isDarkSurface = false }) => {
   const imageNode = (
     <div
       className={`overflow-hidden rounded-xl bg-[#F3EFE8] border border-stone-200/80 ${
@@ -197,7 +262,11 @@ export const EditorialImageFigure: React.FC<{
           className="block group relative"
         >
           {imageNode}
-          <span className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-[#9A3412] hover:underline">
+          <span
+            className={`mt-2 inline-flex items-center gap-1 text-xs font-medium hover:underline ${
+              isDarkSurface ? 'text-amber-300' : 'text-[#9A3412]'
+            }`}
+          >
             <span>{extractHostnameLabel(linkUrl)}</span>
             <ArrowUpRight className="w-3.5 h-3.5" />
           </span>
@@ -207,7 +276,11 @@ export const EditorialImageFigure: React.FC<{
       )}
 
       {caption && (
-        <figcaption className="mt-2.5 text-center text-xs font-serif italic text-stone-500">
+        <figcaption
+          className={`mt-2.5 text-center text-xs font-serif italic ${
+            isDarkSurface ? 'text-stone-400' : 'text-stone-500'
+          }`}
+        >
           {caption}
         </figcaption>
       )}
@@ -215,12 +288,46 @@ export const EditorialImageFigure: React.FC<{
   );
 };
 
+export const EditorialCalloutBox: React.FC<{
+  theme: CalloutColorTheme;
+  title: string;
+  text: string;
+}> = ({ theme, title, text }) => {
+  const style = CALLOUT_STYLES[theme] || CALLOUT_STYLES.amber;
+  const isDarkCallout = theme === 'midnight';
+
+  return (
+    <aside className={`my-7 rounded-xl p-5 sm:p-6 ${style.boxClass}`}>
+      {title && (
+        <h4 className={`font-serif text-lg font-medium leading-snug ${style.titleClass}`}>
+          <InlineFormattedText text={title} isDarkSurface={isDarkCallout} />
+        </h4>
+      )}
+      {text && (
+        <p className={`mt-2 text-sm sm:text-[15px] leading-relaxed ${style.bodyClass}`}>
+          <InlineFormattedText text={text} isDarkSurface={isDarkCallout} />
+        </p>
+      )}
+    </aside>
+  );
+};
+
 export const StoryBlocksRenderer: React.FC<{
   blocks: StoryBlock[];
   offersMap: Record<string, AffiliateOffer>;
+  directProductsMap?: Record<string, DirectProduct>;
   enableDropCap?: boolean;
-}> = ({ blocks, offersMap, enableDropCap = true }) => {
+  articleTheme?: BlogColorTheme;
+}> = ({
+  blocks,
+  offersMap,
+  directProductsMap = {},
+  enableDropCap = true,
+  articleTheme = 'classic',
+}) => {
   let firstParagraphRendered = false;
+  const palette = BLOG_THEME_PALETTES[articleTheme] || BLOG_THEME_PALETTES.classic;
+  const isDark = palette.isDark;
 
   return (
     <div className="space-y-6">
@@ -230,9 +337,9 @@ export const StoryBlocksRenderer: React.FC<{
             return (
               <h2
                 key={block.id || index}
-                className="pt-6 font-serif text-2xl sm:text-[1.65rem] font-medium text-stone-900 leading-snug"
+                className={`pt-6 font-serif text-2xl sm:text-[1.65rem] font-medium leading-snug ${palette.textClass}`}
               >
-                <InlineFormattedText text={block.text} />
+                <InlineFormattedText text={block.text} isDarkSurface={isDark} />
               </h2>
             );
 
@@ -240,9 +347,9 @@ export const StoryBlocksRenderer: React.FC<{
             return (
               <h3
                 key={block.id || index}
-                className="pt-4 font-serif text-xl font-medium text-stone-800 leading-snug"
+                className={`pt-4 font-serif text-xl font-medium leading-snug ${palette.textClass}`}
               >
-                <InlineFormattedText text={block.text} />
+                <InlineFormattedText text={block.text} isDarkSurface={isDark} />
               </h3>
             );
 
@@ -250,10 +357,20 @@ export const StoryBlocksRenderer: React.FC<{
             return (
               <blockquote
                 key={block.id || index}
-                className="my-8 py-6 border-y border-stone-300/80 font-serif italic text-xl sm:text-2xl text-stone-800 leading-relaxed"
+                className={`my-8 py-6 border-y ${palette.borderClass} font-serif italic text-xl sm:text-2xl ${palette.textClass} leading-relaxed`}
               >
-                “<InlineFormattedText text={block.text} />”
+                “<InlineFormattedText text={block.text} isDarkSurface={isDark} />”
               </blockquote>
+            );
+
+          case 'callout':
+            return (
+              <EditorialCalloutBox
+                key={block.id || index}
+                theme={block.theme}
+                title={block.title}
+                text={block.text}
+              />
             );
 
           case 'divider':
@@ -261,7 +378,9 @@ export const StoryBlocksRenderer: React.FC<{
               <div
                 key={block.id || index}
                 role="separator"
-                className="py-6 text-center text-stone-400 tracking-[0.6em] text-lg select-none"
+                className={`py-6 text-center tracking-[0.6em] text-lg select-none ${
+                  isDark ? 'text-stone-600' : 'text-stone-400'
+                }`}
               >
                 · · ·
               </div>
@@ -275,6 +394,7 @@ export const StoryBlocksRenderer: React.FC<{
                 caption={block.caption}
                 linkUrl={block.linkUrl}
                 wide={block.wide}
+                isDarkSurface={isDark}
               />
             );
 
@@ -284,6 +404,7 @@ export const StoryBlocksRenderer: React.FC<{
                 key={block.id || index}
                 url={block.url}
                 caption={block.caption}
+                isDarkSurface={isDark}
               />
             );
 
@@ -310,19 +431,33 @@ export const StoryBlocksRenderer: React.FC<{
             );
           }
 
+          case 'product': {
+            const foundProd = directProductsMap[block.productId];
+            if (!foundProd) return null;
+            return (
+              <DirectProductCard
+                key={`${block.productId}-${index}`}
+                product={foundProd}
+                variant="inline"
+              />
+            );
+          }
+
           case 'paragraph': {
             const isOpening = enableDropCap && !firstParagraphRendered;
             firstParagraphRendered = true;
             return (
               <p
                 key={block.id || index}
-                className={`text-base sm:text-[17px] text-stone-800 leading-[1.82] ${
+                className={`text-base sm:text-[17px] leading-[1.82] ${
+                  isDark ? 'text-stone-200 tracking-[0.01em]' : palette.textClass
+                } ${
                   isOpening
-                    ? 'first-letter:font-serif first-letter:text-5xl first-letter:font-medium first-letter:float-left first-letter:mr-3 first-letter:mt-1 first-letter:leading-none first-letter:text-stone-900'
+                    ? `first-letter:font-serif first-letter:text-5xl first-letter:font-medium first-letter:float-left first-letter:mr-3 first-letter:mt-1 first-letter:leading-none ${palette.textClass}`
                     : ''
                 }`}
               >
-                <InlineFormattedText text={block.text} />
+                <InlineFormattedText text={block.text} isDarkSurface={isDark} />
               </p>
             );
           }

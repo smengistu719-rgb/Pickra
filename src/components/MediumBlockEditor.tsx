@@ -6,22 +6,29 @@ import {
   Bold,
   Bookmark,
   Check,
+  Copy,
   Image as ImageIcon,
   Italic,
   Link2,
+  Lock,
   LogIn,
+  LogOut,
   Maximize2,
   Minimize2,
   Minus,
+  Package,
+  Palette,
   Plus,
   Quote,
   ShoppingBag,
   Trash2,
   Type,
+  Upload,
   Video,
   X,
 } from 'lucide-react';
 import {
+  DirectProductDraftInput,
   OfferDraftInput,
   PostDraftInput,
   useFirebaseApp,
@@ -29,11 +36,18 @@ import {
 import {
   AffiliateOffer,
   AffiliatePlatform,
+  ALL_AFFILIATE_PLATFORMS,
+  BLOG_THEME_PALETTES,
+  BlogColorTheme,
   BlogPost,
+  CalloutColorTheme,
+  DirectProduct,
+  DirectProductKind,
   OfferKind,
   PostCategory,
   PublishStatus,
 } from '../types';
+import { compressImageFileToDataUrl, formatPriceCents } from '../firebase';
 import { PRESET_IMAGES } from '../assets/presetImages';
 import { DEFAULT_DISCLOSURE } from '../data/editorialSeed';
 import {
@@ -48,11 +62,14 @@ import {
 } from '../utils/editorialBlocks';
 import {
   BookmarkLinkCard,
+  CALLOUT_STYLES,
   StoryBlocksRenderer,
   VideoEmbedFigure,
 } from './EditorialRichBlocks';
 import { OfferCard } from './OfferCard';
+import { DirectProductCard } from './DirectProductCard';
 import { ResilientImage } from './ResilientImage';
+import { ImageUploadPicker } from './ImageUploadPicker';
 
 interface MediumBlockEditorProps {
   initialPost?: BlogPost | null;
@@ -60,23 +77,29 @@ interface MediumBlockEditorProps {
   onPublished: (savedPostId: string) => void;
 }
 
-const LOCAL_DRAFT_STORAGE_KEY = 'fieldfolio_medium_story_draft_v1';
-
-const PLATFORMS: AffiliatePlatform[] = [
-  'Amazon',
-  'Digistore24',
-  'Upwork',
-  'Fiverr',
-  'Gumroad',
-  'ClickBank',
-  'Custom',
-];
+const LOCAL_DRAFT_STORAGE_KEY = 'pickra_medium_story_draft_v2';
 
 const POST_CATEGORIES: PostCategory[] = [
   'Field Guides',
   'Hardware & Gear',
   'Digital Systems',
   'Freelance Talent',
+];
+
+const BLOG_THEMES: BlogColorTheme[] = [
+  'classic',
+  'sage',
+  'terracotta',
+  'slate',
+  'midnight',
+];
+
+const CALLOUT_THEMES: CalloutColorTheme[] = [
+  'amber',
+  'sage',
+  'terracotta',
+  'slate',
+  'midnight',
 ];
 
 function AutoResizeTextarea({
@@ -131,19 +154,35 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
 }) => {
   const {
     user,
+    isCreatorAdmin,
+    adminRoleReady,
+    siteConfig,
     studioOffers,
     publishedOffers,
     allAccessibleOffersMap,
+    studioDirectProducts,
+    publishedDirectProducts,
+    allAccessibleDirectProductsMap,
     signInWithGoogle,
+    signOutUser,
     savePost,
+    deletePost,
     saveOffer,
+    saveDirectProduct,
   } = useFirebaseApp();
 
+  const [copiedOwnUid, setCopiedOwnUid] = useState(false);
+  const [confirmDeleteStory, setConfirmDeleteStory] = useState(false);
+
+  // Preserve initialPost.id (including seed_* IDs so editing replaces starter posts seamlessly)
   const [editingPostId, setEditingPostId] = useState<string | undefined>(
-    initialPost && !initialPost.isSeed ? initialPost.id : undefined
+    initialPost?.id
   );
   const [title, setTitle] = useState<string>(initialPost?.title || '');
   const [subtitle, setSubtitle] = useState<string>(initialPost?.subtitle || '');
+  const [blogTheme, setBlogTheme] = useState<BlogColorTheme>(
+    initialPost?.theme || 'classic'
+  );
   const [blocks, setBlocks] = useState<StoryBlock[]>(() => {
     if (initialPost) {
       return markdownToBlocks(initialPost.content);
@@ -162,22 +201,39 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
     return [createEmptyParagraphBlock('')];
   });
 
-  // Load saved title/subtitle if creating fresh draft
+  const [showPublishSheet, setShowPublishSheet] = useState(false);
+  const [editorMode, setEditorMode] = useState<'write' | 'preview'>('write');
+  const [category, setCategory] = useState<PostCategory>(
+    initialPost?.category || 'Field Guides'
+  );
+  const [coverImageValue, setCoverImageValue] = useState<string>(
+    initialPost?.coverImageKey || 'workspace'
+  );
+  const [extraAttachedIds, setExtraAttachedIds] = useState<string[]>(
+    initialPost?.attachedOfferIds || []
+  );
+  const [disclosureText, setDisclosureText] = useState<string>(
+    initialPost?.disclosureText ||
+      siteConfig.defaultDisclosureText ||
+      DEFAULT_DISCLOSURE
+  );
+  const [featured, setFeatured] = useState<boolean>(
+    initialPost?.featured || false
+  );
+  const [publishStatus, setPublishStatus] = useState<PublishStatus>(
+    initialPost?.status === 'draft' ? 'draft' : 'published'
+  );
+
+  // Load saved draft or updated initialPost
   useEffect(() => {
     if (initialPost) {
-      setEditingPostId(initialPost.isSeed ? undefined : initialPost.id);
+      setEditingPostId(initialPost.id);
       setTitle(initialPost.title);
       setSubtitle(initialPost.subtitle);
+      setBlogTheme(initialPost.theme || 'classic');
       setBlocks(markdownToBlocks(initialPost.content));
       setCategory(initialPost.category);
-      const isPreset = PRESET_IMAGES.some((p) => p.key === initialPost.coverImageKey);
-      if (isPreset) {
-        setCoverImageKey(initialPost.coverImageKey);
-        setCustomCoverUrl('');
-      } else {
-        setCoverImageKey('custom');
-        setCustomCoverUrl(initialPost.coverImageKey);
-      }
+      setCoverImageValue(initialPost.coverImageKey || 'workspace');
       setExtraAttachedIds(initialPost.attachedOfferIds);
       setDisclosureText(initialPost.disclosureText || DEFAULT_DISCLOSURE);
       setFeatured(initialPost.featured);
@@ -193,49 +249,29 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
         const parsed = JSON.parse(saved);
         if (typeof parsed.title === 'string') setTitle(parsed.title);
         if (typeof parsed.subtitle === 'string') setSubtitle(parsed.subtitle);
+        if (typeof parsed.blogTheme === 'string') {
+          setBlogTheme(parsed.blogTheme as BlogColorTheme);
+        }
+        if (typeof parsed.coverImageValue === 'string') {
+          setCoverImageValue(parsed.coverImageValue);
+        }
       }
     } catch {
       // ignore
     }
   }, [initialPost]);
 
-  // Story Publish Settings Drawer State
-  const [showPublishSheet, setShowPublishSheet] = useState(false);
-  const [editorMode, setEditorMode] = useState<'write' | 'preview'>('write');
-  const [category, setCategory] = useState<PostCategory>(
-    initialPost?.category || 'Field Guides'
-  );
-  const [coverImageKey, setCoverImageKey] = useState<string>(() => {
-    if (!initialPost) return 'workspace';
-    return PRESET_IMAGES.some((p) => p.key === initialPost.coverImageKey)
-      ? initialPost.coverImageKey
-      : 'custom';
-  });
-  const [customCoverUrl, setCustomCoverUrl] = useState<string>(() => {
-    if (!initialPost) return '';
-    return PRESET_IMAGES.some((p) => p.key === initialPost.coverImageKey)
-      ? ''
-      : initialPost.coverImageKey;
-  });
-  const [extraAttachedIds, setExtraAttachedIds] = useState<string[]>(
-    initialPost?.attachedOfferIds || []
-  );
-  const [disclosureText, setDisclosureText] = useState<string>(
-    initialPost?.disclosureText || DEFAULT_DISCLOSURE
-  );
-  const [featured, setFeatured] = useState<boolean>(
-    initialPost?.featured || false
-  );
-  const [publishStatus, setPublishStatus] = useState<PublishStatus>(
-    initialPost?.status === 'draft' ? 'draft' : 'published'
-  );
-
   // Active Block & Inserter UI State
   const [focusedBlockId, setFocusedBlockId] = useState<string | null>(null);
-  const [openPlusMenuBlockId, setOpenPlusMenuBlockId] = useState<string | null>(null);
+  const [openPlusMenuBlockId, setOpenPlusMenuBlockId] = useState<string | null>(
+    null
+  );
+  const [uploadingBlockId, setUploadingBlockId] = useState<string | null>(null);
 
   // Inline Link Popover State for Text Blocks
-  const [linkPopoverBlockId, setLinkPopoverBlockId] = useState<string | null>(null);
+  const [linkPopoverBlockId, setLinkPopoverBlockId] = useState<string | null>(
+    null
+  );
   const [inlineLinkLabel, setInlineLinkLabel] = useState('');
   const [inlineLinkUrl, setInlineLinkUrl] = useState('');
   const [selectionOffsets, setSelectionOffsets] = useState<{
@@ -249,11 +285,24 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
   >(null);
   const [quickTitle, setQuickTitle] = useState('');
   const [quickKind, setQuickKind] = useState<OfferKind>('physical');
-  const [quickPlatform, setQuickPlatform] = useState<AffiliatePlatform>('Amazon');
+  const [quickPlatform, setQuickPlatform] =
+    useState<AffiliatePlatform>('Amazon');
   const [quickPrice, setQuickPrice] = useState('$99.00');
   const [quickUrl, setQuickUrl] = useState('');
   const [quickImageKey, setQuickImageKey] = useState('audio');
   const [quickSummary, setQuickSummary] = useState('');
+
+  // Quick-Create Direct Store Product Inline Modal inside Direct Product Block
+  const [quickCreateProductBlockId, setQuickCreateProductBlockId] = useState<
+    string | null
+  >(null);
+  const [quickProdTitle, setQuickProdTitle] = useState('');
+  const [quickProdKind, setQuickProdKind] =
+    useState<DirectProductKind>('physical');
+  const [quickProdPriceUsd, setQuickProdPriceUsd] = useState('79.00');
+  const [quickProdSku, setQuickProdSku] = useState('PK-ED-01');
+  const [quickProdImageKey, setQuickProdImageKey] = useState('edition');
+  const [quickProdSummary, setQuickProdSummary] = useState('');
 
   const [busy, setBusy] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{
@@ -261,7 +310,9 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
     text: string;
   } | null>(null);
 
-  const blockTextareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
+  const blockTextareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>(
+    {}
+  );
 
   // Auto-save working draft locally when creating a new story
   useEffect(() => {
@@ -269,12 +320,15 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
     try {
       localStorage.setItem(
         LOCAL_DRAFT_STORAGE_KEY,
-        JSON.stringify({ title, subtitle, blocks })
+        JSON.stringify({ title, subtitle, blocks, blogTheme, coverImageValue })
       );
     } catch {
       // ignore storage errors
     }
-  }, [title, subtitle, blocks, initialPost]);
+  }, [title, subtitle, blocks, blogTheme, coverImageValue, initialPost]);
+
+  const activePalette =
+    BLOG_THEME_PALETTES[blogTheme] || BLOG_THEME_PALETTES.classic;
 
   const attachableOffers: AffiliateOffer[] = useMemo(() => {
     const map = new Map<string, AffiliateOffer>();
@@ -285,12 +339,20 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
     return Array.from(map.values());
   }, [studioOffers, publishedOffers]);
 
+  const attachableDirectProducts: DirectProduct[] = useMemo(() => {
+    const map = new Map<string, DirectProduct>();
+    for (const item of studioDirectProducts) map.set(item.id, item);
+    for (const item of publishedDirectProducts) {
+      if (!map.has(item.id)) map.set(item.id, item);
+    }
+    return Array.from(map.values());
+  }, [studioDirectProducts, publishedDirectProducts]);
+
   const { words, minutes } = useMemo(
     () => computeWordCountAndReadTime(blocks),
     [blocks]
   );
 
-  // Combine inline [[offer:ID]] blocks with manually checked sidebar offers (up to 8)
   const combinedAttachedOfferIds = useMemo(() => {
     const fromBlocks = extractOfferIdsFromBlocks(blocks);
     const merged = Array.from(new Set([...fromBlocks, ...extraAttachedIds]));
@@ -309,7 +371,10 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
     });
   }
 
-  function updateBlock(blockId: string, updater: (prev: StoryBlock) => StoryBlock) {
+  function updateBlock(
+    blockId: string,
+    updater: (prev: StoryBlock) => StoryBlock
+  ) {
     setBlocks((prev) => prev.map((b) => (b.id === blockId ? updater(b) : b)));
   }
 
@@ -473,6 +538,30 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
     focusBlockSoon(blockId);
   }
 
+  async function handleImageBlockFileUpload(
+    blockId: string,
+    e: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingBlockId(blockId);
+    setStatusMessage(null);
+    try {
+      const dataUrl = await compressImageFileToDataUrl(file);
+      updateBlock(blockId, (prev) =>
+        prev.type === 'image' ? { ...prev, src: dataUrl } : prev
+      );
+    } catch (err) {
+      setStatusMessage({
+        tone: 'err',
+        text: err instanceof Error ? err.message : 'Could not upload image.',
+      });
+    } finally {
+      setUploadingBlockId(null);
+      e.target.value = '';
+    }
+  }
+
   function handleTextBlockKeyDown(
     e: React.KeyboardEvent<HTMLTextAreaElement>,
     block: Extract<
@@ -480,19 +569,16 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
       { type: 'paragraph' | 'heading' | 'subheading' | 'quote' }
     >
   ) {
-    // Ctrl/Cmd + K opens Inline Link popover (just like Medium!)
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
       e.preventDefault();
       openInlineLinkPopover(block.id);
       return;
     }
 
-    // Enter without Shift creates a new paragraph block right below
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       const trimmed = block.text.trim().toLowerCase();
 
-      // Slash quick commands on Enter
       if (trimmed === '/image') {
         updateBlock(block.id, () => ({
           id: block.id,
@@ -524,7 +610,30 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
         }));
         return;
       }
-      if (trimmed === '/product' || trimmed === '/offer') {
+      if (trimmed === '/callout' || trimmed === '/theme') {
+        updateBlock(block.id, () => ({
+          id: block.id,
+          type: 'callout',
+          theme: 'sage',
+          title: 'Key Takeaway',
+          text: '',
+        }));
+        return;
+      }
+      if (
+        trimmed === '/store' ||
+        trimmed === '/direct' ||
+        trimmed === '/product'
+      ) {
+        const defaultProductId = attachableDirectProducts[0]?.id || '';
+        updateBlock(block.id, () => ({
+          id: block.id,
+          type: 'product',
+          productId: defaultProductId,
+        }));
+        return;
+      }
+      if (trimmed === '/offer' || trimmed === '/affiliate') {
         const defaultOfferId = attachableOffers[0]?.id || '';
         updateBlock(block.id, () => ({
           id: block.id,
@@ -543,7 +652,6 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
       return;
     }
 
-    // Backspace on an empty block removes it and focuses the previous block
     if (e.key === 'Backspace' && block.text.length === 0 && blocks.length > 1) {
       e.preventDefault();
       removeBlock(block.id);
@@ -555,10 +663,12 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
       | 'paragraph'
       | 'heading'
       | 'quote'
+      | 'callout'
       | 'image'
       | 'video'
       | 'bookmark'
       | 'offer'
+      | 'product'
       | 'divider'
   ): StoryBlock {
     const id = createBlockId();
@@ -569,6 +679,14 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
         return { id, type: 'heading', text: '' };
       case 'quote':
         return { id, type: 'quote', text: '' };
+      case 'callout':
+        return {
+          id,
+          type: 'callout',
+          theme: 'sage',
+          title: 'Key Takeaway',
+          text: '',
+        };
       case 'image':
         return {
           id,
@@ -595,6 +713,12 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
           type: 'offer',
           offerId: attachableOffers[0]?.id || '',
         };
+      case 'product':
+        return {
+          id,
+          type: 'product',
+          productId: attachableDirectProducts[0]?.id || '',
+        };
       case 'divider':
         return { id, type: 'divider' };
     }
@@ -604,12 +728,31 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
     setEditingPostId(undefined);
     setTitle('');
     setSubtitle('');
+    setBlogTheme('classic');
+    setCoverImageValue('workspace');
     setBlocks([createEmptyParagraphBlock('')]);
     setExtraAttachedIds([]);
     try {
       localStorage.removeItem(LOCAL_DRAFT_STORAGE_KEY);
     } catch {
       // ignore
+    }
+  }
+
+  async function handleDeleteCurrentStory() {
+    if (!editingPostId) return;
+    setBusy(true);
+    try {
+      await deletePost(editingPostId);
+      setConfirmDeleteStory(false);
+      onBack();
+    } catch (err) {
+      setStatusMessage({
+        tone: 'err',
+        text: err instanceof Error ? err.message : 'Could not delete blog post.',
+      });
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -625,7 +768,8 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
         title: quickTitle,
         kind: quickKind,
         platform: quickPlatform,
-        category: quickKind === 'service' ? 'Specialist Service' : 'Featured Pick',
+        category:
+          quickKind === 'service' ? 'Professional Service' : 'Featured Pick',
         priceLabel: quickPrice,
         commissionNote: '',
         affiliateUrl: quickUrl,
@@ -646,12 +790,74 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
       setQuickSummary('');
       setStatusMessage({
         tone: 'ok',
-        text: 'Created affiliate product/service and embedded it into your story.',
+        text: 'Created affiliate product/service and embedded it into your blog.',
       });
     } catch (err) {
       setStatusMessage({
         tone: 'err',
         text: err instanceof Error ? err.message : 'Could not create offering.',
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleQuickCreateProductForBlock(targetBlockId: string) {
+    if (!user) {
+      await signInWithGoogle();
+      return;
+    }
+    const parsedUsd = Number.parseFloat(quickProdPriceUsd);
+    const priceCents = Number.isFinite(parsedUsd)
+      ? Math.max(100, Math.round(parsedUsd * 100))
+      : 4900;
+
+    setBusy(true);
+    setStatusMessage(null);
+    try {
+      const input: DirectProductDraftInput = {
+        title: quickProdTitle,
+        subtitle:
+          quickProdSummary.trim().slice(0, 140) ||
+          'Sold directly on Pickra Store with tracked fulfillment.',
+        kind: quickProdKind,
+        category:
+          quickProdKind === 'digital' ? 'Digital Editions' : 'Studio Editions',
+        sku: quickProdSku || 'PK-DIR-01',
+        priceCents,
+        compareAtCents: 0,
+        stockCount: quickProdKind === 'digital' ? 999 : 25,
+        badgeLabel: 'Pickra Direct',
+        imageKey: quickProdImageKey,
+        summary: quickProdSummary,
+        highlights: [],
+        deliveryNote:
+          quickProdKind === 'digital'
+            ? 'Instant digital download after checkout'
+            : 'Ships in 48 hours',
+        featured: false,
+        status: 'published',
+      };
+      const newProductId = await saveDirectProduct(input);
+      updateBlock(targetBlockId, () => ({
+        id: targetBlockId,
+        type: 'product',
+        productId: newProductId,
+      }));
+      setQuickCreateProductBlockId(null);
+      setQuickProdTitle('');
+      setQuickProdSummary('');
+      setStatusMessage({
+        tone: 'ok',
+        text: 'Created Store product and embedded it into your blog.',
+      });
+    } catch (err) {
+      setStatusMessage({
+        tone: 'err',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'Could not create Store product.',
       });
     } finally {
       setBusy(false);
@@ -665,7 +871,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
       } catch {
         setStatusMessage({
           tone: 'err',
-          text: 'Google Sign-In was cancelled. Your story remains safely saved in this browser draft.',
+          text: 'Google Sign-In was cancelled. Your blog remains saved in your browser draft.',
         });
       }
       return;
@@ -675,7 +881,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
     if (title.trim().length < 4) {
       setStatusMessage({
         tone: 'err',
-        text: 'Please add a story title of at least 4 characters.',
+        text: 'Please add a blog title of at least 4 characters.',
       });
       return;
     }
@@ -696,11 +902,6 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
             .trim()
             .slice(0, 180);
 
-    const resolvedCover =
-      coverImageKey === 'custom'
-        ? customCoverUrl.trim() || 'workspace'
-        : coverImageKey;
-
     setBusy(true);
     setStatusMessage(null);
 
@@ -714,8 +915,9 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
             : `${title.trim()} — editorial review and curated links.`,
         category,
         readTimeMinutes: minutes,
-        coverImageKey: resolvedCover,
+        coverImageKey: coverImageValue || 'workspace',
         content: compiledMarkdown,
+        theme: blogTheme,
         attachedOfferIds: combinedAttachedOfferIds,
         disclosureText: disclosureText.trim() || DEFAULT_DISCLOSURE,
         featured,
@@ -746,24 +948,102 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
         setShowPublishSheet(false);
         setStatusMessage({
           tone: 'ok',
-          text: 'Draft saved to your Studio workspace.',
+          text: 'Blog draft saved to your Backend workspace.',
         });
       }
     } catch (err) {
       setStatusMessage({
         tone: 'err',
-        text: err instanceof Error ? err.message : 'Unable to publish story.',
+        text: err instanceof Error ? err.message : 'Unable to publish blog.',
       });
     } finally {
       setBusy(false);
     }
   }
 
+  if (user && adminRoleReady && !isCreatorAdmin) {
+    return (
+      <section className="max-w-[760px] mx-auto px-5 sm:px-8 py-14 sm:py-20">
+        <div className="bg-white border border-stone-200/90 rounded-xl p-8 sm:p-10 space-y-5">
+          <div className="flex items-center gap-2 text-xs font-medium text-[#9A3412]">
+            <Lock className="w-3.5 h-3.5" />
+            <span>Website Owner Blog Publishing Access</span>
+          </div>
+          <h1 className="font-serif text-2xl sm:text-3xl font-medium text-stone-900">
+            Global blog publishing is reserved for the Pickra website owner
+          </h1>
+          <p className="text-sm text-stone-600 leading-relaxed">
+            You are signed in as{' '}
+            <span className="font-mono text-stone-900">{user.email}</span>. As a
+            creator seller, you can publish and sell your own physical or
+            digital products under <strong>Store &rarr; Sell on Pickra</strong>,
+            while global Blog stories are published by the website owner.
+          </p>
+
+          <div className="p-4 bg-[#FBF9F5] border border-stone-200 rounded-lg flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[11px] text-stone-500">Your Account UID</div>
+              <div className="font-mono text-xs text-stone-900 truncate">
+                {user.uid}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(user.uid);
+                  setCopiedOwnUid(true);
+                  window.setTimeout(() => setCopiedOwnUid(false), 1800);
+                } catch {
+                  // ignore clipboard failure
+                }
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-800 bg-white border border-stone-300 hover:bg-stone-100 rounded-lg cursor-pointer whitespace-nowrap shrink-0"
+            >
+              {copiedOwnUid ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>UID Copied</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copy UID</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          <div className="pt-2 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => void signOutUser()}
+              className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Switch Google Account</span>
+            </button>
+            <button
+              type="button"
+              onClick={onBack}
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium text-stone-700 bg-[#F3EFE8] hover:bg-stone-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Back to Blog</span>
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
-    <div className="min-h-[82vh] bg-[#FBF9F5]">
-      {/* Medium-Style Minimal Story Bar */}
-      <div className="border-b border-stone-200/80 bg-[#FBF9F5]">
-        <div className="max-w-[960px] mx-auto px-5 sm:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4">
+    <div
+      className={`min-h-[82vh] transition-colors duration-200 ${activePalette.canvasClass}`}
+    >
+      {/* Medium-Style Minimal Story Bar + Live Color Theme Picker */}
+      <div className="border-b border-stone-200/80 bg-[#FBF9F5] text-stone-900">
+        <div className="max-w-[1040px] mx-auto px-5 sm:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <button
               type="button"
@@ -771,11 +1051,13 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
               className="inline-flex items-center gap-1.5 text-xs font-medium text-stone-600 hover:text-stone-900 transition-colors cursor-pointer whitespace-nowrap shrink-0"
             >
               <ArrowLeft className="w-4 h-4" />
-              <span>Back</span>
+              <span>Back to Blog</span>
             </button>
 
             <div className="hidden sm:flex items-center gap-2 text-xs text-stone-500">
-              <span>{editingPostId ? 'Editing story' : 'Draft in progress'}</span>
+              <span>
+                {editingPostId ? 'Editing blog story' : 'Draft in progress'}
+              </span>
               <span aria-hidden="true">·</span>
               <span className="font-mono tabular-nums">{words} words</span>
               <span aria-hidden="true">·</span>
@@ -783,7 +1065,37 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Blog Color Theme Selector */}
+            <div
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-stone-200 rounded-lg"
+              title="Choose blog color theme"
+            >
+              <Palette className="w-3.5 h-3.5 text-[#9A3412] shrink-0" />
+              <span className="hidden md:inline text-[11px] font-medium text-stone-600">
+                Theme:
+              </span>
+              {BLOG_THEMES.map((tId) => {
+                const cfg = BLOG_THEME_PALETTES[tId];
+                const selected = blogTheme === tId;
+                return (
+                  <button
+                    key={tId}
+                    type="button"
+                    onClick={() => setBlogTheme(tId)}
+                    title={cfg.label}
+                    aria-label={`Select ${cfg.label} color theme`}
+                    className={`w-4 h-4 rounded-full border transition-transform cursor-pointer ${
+                      selected
+                        ? 'scale-110 ring-2 ring-[#9A3412] border-transparent'
+                        : 'border-stone-300 hover:scale-105'
+                    }`}
+                    style={{ backgroundColor: cfg.swatchHex }}
+                  />
+                );
+              })}
+            </div>
+
             <div className="inline-flex items-center gap-1 p-1 bg-[#F3EFE8] rounded-lg">
               <button
                 type="button"
@@ -809,15 +1121,49 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
               </button>
             </div>
 
-            {!initialPost && (title || blocks.length > 1 || (blocks[0]?.type === 'paragraph' && blocks[0].text)) && (
-              <button
-                type="button"
-                onClick={clearDraftCanvas}
-                className="hidden md:inline-flex px-3 py-1.5 text-xs font-medium text-stone-500 hover:text-stone-900 cursor-pointer whitespace-nowrap shrink-0"
-              >
-                Clear
-              </button>
+            {editingPostId && isCreatorAdmin && (
+              confirmDeleteStory ? (
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-red-50 border border-red-200 rounded-lg text-xs">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void handleDeleteCurrentStory()}
+                    className="font-semibold text-red-700 hover:underline cursor-pointer whitespace-nowrap"
+                  >
+                    Confirm Delete
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteStory(false)}
+                    className="text-stone-500 hover:text-stone-800 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteStory(true)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-stone-600 hover:text-red-700 border border-stone-200 rounded-lg bg-white cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Delete</span>
+                </button>
+              )
             )}
+
+            {!initialPost &&
+              (title ||
+                blocks.length > 1 ||
+                (blocks[0]?.type === 'paragraph' && blocks[0].text)) && (
+                <button
+                  type="button"
+                  onClick={clearDraftCanvas}
+                  className="hidden md:inline-flex px-3 py-1.5 text-xs font-medium text-stone-500 hover:text-stone-900 cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  Clear
+                </button>
+              )}
 
             <button
               type="button"
@@ -832,7 +1178,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
 
       {/* Status Notification */}
       {statusMessage && (
-        <div className="max-w-[760px] mx-auto px-5 sm:px-8 pt-5">
+        <div className="max-w-[780px] mx-auto px-5 sm:px-8 pt-5">
           <div
             role="status"
             className={`px-4 py-3 rounded-lg border text-xs flex items-center justify-between gap-4 ${
@@ -855,47 +1201,25 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
 
       {/* Medium-Style Story Settings & Publish Panel */}
       {showPublishSheet && (
-        <div className="border-b border-stone-200 bg-white">
-          <div className="max-w-[960px] mx-auto px-5 sm:px-8 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
-            {/* Story Card Preview & Cover */}
+        <div className="border-b border-stone-200 bg-white text-stone-900">
+          <div className="max-w-[1040px] mx-auto px-5 sm:px-8 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
+            {/* Story Card Preview, Local Cover Upload & Theme */}
             <div className="lg:col-span-5 space-y-4">
               <h2 className="font-serif text-lg font-medium text-stone-900">
-                Story Preview &amp; Cover Image
+                Cover Image, Category &amp; Color Theme
               </h2>
-              <div className="aspect-[16/9] rounded-xl overflow-hidden bg-[#F3EFE8] border border-stone-200">
-                <ResilientImage
-                  imageKey={
-                    coverImageKey === 'custom'
-                      ? customCoverUrl || 'workspace'
-                      : coverImageKey
-                  }
-                  alt={title || 'Story cover'}
-                  className="w-full h-full object-cover"
-                />
-              </div>
+
+              <ImageUploadPicker
+                value={coverImageValue}
+                onChange={setCoverImageValue}
+                label="Blog Cover Photography (Upload or URL)"
+                showPreview={true}
+              />
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-stone-700 mb-1">
-                    Cover Photography
-                  </label>
-                  <select
-                    value={coverImageKey}
-                    onChange={(e) => setCoverImageKey(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
-                  >
-                    {PRESET_IMAGES.map((img) => (
-                      <option key={img.key} value={img.key}>
-                        {img.label}
-                      </option>
-                    ))}
-                    <option value="custom">Custom HTTPS Image URL...</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-stone-700 mb-1">
-                    Editorial Category
+                    Blog Category
                   </label>
                   <select
                     value={category}
@@ -909,17 +1233,26 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                     ))}
                   </select>
                 </div>
-              </div>
 
-              {coverImageKey === 'custom' && (
-                <input
-                  type="url"
-                  value={customCoverUrl}
-                  onChange={(e) => setCustomCoverUrl(e.target.value)}
-                  placeholder="https://example.com/story-cover.jpg"
-                  className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
-                />
-              )}
+                <div>
+                  <label className="block text-xs font-medium text-stone-700 mb-1">
+                    Article Color Theme
+                  </label>
+                  <select
+                    value={blogTheme}
+                    onChange={(e) =>
+                      setBlogTheme(e.target.value as BlogColorTheme)
+                    }
+                    className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                  >
+                    {BLOG_THEMES.map((tId) => (
+                      <option key={tId} value={tId}>
+                        {BLOG_THEME_PALETTES[tId].label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
 
               <label className="flex items-center gap-2.5 text-xs font-medium text-stone-800 pt-1 cursor-pointer">
                 <input
@@ -928,7 +1261,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                   onChange={(e) => setFeatured(e.target.checked)}
                   className="accent-[#9A3412] w-4 h-4"
                 />
-                <span>Feature as Lead Story on Homepage Hero</span>
+                <span>Feature as Lead Story on Blog Hero</span>
               </label>
             </div>
 
@@ -940,11 +1273,11 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                     Sidebar Affiliate Picks ({combinedAttachedOfferIds.length}/8)
                   </h3>
                   <p className="text-xs text-stone-500 mt-0.5">
-                    Any Affiliate Pick blocks in your story are included automatically. You can also attach extra catalog items to the sticky article rail:
+                    Any Affiliate Pick blocks inside your blog are included automatically. You can also attach extra affiliate products or services to the sticky reading rail:
                   </p>
                 </div>
 
-                <div className="max-h-40 overflow-y-auto divide-y divide-stone-200/80 border border-stone-200 rounded-lg bg-[#FBF9F5]">
+                <div className="max-h-44 overflow-y-auto divide-y divide-stone-200/80 border border-stone-200 rounded-lg bg-[#FBF9F5]">
                   {attachableOffers.map((offer) => {
                     const checked = combinedAttachedOfferIds.includes(offer.id);
                     return (
@@ -997,7 +1330,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                 {!user ? (
                   <div className="flex flex-wrap items-center justify-between gap-3 w-full">
                     <span className="text-xs text-stone-600">
-                      Sign in with Google to publish this story live to Pickra.
+                      Sign in with Google to publish this blog live to Pickra for global readers.
                     </span>
                     <button
                       type="button"
@@ -1024,14 +1357,18 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                       disabled={busy}
                       onClick={() =>
                         void handleSaveOrPublish(
-                          publishStatus === 'archived' ? 'archived' : 'published'
+                          publishStatus === 'archived'
+                            ? 'archived'
+                            : 'published'
                         )
                       }
                       className="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg transition-colors cursor-pointer disabled:opacity-50"
                     >
                       <Check className="w-4 h-4" />
                       <span>
-                        {editingPostId ? 'Update & Publish Story' : 'Publish Story Now'}
+                        {editingPostId
+                          ? 'Update & Publish Blog'
+                          : 'Publish Blog to Global Audience'}
                       </span>
                     </button>
                   </>
@@ -1045,31 +1382,37 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
       {/* MAIN WRITING CANVAS OR READER PREVIEW */}
       {editorMode === 'preview' ? (
         <div className="max-w-[760px] mx-auto px-5 sm:px-8 py-12">
-          <div className="text-xs text-stone-500">
+          <div className={`text-xs ${activePalette.mutedClass}`}>
             <span className="font-medium text-[#9A3412]">{category}</span>
             <span className="mx-2" aria-hidden="true">
               ·
             </span>
-            <span className="tabular-nums">{minutes} min read</span>
+            <span className="font-mono tabular-nums">{minutes} min read</span>
+            <span className="mx-2" aria-hidden="true">
+              ·
+            </span>
+            <span>Theme: {activePalette.label}</span>
           </div>
 
-          <h1 className="mt-3 font-serif text-3xl sm:text-4xl lg:text-[2.75rem] font-medium text-stone-900 leading-[1.15]">
-            {title || 'Untitled Story'}
+          <h1
+            className={`mt-3 font-serif text-3xl sm:text-4xl lg:text-[2.75rem] font-medium ${activePalette.textClass} leading-[1.15]`}
+          >
+            {title || 'Untitled Blog Story'}
           </h1>
 
           {subtitle && (
-            <p className="mt-4 text-lg sm:text-xl text-stone-600 leading-relaxed">
+            <p
+              className={`mt-4 text-lg sm:text-xl ${activePalette.mutedClass} leading-relaxed`}
+            >
               {subtitle}
             </p>
           )}
 
-          <div className="my-8 aspect-[16/9] rounded-xl overflow-hidden bg-[#F3EFE8] border border-stone-200/80">
+          <div
+            className={`my-8 aspect-[16/9] rounded-xl overflow-hidden bg-[#F3EFE8] border ${activePalette.borderClass}`}
+          >
             <ResilientImage
-              imageKey={
-                coverImageKey === 'custom'
-                  ? customCoverUrl || 'workspace'
-                  : coverImageKey
-              }
+              imageKey={coverImageValue || 'workspace'}
               alt={title || 'Story cover'}
               className="w-full h-full object-cover"
             />
@@ -1078,7 +1421,9 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
           <StoryBlocksRenderer
             blocks={blocks}
             offersMap={allAccessibleOffersMap}
+            directProductsMap={allAccessibleDirectProductsMap}
             enableDropCap={true}
+            articleTheme={blogTheme}
           />
         </div>
       ) : (
@@ -1088,16 +1433,16 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
             <AutoResizeTextarea
               value={title}
               onChange={setTitle}
-              placeholder="Title"
-              className="font-serif text-3xl sm:text-4xl lg:text-[2.65rem] font-medium text-stone-900 placeholder:text-stone-300 leading-[1.16] tracking-tight"
+              placeholder="Blog Title"
+              className={`font-serif text-3xl sm:text-4xl lg:text-[2.65rem] font-medium ${activePalette.textClass} placeholder:text-stone-400 leading-[1.16] tracking-tight`}
             />
 
-            <div className="mt-3 pb-6 border-b border-stone-200/70">
+            <div className={`mt-3 pb-6 border-b ${activePalette.borderClass}`}>
               <AutoResizeTextarea
                 value={subtitle}
                 onChange={setSubtitle}
-                placeholder="Tell a concise subtitle or standfirst..."
-                className="text-lg sm:text-xl text-stone-600 placeholder:text-stone-300 leading-relaxed"
+                placeholder="Write a subtitle or summary..."
+                className={`text-lg sm:text-xl ${activePalette.mutedClass} placeholder:text-stone-400 leading-relaxed`}
               />
             </div>
           </div>
@@ -1113,7 +1458,6 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                 block.type === 'subheading' ||
                 block.type === 'quote';
 
-              // Extract inline links inside current block to show subtle link verification bar
               const inlineLinksInBlock: { label: string; url: string }[] = [];
               if (isTextKind && block.text.includes('](')) {
                 const regex = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
@@ -1129,7 +1473,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                     {/* Left Gutter Medium '+' Button */}
                     <button
                       type="button"
-                      title="Insert block below"
+                      title="Insert image, video, link, color callout, or product block"
                       aria-label="Insert block below"
                       onClick={() =>
                         setOpenPlusMenuBlockId((prev) =>
@@ -1139,7 +1483,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                       className={`mt-1 w-8 h-8 rounded-full border flex items-center justify-center transition-all cursor-pointer shrink-0 ${
                         isPlusOpen
                           ? 'border-stone-900 bg-stone-900 text-white rotate-45'
-                          : 'border-stone-300 text-stone-500 hover:border-stone-800 hover:text-stone-900 bg-white/80'
+                          : 'border-stone-300 text-stone-600 hover:border-stone-900 hover:text-stone-900 bg-white'
                       }`}
                     >
                       <Plus className="w-4 h-4" />
@@ -1255,10 +1599,10 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
 
                       {/* Inline Link Insertion Popover */}
                       {linkPopoverBlockId === block.id && (
-                        <div className="mb-3 p-4 bg-white border border-stone-300 rounded-xl shadow-xs space-y-3">
+                        <div className="mb-3 p-4 bg-white text-stone-900 border border-stone-300 rounded-xl shadow-xs space-y-3">
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-semibold text-stone-900">
-                              Insert Inline Hyperlink or Affiliate Link
+                              Insert Inline Link or Affiliate Link
                             </span>
                             <button
                               type="button"
@@ -1277,7 +1621,9 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                               <input
                                 type="text"
                                 value={inlineLinkLabel}
-                                onChange={(e) => setInlineLinkLabel(e.target.value)}
+                                onChange={(e) =>
+                                  setInlineLinkLabel(e.target.value)
+                                }
                                 placeholder="e.g., Check price on Amazon"
                                 className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
                               />
@@ -1301,7 +1647,9 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                                 }}
                                 className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
                               >
-                                <option value="">Or choose a saved product/service...</option>
+                                <option value="">
+                                  Or choose a saved product/service...
+                                </option>
                                 {attachableOffers.map((o) => (
                                   <option key={o.id} value={o.id}>
                                     {o.platform}: {o.title}
@@ -1316,7 +1664,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                               type="url"
                               value={inlineLinkUrl}
                               onChange={(e) => setInlineLinkUrl(e.target.value)}
-                              placeholder="https://www.amazon.com/... or https://www.upwork.com/..."
+                              placeholder="https://www.amazon.com/... or https://www.fiverr.com/..."
                               className="flex-1 px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
                             />
                             <button
@@ -1330,7 +1678,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                         </div>
                       )}
 
-                      {/* RENDER EACH BLOCK EDITOR TYPE */}
+                      {/* PARAGRAPH BLOCK */}
                       {block.type === 'paragraph' && (
                         <div>
                           <AutoResizeTextarea
@@ -1348,10 +1696,10 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                             }
                             placeholder={
                               index === 0
-                                ? 'Tell your story... (Click + on the left to add images, videos, links, or affiliate products)'
+                                ? 'Tell your story... (Click + on the left to upload images, embed videos, add links, color callouts, or affiliate products)'
                                 : 'Write paragraph, or press + to insert media...'
                             }
-                            className="text-base sm:text-[17px] text-stone-800 placeholder:text-stone-400 leading-[1.8]"
+                            className={`text-base sm:text-[17px] ${activePalette.textClass} placeholder:text-stone-400 leading-[1.8]`}
                           />
                           {inlineLinksInBlock.length > 0 && (
                             <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px] text-stone-500">
@@ -1374,6 +1722,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                         </div>
                       )}
 
+                      {/* HEADING BLOCK */}
                       {block.type === 'heading' && (
                         <AutoResizeTextarea
                           textareaRef={(el) => {
@@ -1389,10 +1738,11 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                             }))
                           }
                           placeholder="Section heading..."
-                          className="pt-2 font-serif text-2xl sm:text-[1.65rem] font-medium text-stone-900 placeholder:text-stone-300 leading-snug"
+                          className={`pt-2 font-serif text-2xl sm:text-[1.65rem] font-medium ${activePalette.textClass} placeholder:text-stone-400 leading-snug`}
                         />
                       )}
 
+                      {/* SUBHEADING BLOCK */}
                       {block.type === 'subheading' && (
                         <AutoResizeTextarea
                           textareaRef={(el) => {
@@ -1408,12 +1758,15 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                             }))
                           }
                           placeholder="Subheading..."
-                          className="pt-1 font-serif text-xl font-medium text-stone-800 placeholder:text-stone-300 leading-snug"
+                          className={`pt-1 font-serif text-xl font-medium ${activePalette.textClass} placeholder:text-stone-400 leading-snug`}
                         />
                       )}
 
+                      {/* QUOTE BLOCK */}
                       {block.type === 'quote' && (
-                        <div className="py-4 border-y border-stone-300/80">
+                        <div
+                          className={`py-4 border-y ${activePalette.borderClass}`}
+                        >
                           <AutoResizeTextarea
                             textareaRef={(el) => {
                               blockTextareaRefs.current[block.id] = el;
@@ -1428,21 +1781,147 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                               }))
                             }
                             placeholder="Write a memorable pull quote..."
-                            className="font-serif italic text-xl sm:text-2xl text-stone-800 placeholder:text-stone-300 leading-relaxed"
+                            className={`font-serif italic text-xl sm:text-2xl ${activePalette.textClass} placeholder:text-stone-400 leading-relaxed`}
                           />
                         </div>
                       )}
 
-                      {/* IMAGE BLOCK */}
+                      {/* INLINE COLOR THEME CALLOUT BLOCK */}
+                      {block.type === 'callout' && (
+                        <div
+                          className={`my-2 rounded-xl p-4 sm:p-5 space-y-3 ${
+                            CALLOUT_STYLES[block.theme]?.boxClass ||
+                            CALLOUT_STYLES.amber.boxClass
+                          }`}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-black/10">
+                            <div className="flex items-center gap-2">
+                              <Palette className="w-3.5 h-3.5 opacity-80" />
+                              <span
+                                className={`text-xs font-semibold ${
+                                  CALLOUT_STYLES[block.theme]?.titleClass || ''
+                                }`}
+                              >
+                                Color Theme Callout
+                              </span>
+                              <div className="flex items-center gap-1 ml-1">
+                                {CALLOUT_THEMES.map((cTheme) => (
+                                  <button
+                                    key={cTheme}
+                                    type="button"
+                                    title={CALLOUT_STYLES[cTheme].label}
+                                    onClick={() =>
+                                      updateBlock(block.id, (prev) =>
+                                        prev.type === 'callout'
+                                          ? { ...prev, theme: cTheme }
+                                          : prev
+                                      )
+                                    }
+                                    className={`w-4 h-4 rounded-full border cursor-pointer ${
+                                      block.theme === cTheme
+                                        ? 'ring-2 ring-[#9A3412] border-transparent scale-110'
+                                        : 'border-stone-400/60'
+                                    }`}
+                                    style={{
+                                      backgroundColor:
+                                        CALLOUT_STYLES[cTheme].swatch,
+                                    }}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => moveBlock(block.id, -1)}
+                                disabled={index === 0}
+                                className="p-1 opacity-70 hover:opacity-100 disabled:opacity-30 cursor-pointer"
+                              >
+                                <ArrowUp className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => moveBlock(block.id, 1)}
+                                disabled={index === blocks.length - 1}
+                                className="p-1 opacity-70 hover:opacity-100 disabled:opacity-30 cursor-pointer"
+                              >
+                                <ArrowDown className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => removeBlock(block.id)}
+                                className="p-1 opacity-70 hover:opacity-100 cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          <input
+                            type="text"
+                            value={block.title}
+                            onChange={(e) =>
+                              updateBlock(block.id, (prev) =>
+                                prev.type === 'callout'
+                                  ? { ...prev, title: e.target.value }
+                                  : prev
+                              )
+                            }
+                            placeholder="Callout title (e.g., Buyer Tip, Spec Verdict)..."
+                            className={`w-full font-serif text-lg font-medium bg-transparent focus:outline-none ${
+                              CALLOUT_STYLES[block.theme]?.titleClass || ''
+                            }`}
+                          />
+
+                          <AutoResizeTextarea
+                            textareaRef={(el) => {
+                              blockTextareaRefs.current[block.id] = el;
+                            }}
+                            value={block.text}
+                            onFocus={() => setFocusedBlockId(block.id)}
+                            onChange={(val) =>
+                              updateBlock(block.id, (prev) =>
+                                prev.type === 'callout'
+                                  ? { ...prev, text: val }
+                                  : prev
+                              )
+                            }
+                            placeholder="Write callout content (supports **bold**, *italic*, and [links](https://...))..."
+                            className={`text-sm leading-relaxed ${
+                              CALLOUT_STYLES[block.theme]?.bodyClass || ''
+                            }`}
+                          />
+                        </div>
+                      )}
+
+                      {/* IMAGE BLOCK WITH DIRECT DEVICE UPLOAD */}
                       {block.type === 'image' && (
-                        <div className="my-2 p-4 sm:p-5 bg-white border border-stone-200/90 rounded-xl space-y-4">
+                        <div className="my-2 p-4 sm:p-5 bg-white text-stone-900 border border-stone-200/90 rounded-xl space-y-4">
                           <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-stone-100">
                             <span className="text-xs font-semibold text-stone-800 inline-flex items-center gap-1.5">
                               <ImageIcon className="w-4 h-4 text-[#9A3412]" />
-                              <span>Image Block</span>
+                              <span>Image Block (Upload or Link)</span>
                             </span>
 
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <label className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-white bg-[#1C1917] hover:bg-[#9A3412] rounded cursor-pointer whitespace-nowrap">
+                                <Upload className="w-3 h-3" />
+                                <span>
+                                  {uploadingBlockId === block.id
+                                    ? 'Uploading...'
+                                    : 'Upload Photo'}
+                                </span>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  onChange={(e) =>
+                                    void handleImageBlockFileUpload(block.id, e)
+                                  }
+                                  className="hidden"
+                                />
+                              </label>
+
                               <button
                                 type="button"
                                 onClick={() =>
@@ -1499,7 +1978,9 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                               <input
                                 type="url"
                                 value={
-                                  block.src.startsWith('https://') ? block.src : ''
+                                  block.src.startsWith('https://')
+                                    ? block.src
+                                    : ''
                                 }
                                 onChange={(e) =>
                                   updateBlock(block.id, (prev) => ({
@@ -1514,7 +1995,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
 
                             <div>
                               <label className="block text-[11px] text-stone-500 mb-1">
-                                Or Pick From Studio Photography
+                                Or Pick Studio Photography
                               </label>
                               <select
                                 value={
@@ -1532,7 +2013,11 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                                 }}
                                 className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
                               >
-                                <option value="">Custom URL active</option>
+                                <option value="">
+                                  {block.src.startsWith('data:image/')
+                                    ? 'Uploaded device photo active'
+                                    : 'Custom URL active'}
+                                </option>
                                 {PRESET_IMAGES.map((img) => (
                                   <option key={img.key} value={img.key}>
                                     {img.label}
@@ -1585,7 +2070,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
 
                       {/* VIDEO BLOCK */}
                       {block.type === 'video' && (
-                        <div className="my-2 p-4 sm:p-5 bg-white border border-stone-200/90 rounded-xl space-y-4">
+                        <div className="my-2 p-4 sm:p-5 bg-white text-stone-900 border border-stone-200/90 rounded-xl space-y-4">
                           <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-stone-100">
                             <span className="text-xs font-semibold text-stone-800 inline-flex items-center gap-1.5">
                               <Video className="w-4 h-4 text-[#9A3412]" />
@@ -1641,7 +2126,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                             <VideoEmbedFigure url={block.url} />
                           ) : (
                             <div className="py-10 px-4 text-center rounded-lg bg-[#F5F2EB] border border-dashed border-stone-300 text-xs text-stone-500">
-                              Paste a YouTube, Vimeo, Loom, or direct .mp4 video URL above to embed a responsive 16:9 video player in your story.
+                              Paste a YouTube, Vimeo, Loom, or direct .mp4 video URL above to embed a responsive 16:9 video player in your blog.
                             </div>
                           )}
 
@@ -1662,7 +2147,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
 
                       {/* BOOKMARK / RICH LINK CARD BLOCK */}
                       {block.type === 'bookmark' && (
-                        <div className="my-2 p-4 sm:p-5 bg-white border border-stone-200/90 rounded-xl space-y-3">
+                        <div className="my-2 p-4 sm:p-5 bg-white text-stone-900 border border-stone-200/90 rounded-xl space-y-3">
                           <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-stone-100">
                             <span className="text-xs font-semibold text-stone-800 inline-flex items-center gap-1.5">
                               <Bookmark className="w-4 h-4 text-[#9A3412]" />
@@ -1738,7 +2223,9 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                                 }}
                                 className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
                               >
-                                <option value="">Select saved product or service...</option>
+                                <option value="">
+                                  Select saved product or service...
+                                </option>
                                 {attachableOffers.map((o) => (
                                   <option key={o.id} value={o.id}>
                                     {o.platform}: {o.title}
@@ -1784,7 +2271,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                                 description: e.target.value,
                               }))
                             }
-                            placeholder="Short description shown on the bookmark card..."
+                            placeholder="Short description shown on the link card..."
                             className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
                           />
 
@@ -1805,11 +2292,13 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
 
                       {/* AFFILIATE OFFER CARD BLOCK */}
                       {block.type === 'offer' && (
-                        <div className="my-2 p-4 sm:p-5 bg-white border border-stone-200/90 rounded-xl space-y-4">
+                        <div className="my-2 p-4 sm:p-5 bg-white text-stone-900 border border-stone-200/90 rounded-xl space-y-4">
                           <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-stone-100">
                             <span className="text-xs font-semibold text-stone-800 inline-flex items-center gap-1.5">
                               <ShoppingBag className="w-4 h-4 text-[#9A3412]" />
-                              <span>Affiliate Product / Service Conversion Block</span>
+                              <span>
+                                Affiliate Product / Service Block
+                              </span>
                             </span>
 
                             <div className="flex items-center gap-2">
@@ -1858,7 +2347,9 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                                 <input
                                   type="text"
                                   value={quickTitle}
-                                  onChange={(e) => setQuickTitle(e.target.value)}
+                                  onChange={(e) =>
+                                    setQuickTitle(e.target.value)
+                                  }
                                   placeholder="Product or Service Name"
                                   className="sm:col-span-2 px-3 py-2 text-xs bg-white border border-stone-300 rounded-md"
                                 />
@@ -1869,12 +2360,18 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                                   }
                                   className="px-3 py-2 text-xs bg-white border border-stone-300 rounded-md"
                                 >
-                                  <option value="physical">Physical Product</option>
-                                  <option value="digital">Digital Product</option>
-                                  <option value="service">Freelance Service</option>
+                                  <option value="physical">
+                                    Physical Product
+                                  </option>
+                                  <option value="digital">
+                                    Digital Product
+                                  </option>
+                                  <option value="service">
+                                    Professional Service
+                                  </option>
                                 </select>
                               </div>
-                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <select
                                   value={quickPlatform}
                                   onChange={(e) =>
@@ -1884,7 +2381,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                                   }
                                   className="px-3 py-2 text-xs bg-white border border-stone-300 rounded-md"
                                 >
-                                  {PLATFORMS.map((p) => (
+                                  {ALL_AFFILIATE_PLATFORMS.map((p) => (
                                     <option key={p} value={p}>
                                       {p}
                                     </option>
@@ -1893,33 +2390,33 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                                 <input
                                   type="text"
                                   value={quickPrice}
-                                  onChange={(e) => setQuickPrice(e.target.value)}
+                                  onChange={(e) =>
+                                    setQuickPrice(e.target.value)
+                                  }
                                   placeholder="$149.00 or From $85/hr"
                                   className="px-3 py-2 text-xs font-mono bg-white border border-stone-300 rounded-md"
                                 />
-                                <select
-                                  value={quickImageKey}
-                                  onChange={(e) => setQuickImageKey(e.target.value)}
-                                  className="px-3 py-2 text-xs bg-white border border-stone-300 rounded-md"
-                                >
-                                  {PRESET_IMAGES.map((img) => (
-                                    <option key={img.key} value={img.key}>
-                                      {img.label}
-                                    </option>
-                                  ))}
-                                </select>
                               </div>
+                              <ImageUploadPicker
+                                value={quickImageKey}
+                                onChange={setQuickImageKey}
+                                label="Product / Service Image"
+                                showPreview={false}
+                                compact={true}
+                              />
                               <input
                                 type="url"
                                 value={quickUrl}
                                 onChange={(e) => setQuickUrl(e.target.value)}
-                                placeholder="https://www.amazon.com/... or https://www.upwork.com/..."
+                                placeholder="https://www.amazon.com/... or https://www.fiverr.com/..."
                                 className="w-full px-3 py-2 text-xs bg-white border border-stone-300 rounded-md"
                               />
                               <textarea
                                 rows={2}
                                 value={quickSummary}
-                                onChange={(e) => setQuickSummary(e.target.value)}
+                                onChange={(e) =>
+                                  setQuickSummary(e.target.value)
+                                }
                                 placeholder="Editorial summary (at least 10 characters)..."
                                 className="w-full px-3 py-2 text-xs bg-white border border-stone-300 rounded-md"
                               />
@@ -1928,7 +2425,9 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                                   type="button"
                                   disabled={busy}
                                   onClick={() =>
-                                    void handleQuickCreateOfferForBlock(block.id)
+                                    void handleQuickCreateOfferForBlock(
+                                      block.id
+                                    )
                                   }
                                   className="px-4 py-2 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-md cursor-pointer"
                                 >
@@ -1941,7 +2440,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                           ) : (
                             <div>
                               <label className="block text-[11px] text-stone-500 mb-1">
-                                Choose Saved Product or Freelance Service
+                                Choose Saved Affiliate Product or Service
                               </label>
                               <select
                                 value={block.offerId}
@@ -1956,7 +2455,8 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                               >
                                 {attachableOffers.map((o) => (
                                   <option key={o.id} value={o.id}>
-                                    {o.platform} ({o.kind}) — {o.title} · {o.priceLabel}
+                                    {o.platform} ({o.kind}) — {o.title} ·{' '}
+                                    {o.priceLabel}
                                   </option>
                                 ))}
                               </select>
@@ -1966,6 +2466,180 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                           {allAccessibleOffersMap[block.offerId] && (
                             <OfferCard
                               offer={allAccessibleOffersMap[block.offerId]}
+                              variant="inline"
+                            />
+                          )}
+                        </div>
+                      )}
+
+                      {/* PICKRA STORE PRODUCT BLOCK */}
+                      {block.type === 'product' && (
+                        <div className="my-2 p-4 sm:p-5 bg-white text-stone-900 border border-stone-200/90 rounded-xl space-y-4">
+                          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-stone-100">
+                            <span className="text-xs font-semibold text-stone-800 inline-flex items-center gap-1.5">
+                              <Package className="w-4 h-4 text-[#9A3412]" />
+                              <span>Pickra Store Product (Buy Direct Block)</span>
+                            </span>
+
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setQuickCreateProductBlockId((prev) =>
+                                    prev === block.id ? null : block.id
+                                  )
+                                }
+                                className="px-2.5 py-1 text-[11px] font-medium text-[#9A3412] bg-[#F5F2EB] hover:bg-stone-200 rounded cursor-pointer"
+                              >
+                                {quickCreateProductBlockId === block.id
+                                  ? 'Close New Form'
+                                  : '+ Create Store Product'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => moveBlock(block.id, -1)}
+                                disabled={index === 0}
+                                className="p-1 text-stone-400 hover:text-stone-800 disabled:opacity-30 cursor-pointer"
+                              >
+                                <ArrowUp className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => moveBlock(block.id, 1)}
+                                disabled={index === blocks.length - 1}
+                                className="p-1 text-stone-400 hover:text-stone-800 disabled:opacity-30 cursor-pointer"
+                              >
+                                <ArrowDown className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => removeBlock(block.id)}
+                                className="p-1 text-stone-400 hover:text-red-700 cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {quickCreateProductBlockId === block.id ? (
+                            <div className="p-4 bg-[#FBF9F5] border border-stone-200 rounded-lg space-y-3">
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                <input
+                                  type="text"
+                                  value={quickProdTitle}
+                                  onChange={(e) =>
+                                    setQuickProdTitle(e.target.value)
+                                  }
+                                  placeholder="Direct Product Title"
+                                  className="sm:col-span-2 px-3 py-2 text-xs bg-white border border-stone-300 rounded-md"
+                                />
+                                <select
+                                  value={quickProdKind}
+                                  onChange={(e) =>
+                                    setQuickProdKind(
+                                      e.target.value as DirectProductKind
+                                    )
+                                  }
+                                  className="px-3 py-2 text-xs bg-white border border-stone-300 rounded-md"
+                                >
+                                  <option value="physical">
+                                    Physical Product
+                                  </option>
+                                  <option value="digital">
+                                    Instant Digital
+                                  </option>
+                                </select>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <input
+                                  type="number"
+                                  min="1"
+                                  step="0.01"
+                                  value={quickProdPriceUsd}
+                                  onChange={(e) =>
+                                    setQuickProdPriceUsd(e.target.value)
+                                  }
+                                  placeholder="79.00"
+                                  className="px-3 py-2 text-xs font-mono bg-white border border-stone-300 rounded-md"
+                                />
+                                <input
+                                  type="text"
+                                  value={quickProdSku}
+                                  onChange={(e) =>
+                                    setQuickProdSku(e.target.value)
+                                  }
+                                  placeholder="SKU (e.g. PK-ED-01)"
+                                  className="px-3 py-2 text-xs font-mono bg-white border border-stone-300 rounded-md"
+                                />
+                              </div>
+
+                              <ImageUploadPicker
+                                value={quickProdImageKey}
+                                onChange={setQuickProdImageKey}
+                                label="Product Image"
+                                showPreview={false}
+                                compact={true}
+                              />
+
+                              <textarea
+                                rows={2}
+                                value={quickProdSummary}
+                                onChange={(e) =>
+                                  setQuickProdSummary(e.target.value)
+                                }
+                                placeholder="Product summary & specs (at least 10 characters)..."
+                                className="w-full px-3 py-2 text-xs bg-white border border-stone-300 rounded-md"
+                              />
+
+                              <div className="flex justify-end">
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() =>
+                                    void handleQuickCreateProductForBlock(
+                                      block.id
+                                    )
+                                  }
+                                  className="px-4 py-2 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-md cursor-pointer"
+                                >
+                                  {user
+                                    ? 'Save & Embed Store Product'
+                                    : 'Sign In with Google to Save Product'}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div>
+                              <label className="block text-[11px] text-stone-500 mb-1">
+                                Choose Pickra Store Product
+                              </label>
+                              <select
+                                value={block.productId}
+                                onChange={(e) =>
+                                  updateBlock(block.id, () => ({
+                                    id: block.id,
+                                    type: 'product',
+                                    productId: e.target.value,
+                                  }))
+                                }
+                                className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                              >
+                                {attachableDirectProducts.map((p) => (
+                                  <option key={p.id} value={p.id}>
+                                    {p.sellerName || 'Pickra'} ({p.kind}) —{' '}
+                                    {p.title} · {formatPriceCents(p.priceCents)}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+
+                          {allAccessibleDirectProductsMap[block.productId] && (
+                            <DirectProductCard
+                              product={
+                                allAccessibleDirectProductsMap[block.productId]
+                              }
                               variant="inline"
                             />
                           )}
@@ -1991,7 +2665,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
 
                       {/* Medium '+' Expanded Block Insertion Tray */}
                       {isPlusOpen && (
-                        <div className="mt-3 p-2.5 bg-white border border-stone-300 rounded-xl shadow-xs flex flex-wrap items-center gap-1.5">
+                        <div className="mt-3 p-2.5 bg-white text-stone-900 border border-stone-300 rounded-xl shadow-xs flex flex-wrap items-center gap-1.5">
                           <span className="text-[11px] font-medium text-stone-500 px-2">
                             Insert block:
                           </span>
@@ -2011,7 +2685,10 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                           <button
                             type="button"
                             onClick={() =>
-                              insertBlockAfter(block.id, createBlockByKind('heading'))
+                              insertBlockAfter(
+                                block.id,
+                                createBlockByKind('heading')
+                              )
                             }
                             className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-stone-800 hover:bg-[#F3EFE8] rounded-lg cursor-pointer whitespace-nowrap"
                           >
@@ -2023,17 +2700,23 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                           <button
                             type="button"
                             onClick={() =>
-                              insertBlockAfter(block.id, createBlockByKind('image'))
+                              insertBlockAfter(
+                                block.id,
+                                createBlockByKind('image')
+                              )
                             }
                             className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-stone-800 hover:bg-[#F3EFE8] rounded-lg cursor-pointer whitespace-nowrap"
                           >
                             <ImageIcon className="w-3.5 h-3.5 text-[#9A3412]" />
-                            <span>Image</span>
+                            <span>Image Upload</span>
                           </button>
                           <button
                             type="button"
                             onClick={() =>
-                              insertBlockAfter(block.id, createBlockByKind('video'))
+                              insertBlockAfter(
+                                block.id,
+                                createBlockByKind('video')
+                              )
                             }
                             className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-stone-800 hover:bg-[#F3EFE8] rounded-lg cursor-pointer whitespace-nowrap"
                           >
@@ -2056,7 +2739,36 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                           <button
                             type="button"
                             onClick={() =>
-                              insertBlockAfter(block.id, createBlockByKind('offer'))
+                              insertBlockAfter(
+                                block.id,
+                                createBlockByKind('callout')
+                              )
+                            }
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-stone-800 hover:bg-[#F3EFE8] rounded-lg cursor-pointer whitespace-nowrap"
+                          >
+                            <Palette className="w-3.5 h-3.5 text-[#9A3412]" />
+                            <span>Color Callout</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              insertBlockAfter(
+                                block.id,
+                                createBlockByKind('product')
+                              )
+                            }
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-stone-800 hover:bg-[#F3EFE8] rounded-lg cursor-pointer whitespace-nowrap"
+                          >
+                            <Package className="w-3.5 h-3.5 text-[#9A3412]" />
+                            <span>Store Product</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              insertBlockAfter(
+                                block.id,
+                                createBlockByKind('offer')
+                              )
                             }
                             className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-stone-800 hover:bg-[#F3EFE8] rounded-lg cursor-pointer whitespace-nowrap"
                           >
@@ -2066,7 +2778,10 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                           <button
                             type="button"
                             onClick={() =>
-                              insertBlockAfter(block.id, createBlockByKind('quote'))
+                              insertBlockAfter(
+                                block.id,
+                                createBlockByKind('quote')
+                              )
                             }
                             className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-stone-800 hover:bg-[#F3EFE8] rounded-lg cursor-pointer whitespace-nowrap"
                           >
@@ -2076,7 +2791,10 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                           <button
                             type="button"
                             onClick={() =>
-                              insertBlockAfter(block.id, createBlockByKind('divider'))
+                              insertBlockAfter(
+                                block.id,
+                                createBlockByKind('divider')
+                              )
                             }
                             className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-stone-800 hover:bg-[#F3EFE8] rounded-lg cursor-pointer whitespace-nowrap"
                           >
@@ -2093,12 +2811,18 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
           </div>
 
           {/* Bottom Persistent Quick-Add Block Rail */}
-          <div className="mt-12 sm:pl-11 pt-6 border-t border-stone-200/80">
+          <div
+            className={`mt-12 sm:pl-11 pt-6 border-t ${activePalette.borderClass}`}
+          >
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-stone-500 mr-1">Add block:</span>
+              <span className={`text-xs ${activePalette.mutedClass} mr-1`}>
+                Add block:
+              </span>
               <button
                 type="button"
-                onClick={() => insertBlockAfter(null, createBlockByKind('paragraph'))}
+                onClick={() =>
+                  insertBlockAfter(null, createBlockByKind('paragraph'))
+                }
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-800 bg-white border border-stone-200 hover:border-stone-400 rounded-lg cursor-pointer whitespace-nowrap shrink-0"
               >
                 <Type className="w-3.5 h-3.5 text-[#9A3412]" />
@@ -2106,23 +2830,19 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => insertBlockAfter(null, createBlockByKind('heading'))}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-800 bg-white border border-stone-200 hover:border-stone-400 rounded-lg cursor-pointer whitespace-nowrap shrink-0"
-              >
-                <span className="font-serif font-semibold text-[#9A3412]">H</span>
-                <span>Heading</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => insertBlockAfter(null, createBlockByKind('image'))}
+                onClick={() =>
+                  insertBlockAfter(null, createBlockByKind('image'))
+                }
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-800 bg-white border border-stone-200 hover:border-stone-400 rounded-lg cursor-pointer whitespace-nowrap shrink-0"
               >
                 <ImageIcon className="w-3.5 h-3.5 text-[#9A3412]" />
-                <span>Image</span>
+                <span>Image Upload</span>
               </button>
               <button
                 type="button"
-                onClick={() => insertBlockAfter(null, createBlockByKind('video'))}
+                onClick={() =>
+                  insertBlockAfter(null, createBlockByKind('video'))
+                }
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-800 bg-white border border-stone-200 hover:border-stone-400 rounded-lg cursor-pointer whitespace-nowrap shrink-0"
               >
                 <Video className="w-3.5 h-3.5 text-[#9A3412]" />
@@ -2130,19 +2850,43 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => insertBlockAfter(null, createBlockByKind('bookmark'))}
+                onClick={() =>
+                  insertBlockAfter(null, createBlockByKind('bookmark'))
+                }
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-800 bg-white border border-stone-200 hover:border-stone-400 rounded-lg cursor-pointer whitespace-nowrap shrink-0"
               >
                 <Link2 className="w-3.5 h-3.5 text-[#9A3412]" />
-                <span>Link Card</span>
+                <span>Link</span>
               </button>
               <button
                 type="button"
-                onClick={() => insertBlockAfter(null, createBlockByKind('offer'))}
+                onClick={() =>
+                  insertBlockAfter(null, createBlockByKind('callout'))
+                }
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-800 bg-white border border-stone-200 hover:border-stone-400 rounded-lg cursor-pointer whitespace-nowrap shrink-0"
+              >
+                <Palette className="w-3.5 h-3.5 text-[#9A3412]" />
+                <span>Color Theme Box</span>
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  insertBlockAfter(null, createBlockByKind('product'))
+                }
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-800 bg-white border border-stone-200 hover:border-stone-400 rounded-lg cursor-pointer whitespace-nowrap shrink-0"
+              >
+                <Package className="w-3.5 h-3.5 text-[#9A3412]" />
+                <span>Store Product</span>
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  insertBlockAfter(null, createBlockByKind('offer'))
+                }
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-800 bg-white border border-stone-200 hover:border-stone-400 rounded-lg cursor-pointer whitespace-nowrap shrink-0"
               >
                 <ShoppingBag className="w-3.5 h-3.5 text-[#9A3412]" />
-                <span>Affiliate Pick</span>
+                <span>Affiliate Link</span>
               </button>
             </div>
           </div>

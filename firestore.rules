@@ -62,23 +62,34 @@ service cloud.firestore {
 
     function isValidUserProfile(data) {
       return data.keys().hasAll(['uid', 'displayName', 'bio', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['uid', 'displayName', 'bio', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'displayName', 'bio', 'isSeller', 'storeName', 'createdAt', 'updatedAt']) &&
         isValidId(data.uid) &&
         data.uid == request.auth.uid &&
         data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
         data.bio is string && data.bio.size() <= 300 &&
+        (!('isSeller' in data) || data.isSeller is bool) &&
+        (!('storeName' in data) || (data.storeName is string && data.storeName.size() <= 80)) &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
     }
 
     function isValidUserPrivateInfo(data) {
       return data.keys().hasAll(['uid', 'email', 'defaultAmazonTag', 'defaultDigistoreId', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['uid', 'email', 'defaultAmazonTag', 'defaultDigistoreId', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly([
+          'uid', 'email', 'defaultAmazonTag', 'defaultDigistoreId',
+          'payoutMethod', 'payoutAccount', 'createdAt', 'updatedAt'
+        ]) &&
         isValidId(data.uid) &&
         data.uid == request.auth.uid &&
         data.email is string && data.email.size() >= 3 && data.email.size() <= 254 &&
         data.defaultAmazonTag is string && data.defaultAmazonTag.size() <= 60 &&
         data.defaultDigistoreId is string && data.defaultDigistoreId.size() <= 60 &&
+        (!('payoutMethod' in data) || (
+          data.payoutMethod is string &&
+          data.payoutMethod.size() <= 24 &&
+          data.payoutMethod in ['None', 'Stripe', 'PayPal', 'Wise', 'BankTransfer']
+        )) &&
+        (!('payoutAccount' in data) || (data.payoutAccount is string && data.payoutAccount.size() <= 160)) &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
     }
@@ -113,13 +124,17 @@ service cloud.firestore {
         data.title is string && data.title.size() >= 2 && data.title.size() <= 140 &&
         data.kind is string && data.kind.size() <= 20 && data.kind in ['physical', 'digital', 'service'] &&
         data.platform is string && data.platform.size() <= 30 &&
-        data.platform in ['Amazon', 'Digistore24', 'Upwork', 'Fiverr', 'Gumroad', 'ClickBank', 'Custom'] &&
+        data.platform in [
+          'Amazon', 'Digistore24', 'Upwork', 'Fiverr', 'Gumroad', 'ClickBank',
+          'CJ Affiliate', 'ShareASale', 'Impact', 'eBay', 'Etsy', 'AliExpress',
+          'Toptal', '99designs', 'Contra', 'PeoplePerHour', 'Custom'
+        ] &&
         data.category is string && data.category.size() >= 2 && data.category.size() <= 60 &&
         data.priceLabel is string && data.priceLabel.size() >= 1 && data.priceLabel.size() <= 40 &&
         data.commissionNote is string && data.commissionNote.size() <= 80 &&
         data.affiliateUrl is string && data.affiliateUrl.size() >= 8 && data.affiliateUrl.size() <= 500 &&
         data.affiliateUrl.matches('^https://.+') &&
-        data.imageKey is string && data.imageKey.size() >= 1 && data.imageKey.size() <= 500 &&
+        data.imageKey is string && data.imageKey.size() >= 1 && data.imageKey.size() <= 180000 &&
         data.summary is string && data.summary.size() >= 10 && data.summary.size() <= 400 &&
         isValidHighlightsList(data.highlights) &&
         data.status is string && data.status.size() <= 20 && data.status in ['draft', 'published', 'archived'] &&
@@ -149,7 +164,7 @@ service cloud.firestore {
         ]) &&
         data.keys().hasOnly([
           'authorId', 'authorName', 'title', 'subtitle', 'slug', 'category',
-          'readTimeMinutes', 'coverImageKey', 'content', 'attachedOfferIds',
+          'readTimeMinutes', 'coverImageKey', 'content', 'theme', 'attachedOfferIds',
           'disclosureText', 'featured', 'status', 'publishedLabel',
           'createdAt', 'updatedAt'
         ]) &&
@@ -163,8 +178,13 @@ service cloud.firestore {
         data.category is string && data.category.size() <= 40 &&
         data.category in ['Hardware & Gear', 'Digital Systems', 'Freelance Talent', 'Field Guides'] &&
         data.readTimeMinutes is int && data.readTimeMinutes >= 1 && data.readTimeMinutes <= 60 &&
-        data.coverImageKey is string && data.coverImageKey.size() >= 1 && data.coverImageKey.size() <= 500 &&
-        data.content is string && data.content.size() >= 20 && data.content.size() <= 25000 &&
+        data.coverImageKey is string && data.coverImageKey.size() >= 1 && data.coverImageKey.size() <= 180000 &&
+        data.content is string && data.content.size() >= 20 && data.content.size() <= 350000 &&
+        (!('theme' in data) || (
+          data.theme is string &&
+          data.theme.size() <= 20 &&
+          data.theme in ['classic', 'midnight', 'sage', 'terracotta', 'slate']
+        )) &&
         isValidOfferIdList(data.attachedOfferIds) &&
         data.disclosureText is string && data.disclosureText.size() >= 10 && data.disclosureText.size() <= 400 &&
         data.featured is bool &&
@@ -174,14 +194,221 @@ service cloud.firestore {
         data.updatedAt is timestamp;
     }
 
+    function isValidDirectProduct(data) {
+      return data.keys().hasAll([
+          'sellerId', 'sellerName', 'title', 'subtitle', 'kind', 'category',
+          'sku', 'priceCents', 'compareAtCents', 'stockCount', 'badgeLabel',
+          'imageKey', 'summary', 'highlights', 'deliveryNote', 'featured',
+          'status', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'sellerId', 'sellerName', 'title', 'subtitle', 'kind', 'category',
+          'sku', 'priceCents', 'compareAtCents', 'stockCount', 'badgeLabel',
+          'imageKey', 'summary', 'highlights', 'deliveryNote', 'featured',
+          'status', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.sellerId) &&
+        (data.sellerId == request.auth.uid || isBootstrappedAdmin()) &&
+        data.sellerName is string && data.sellerName.size() >= 1 && data.sellerName.size() <= 80 &&
+        data.title is string && data.title.size() >= 2 && data.title.size() <= 140 &&
+        data.subtitle is string && data.subtitle.size() >= 4 && data.subtitle.size() <= 220 &&
+        data.kind is string && data.kind.size() <= 20 && data.kind in ['physical', 'digital'] &&
+        data.category is string && data.category.size() >= 2 && data.category.size() <= 60 &&
+        data.sku is string && data.sku.size() >= 2 && data.sku.size() <= 40 &&
+        data.sku.matches('^[A-Z0-9\\-]+$') &&
+        data.priceCents is int && data.priceCents >= 100 && data.priceCents <= 10000000 &&
+        data.compareAtCents is int && data.compareAtCents >= 0 && data.compareAtCents <= 10000000 &&
+        data.stockCount is int && data.stockCount >= 0 && data.stockCount <= 100000 &&
+        data.badgeLabel is string && data.badgeLabel.size() <= 40 &&
+        data.imageKey is string && data.imageKey.size() >= 1 && data.imageKey.size() <= 180000 &&
+        data.summary is string && data.summary.size() >= 10 && data.summary.size() <= 500 &&
+        isValidHighlightsList(data.highlights) &&
+        data.deliveryNote is string && data.deliveryNote.size() >= 2 && data.deliveryNote.size() <= 200 &&
+        data.featured is bool &&
+        data.status is string && data.status.size() <= 20 && data.status in ['draft', 'published', 'archived'] &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidCampaign(data) {
+      return data.keys().hasAll([
+          'authorId', 'title', 'description', 'promoCode', 'discountPercent',
+          'minOrderCents', 'channel', 'featuredProductId', 'ctaLabel',
+          'expiresLabel', 'status', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'authorId', 'title', 'description', 'promoCode', 'discountPercent',
+          'minOrderCents', 'channel', 'featuredProductId', 'ctaLabel',
+          'expiresLabel', 'status', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.authorId) &&
+        (data.authorId == request.auth.uid || isBootstrappedAdmin()) &&
+        data.title is string && data.title.size() >= 3 && data.title.size() <= 120 &&
+        data.description is string && data.description.size() >= 8 && data.description.size() <= 280 &&
+        data.promoCode is string && data.promoCode.size() >= 3 && data.promoCode.size() <= 24 &&
+        data.promoCode.matches('^[A-Z0-9_\\-]+$') &&
+        data.discountPercent is int && data.discountPercent >= 5 && data.discountPercent <= 90 &&
+        data.minOrderCents is int && data.minOrderCents >= 0 && data.minOrderCents <= 5000000 &&
+        data.channel is string && data.channel.size() <= 40 &&
+        data.channel in ['Storefront Banner', 'Blog Callout', 'Social & Email', 'Flash Bundle'] &&
+        data.featuredProductId is string && data.featuredProductId.size() <= 128 &&
+        (data.featuredProductId.size() == 0 || isValidId(data.featuredProductId)) &&
+        data.ctaLabel is string && data.ctaLabel.size() >= 2 && data.ctaLabel.size() <= 40 &&
+        data.expiresLabel is string && data.expiresLabel.size() >= 2 && data.expiresLabel.size() <= 40 &&
+        data.status is string && data.status.size() <= 20 && data.status in ['draft', 'published', 'archived'] &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidOrderProductIdList(items) {
+      return items is list &&
+        items.size() >= 1 &&
+        items.size() <= 8 &&
+        isValidId(items[0]) &&
+        (items.size() < 2 || isValidId(items[1])) &&
+        (items.size() < 3 || isValidId(items[2])) &&
+        (items.size() < 4 || isValidId(items[3])) &&
+        (items.size() < 5 || isValidId(items[4])) &&
+        (items.size() < 6 || isValidId(items[5])) &&
+        (items.size() < 7 || isValidId(items[6])) &&
+        (items.size() < 8 || isValidId(items[7]));
+    }
+
+    function isValidDirectOrder(data) {
+      return data.keys().hasAll([
+          'buyerId', 'sellerId', 'orderNumber', 'buyerName', 'buyerEmail',
+          'shippingAddress', 'productIds', 'itemsSummary', 'itemCount',
+          'fulfillmentType', 'promoCode', 'subtotalCents', 'discountCents',
+          'shippingCents', 'totalCents', 'fulfillmentNote', 'status',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'buyerId', 'sellerId', 'sellerName', 'orderNumber', 'buyerName', 'buyerEmail',
+          'shippingAddress', 'productIds', 'itemsSummary', 'itemCount',
+          'fulfillmentType', 'promoCode', 'subtotalCents', 'discountCents',
+          'shippingCents', 'totalCents', 'platformFeeCents', 'sellerPayoutCents',
+          'payoutStatus', 'sellerPayoutDetails', 'payoutNote', 'fulfillmentNote', 'status',
+          'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.buyerId) &&
+        isValidId(data.sellerId) &&
+        (
+          data.buyerId == request.auth.uid ||
+          data.sellerId == request.auth.uid ||
+          isBootstrappedAdmin()
+        ) &&
+        (!('sellerName' in data) || (data.sellerName is string && data.sellerName.size() >= 1 && data.sellerName.size() <= 80)) &&
+        data.orderNumber is string && data.orderNumber.size() >= 4 && data.orderNumber.size() <= 32 &&
+        data.orderNumber.matches('^PKR-[A-Z0-9\\-]+$') &&
+        data.buyerName is string && data.buyerName.size() >= 2 && data.buyerName.size() <= 80 &&
+        data.buyerEmail is string && data.buyerEmail.size() >= 3 && data.buyerEmail.size() <= 254 &&
+        data.shippingAddress is string && data.shippingAddress.size() <= 300 &&
+        isValidOrderProductIdList(data.productIds) &&
+        data.itemsSummary is string && data.itemsSummary.size() >= 2 && data.itemsSummary.size() <= 600 &&
+        data.itemCount is int && data.itemCount >= 1 && data.itemCount <= 50 &&
+        data.fulfillmentType is string && data.fulfillmentType.size() <= 20 &&
+        data.fulfillmentType in ['physical', 'digital', 'mixed'] &&
+        data.promoCode is string && data.promoCode.size() <= 24 &&
+        data.subtotalCents is int && data.subtotalCents >= 100 && data.subtotalCents <= 50000000 &&
+        data.discountCents is int && data.discountCents >= 0 && data.discountCents <= 50000000 &&
+        data.shippingCents is int && data.shippingCents >= 0 && data.shippingCents <= 500000 &&
+        data.totalCents is int && data.totalCents >= 0 && data.totalCents <= 50000000 &&
+        (!('platformFeeCents' in data) || (data.platformFeeCents is int && data.platformFeeCents >= 0 && data.platformFeeCents <= 50000000)) &&
+        (!('sellerPayoutCents' in data) || (data.sellerPayoutCents is int && data.sellerPayoutCents >= 0 && data.sellerPayoutCents <= 50000000)) &&
+        (!('payoutStatus' in data) || (
+          data.payoutStatus is string &&
+          data.payoutStatus.size() <= 24 &&
+          data.payoutStatus in ['pending', 'paid_out', 'not_applicable']
+        )) &&
+        (!('sellerPayoutDetails' in data) || (data.sellerPayoutDetails is string && data.sellerPayoutDetails.size() <= 180)) &&
+        (!('payoutNote' in data) || (data.payoutNote is string && data.payoutNote.size() <= 200)) &&
+        data.fulfillmentNote is string && data.fulfillmentNote.size() <= 300 &&
+        data.status is string && data.status.size() <= 20 &&
+        data.status in ['paid', 'processing', 'shipped', 'fulfilled', 'cancelled'] &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidHiddenSeedList(items) {
+      return items is list &&
+        items.size() <= 50 &&
+        (items.size() == 0 || (items[0] is string && items[0].size() <= 128));
+    }
+
+    function isValidSiteConfig(data) {
+      return data.keys().hasAll([
+          'siteTagline', 'announcementEnabled', 'announcementText',
+          'announcementCtaLabel', 'announcementTargetSection',
+          'freeShippingThresholdCents', 'flatShippingCents',
+          'defaultDisclosureText', 'storeCheckoutEnabled', 'showStarterSeeds',
+          'updatedBy', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'siteTagline', 'announcementEnabled', 'announcementText',
+          'announcementCtaLabel', 'announcementTargetSection',
+          'freeShippingThresholdCents', 'flatShippingCents',
+          'defaultDisclosureText', 'storeCheckoutEnabled', 'showStarterSeeds',
+          'hiddenSeedIds', 'updatedBy', 'createdAt', 'updatedAt'
+        ]) &&
+        data.siteTagline is string && data.siteTagline.size() >= 4 && data.siteTagline.size() <= 140 &&
+        data.announcementEnabled is bool &&
+        data.announcementText is string && data.announcementText.size() <= 180 &&
+        data.announcementCtaLabel is string && data.announcementCtaLabel.size() <= 40 &&
+        data.announcementTargetSection is string && data.announcementTargetSection.size() <= 20 &&
+        data.announcementTargetSection in ['store', 'journal', 'blog', 'products', 'services'] &&
+        data.freeShippingThresholdCents is int &&
+        data.freeShippingThresholdCents >= 0 &&
+        data.freeShippingThresholdCents <= 1000000 &&
+        data.flatShippingCents is int &&
+        data.flatShippingCents >= 0 &&
+        data.flatShippingCents <= 100000 &&
+        data.defaultDisclosureText is string &&
+        data.defaultDisclosureText.size() >= 10 &&
+        data.defaultDisclosureText.size() <= 400 &&
+        data.storeCheckoutEnabled is bool &&
+        data.showStarterSeeds is bool &&
+        (!('hiddenSeedIds' in data) || isValidHiddenSeedList(data.hiddenSeedIds)) &&
+        isValidId(data.updatedBy) &&
+        data.updatedBy == request.auth.uid &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAnalyticsEvent(data) {
+      return data.keys().hasAll([
+          'actorId', 'actorScope', 'targetOwnerId', 'eventType', 'channel',
+          'targetId', 'targetTitle', 'platform', 'valueCents', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'actorId', 'actorScope', 'targetOwnerId', 'eventType', 'channel',
+          'targetId', 'targetTitle', 'platform', 'valueCents', 'createdAt'
+        ]) &&
+        isValidId(data.actorId) &&
+        data.actorId == request.auth.uid &&
+        data.actorScope is string && data.actorScope.size() <= 20 &&
+        data.actorScope in ['customer', 'creator'] &&
+        isValidId(data.targetOwnerId) &&
+        data.eventType is string && data.eventType.size() <= 30 &&
+        data.eventType in ['post_view', 'affiliate_click', 'product_view', 'bag_add', 'promo_apply', 'order_placed'] &&
+        data.channel is string && data.channel.size() <= 20 &&
+        data.channel in ['journal', 'blog', 'store', 'affiliate', 'services', 'campaigns'] &&
+        isValidId(data.targetId) &&
+        data.targetTitle is string && data.targetTitle.size() >= 1 && data.targetTitle.size() <= 160 &&
+        data.platform is string && data.platform.size() >= 1 && data.platform.size() <= 40 &&
+        data.valueCents is int && data.valueCents >= 0 && data.valueCents <= 50000000 &&
+        data.createdAt is timestamp;
+    }
+
     // =========================================================================
     // Collection Rules
     // =========================================================================
 
-    // Trusted Admin Registry (No list permitted)
+    // 1. Trusted Website Owner & Co-Admin Registry
     match /admins/{adminId} {
       allow get: if isSignedIn() && isValidId(adminId) && (request.auth.uid == adminId || isAdmin());
-      allow list: if false;
+      // Zero get()/exists() in list; allows bootstrapped creator or granting admin to view registry
+      allow list: if isBootstrappedAdmin() ||
+        (isVerifiedUser() && existing().grantedBy == request.auth.uid);
       allow create: if isVerifiedUser() &&
         isValidId(adminId) &&
         isValidAdminRecord(incoming()) &&
@@ -192,7 +419,7 @@ service cloud.firestore {
       allow delete: if isVerifiedUser() && isValidId(adminId) && isAdmin();
     }
 
-    // Public Author Profiles (Strictly Non-PII; No list permitted)
+    // 2. Public Author, Seller & Customer Profiles (Strictly Non-PII; No list permitted)
     match /users/{userId} {
       allow get: if isValidId(userId);
       allow list: if false;
@@ -208,10 +435,10 @@ service cloud.firestore {
         incoming().uid == existing().uid &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
-        incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'bio', 'updatedAt']);
+        incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'bio', 'isSeller', 'storeName', 'updatedAt']);
       allow delete: if isVerifiedUser() && isValidId(userId) && (isOwner(userId) || isAdmin());
 
-      // Split-Collection PII & Default Affiliate Tags (Master Gate Enforced)
+      // 3. Split-Collection PII, Default Affiliate Tags & Seller Payout Account (Master Gate Enforced)
       match /private/{infoId} {
         allow get: if isOwner(userId) &&
           isValidId(userId) &&
@@ -238,7 +465,9 @@ service cloud.firestore {
           incoming().uid == existing().uid &&
           incoming().createdAt == existing().createdAt &&
           incoming().updatedAt == request.time &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['email', 'defaultAmazonTag', 'defaultDigistoreId', 'updatedAt']) &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'email', 'defaultAmazonTag', 'defaultDigistoreId', 'payoutMethod', 'payoutAccount', 'updatedAt'
+          ]) &&
           exists(/databases/$(database)/documents/users/$(userId)) &&
           get(/databases/$(database)/documents/users/$(userId)).data.uid == request.auth.uid;
         allow delete: if isVerifiedUser() &&
@@ -253,7 +482,7 @@ service cloud.firestore {
       }
     }
 
-    // Curated Affiliate Products & Services
+    // 4. Curated Affiliate Products & Professional Services (Website Owner-Managed)
     match /offers/{offerId} {
       allow get: if isValidId(offerId) && (
         existing().status == 'published' ||
@@ -270,6 +499,7 @@ service cloud.firestore {
         incoming().authorId == request.auth.uid &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
+        isAdmin() &&
         exists(/databases/$(database)/documents/users/$(incoming().authorId));
       allow update: if isVerifiedUser() &&
         isValidId(offerId) &&
@@ -277,10 +507,11 @@ service cloud.firestore {
         incoming().authorId == existing().authorId &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
-        (existing().status != 'archived' || isAdmin()) &&
+        isAdmin() &&
         (
           (
             existing().authorId == request.auth.uid &&
+            existing().status != 'archived' &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'authorName', 'title', 'kind', 'platform', 'category',
               'priceLabel', 'commissionNote', 'affiliateUrl', 'imageKey',
@@ -289,16 +520,18 @@ service cloud.firestore {
           ) ||
           (
             existing().authorId == request.auth.uid &&
+            existing().status != 'archived' &&
             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
           ) ||
+          isBootstrappedAdmin() ||
           isAdmin()
         );
       allow delete: if isVerifiedUser() &&
         isValidId(offerId) &&
-        (existing().authorId == request.auth.uid || isAdmin());
+        isAdmin();
     }
 
-    // Editorial Blog Posts with Attached Affiliate Links
+    // 5. Medium-Style Editorial Blog Posts (Website Owner-Managed)
     match /posts/{postId} {
       allow get: if isValidId(postId) && (
         existing().status == 'published' ||
@@ -315,6 +548,7 @@ service cloud.firestore {
         incoming().authorId == request.auth.uid &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
+        isAdmin() &&
         exists(/databases/$(database)/documents/users/$(incoming().authorId));
       allow update: if isVerifiedUser() &&
         isValidId(postId) &&
@@ -322,25 +556,247 @@ service cloud.firestore {
         incoming().authorId == existing().authorId &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
-        (existing().status != 'archived' || isAdmin()) &&
+        isAdmin() &&
         (
           (
             existing().authorId == request.auth.uid &&
+            existing().status != 'archived' &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'authorName', 'title', 'subtitle', 'slug', 'category',
-              'readTimeMinutes', 'coverImageKey', 'content', 'attachedOfferIds',
+              'readTimeMinutes', 'coverImageKey', 'content', 'theme', 'attachedOfferIds',
               'disclosureText', 'featured', 'status', 'publishedLabel', 'updatedAt'
             ])
           ) ||
           (
             existing().authorId == request.auth.uid &&
+            existing().status != 'archived' &&
             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'publishedLabel', 'updatedAt'])
           ) ||
+          isBootstrappedAdmin() ||
           isAdmin()
         );
       allow delete: if isVerifiedUser() &&
         isValidId(postId) &&
-        (existing().authorId == request.auth.uid || isAdmin());
+        isAdmin();
+    }
+
+    // 6. Multi-Creator Direct Storefront Products (Verified Creators Publish & Manage Own Listings; Admin Moderates All)
+    match /directProducts/{productId} {
+      allow get: if isValidId(productId) && (
+        existing().status == 'published' ||
+        (isSignedIn() && existing().sellerId == request.auth.uid) ||
+        isAdmin()
+      );
+      // Zero get()/exists() calls in list to prevent O(n) cost explosions
+      allow list: if existing().status == 'published' ||
+        (isSignedIn() && existing().sellerId == request.auth.uid) ||
+        isBootstrappedAdmin();
+      allow create: if isVerifiedUser() &&
+        isValidId(productId) &&
+        isValidDirectProduct(incoming()) &&
+        incoming().sellerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/users/$(incoming().sellerId));
+      allow update: if isVerifiedUser() &&
+        isValidId(productId) &&
+        isValidDirectProduct(incoming()) &&
+        incoming().sellerId == existing().sellerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          (
+            existing().sellerId == request.auth.uid &&
+            existing().status != 'archived' &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'sellerName', 'title', 'subtitle', 'kind', 'category',
+              'sku', 'priceCents', 'compareAtCents', 'stockCount', 'badgeLabel',
+              'imageKey', 'summary', 'highlights', 'deliveryNote', 'featured',
+              'status', 'updatedAt'
+            ])
+          ) ||
+          (
+            existing().sellerId == request.auth.uid &&
+            existing().status != 'archived' &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'stockCount', 'updatedAt'])
+          ) ||
+          isBootstrappedAdmin() ||
+          isAdmin()
+        );
+      allow delete: if isVerifiedUser() &&
+        isValidId(productId) &&
+        (existing().sellerId == request.auth.uid || isAdmin());
+    }
+
+    // 7. Marketing Campaigns & Checkout Promo Codes (Website Owner-Managed)
+    match /campaigns/{campaignId} {
+      allow get: if isValidId(campaignId) && (
+        existing().status == 'published' ||
+        (isSignedIn() && existing().authorId == request.auth.uid) ||
+        isAdmin()
+      );
+      // Zero get()/exists() calls in list to prevent O(n) cost explosions
+      allow list: if existing().status == 'published' ||
+        (isSignedIn() && existing().authorId == request.auth.uid) ||
+        isBootstrappedAdmin();
+      allow create: if isVerifiedUser() &&
+        isValidId(campaignId) &&
+        isValidCampaign(incoming()) &&
+        incoming().authorId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin() &&
+        exists(/databases/$(database)/documents/users/$(incoming().authorId));
+      allow update: if isVerifiedUser() &&
+        isValidId(campaignId) &&
+        isValidCampaign(incoming()) &&
+        incoming().authorId == existing().authorId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        isAdmin() &&
+        (
+          (
+            existing().authorId == request.auth.uid &&
+            existing().status != 'archived' &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'title', 'description', 'promoCode', 'discountPercent',
+              'minOrderCents', 'channel', 'featuredProductId', 'ctaLabel',
+              'expiresLabel', 'status', 'updatedAt'
+            ])
+          ) ||
+          (
+            existing().authorId == request.auth.uid &&
+            existing().status != 'archived' &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          ) ||
+          isBootstrappedAdmin() ||
+          isAdmin()
+        );
+      allow delete: if isVerifiedUser() &&
+        isValidId(campaignId) &&
+        isAdmin();
+    }
+
+    // 8. Direct Customer Orders & Creator Payout Ledger (Strictly Private PII: Buyer, Seller, and Website Owner)
+    match /directOrders/{orderId} {
+      allow get: if isVerifiedUser() && isValidId(orderId) && (
+        existing().buyerId == request.auth.uid ||
+        existing().sellerId == request.auth.uid ||
+        isAdmin()
+      );
+      // Zero get()/exists() calls in list; enforces strict buyer/seller/admin ownership on PII
+      allow list: if isVerifiedUser() && (
+        existing().buyerId == request.auth.uid ||
+        existing().sellerId == request.auth.uid ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(orderId) &&
+        isValidDirectOrder(incoming()) &&
+        incoming().buyerId == request.auth.uid &&
+        incoming().status == 'paid' &&
+        (!('payoutStatus' in incoming()) || incoming().payoutStatus in ['pending', 'not_applicable']) &&
+        (!('payoutNote' in incoming()) || incoming().payoutNote == '') &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/users/$(incoming().buyerId)) &&
+        (
+          !exists(/databases/$(database)/documents/siteConfig/main) ||
+          get(/databases/$(database)/documents/siteConfig/main).data.storeCheckoutEnabled == true
+        );
+      allow update: if isVerifiedUser() &&
+        isValidId(orderId) &&
+        isValidDirectOrder(incoming()) &&
+        incoming().buyerId == existing().buyerId &&
+        incoming().sellerId == existing().sellerId &&
+        incoming().orderNumber == existing().orderNumber &&
+        incoming().totalCents == existing().totalCents &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          // Action 1: Creator/Seller advances fulfillment status and tracking/delivery note prior to terminal state
+          (
+            existing().sellerId == request.auth.uid &&
+            !(existing().status in ['fulfilled', 'cancelled']) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'fulfillmentNote', 'sellerPayoutDetails', 'updatedAt'])
+          ) ||
+          // Action 2: Creator/Seller updates payout account details while payout has not yet been disbursed
+          (
+            existing().sellerId == request.auth.uid &&
+            (!('payoutStatus' in existing()) || existing().payoutStatus != 'paid_out') &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['sellerPayoutDetails', 'updatedAt'])
+          ) ||
+          // Action 3: Buyer cancels order prior to fulfillment processing
+          (
+            existing().buyerId == request.auth.uid &&
+            existing().status == 'paid' &&
+            incoming().status == 'cancelled' &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          ) ||
+          // Action 4: Website Owner / Creator Admin override (fulfillment & payout disbursement)
+          isAdmin()
+        );
+      allow delete: if isVerifiedUser() &&
+        isValidId(orderId) &&
+        isAdmin();
+    }
+
+    // 9. Global Site Configuration Singleton (/siteConfig/main — Website Owner-Managed)
+    match /siteConfig/{configId} {
+      allow get: if isValidId(configId) && configId == 'main';
+      allow list: if false;
+      allow create: if isVerifiedUser() &&
+        isValidId(configId) &&
+        configId == 'main' &&
+        isValidSiteConfig(incoming()) &&
+        incoming().updatedBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin() &&
+        exists(/databases/$(database)/documents/users/$(incoming().updatedBy));
+      allow update: if isVerifiedUser() &&
+        isValidId(configId) &&
+        configId == 'main' &&
+        isValidSiteConfig(incoming()) &&
+        incoming().updatedBy == request.auth.uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'siteTagline', 'announcementEnabled', 'announcementText',
+          'announcementCtaLabel', 'announcementTargetSection',
+          'freeShippingThresholdCents', 'flatShippingCents',
+          'defaultDisclosureText', 'storeCheckoutEnabled', 'showStarterSeeds',
+          'hiddenSeedIds', 'updatedBy', 'updatedAt'
+        ]) &&
+        isAdmin();
+      allow delete: if isVerifiedUser() &&
+        isValidId(configId) &&
+        configId == 'main' &&
+        isAdmin();
+    }
+
+    // 10. Website Monitoring & Conversion Telemetry (Append-Only; Website Owner-Monitored)
+    match /analyticsEvents/{eventId} {
+      allow get: if isVerifiedUser() && isValidId(eventId) && (
+        existing().actorId == request.auth.uid ||
+        existing().targetOwnerId == request.auth.uid ||
+        isAdmin()
+      );
+      // Zero get()/exists() calls in list; restricts telemetry stream to target creator or bootstrapped admin
+      allow list: if isVerifiedUser() && (
+        existing().targetOwnerId == request.auth.uid ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(eventId) &&
+        isValidAnalyticsEvent(incoming()) &&
+        incoming().actorId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        exists(/databases/$(database)/documents/users/$(incoming().actorId));
+      allow update: if false;
+      allow delete: if isVerifiedUser() &&
+        isValidId(eventId) &&
+        isAdmin();
     }
   }
 }

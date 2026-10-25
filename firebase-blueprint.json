@@ -29,7 +29,7 @@
     },
     "UserProfile": {
       "title": "UserProfile",
-      "description": "Public author profile strictly isolated from PII.",
+      "description": "Public author, creator seller, or customer profile strictly isolated from PII.",
       "type": "object",
       "properties": {
         "uid": {
@@ -43,13 +43,23 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 80,
-          "description": "Public editorial byline name."
+          "description": "Public editorial byline or display name."
         },
         "bio": {
           "type": "string",
           "minLength": 0,
           "maxLength": 300,
-          "description": "Short public author biography."
+          "description": "Short public author or seller biography."
+        },
+        "isSeller": {
+          "type": "boolean",
+          "description": "Whether this user has activated a Creator Store seller account."
+        },
+        "storeName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 80,
+          "description": "Public creator storefront studio name."
         },
         "createdAt": {
           "type": "string",
@@ -66,7 +76,7 @@
     },
     "UserPrivateInfo": {
       "title": "UserPrivateInfo",
-      "description": "Owner-only private account PII and default affiliate tracking tags.",
+      "description": "Owner-only private account PII, default affiliate tracking tags, and creator seller payout account.",
       "type": "object",
       "properties": {
         "uid": {
@@ -95,6 +105,17 @@
           "maxLength": 60,
           "description": "Default Digistore24 affiliate ID."
         },
+        "payoutMethod": {
+          "type": "string",
+          "enum": ["None", "Stripe", "PayPal", "Wise", "BankTransfer"],
+          "description": "Preferred payout rail for Creator Store sales."
+        },
+        "payoutAccount": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 160,
+          "description": "Destination payout handle, email, or account reference."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",
@@ -110,7 +131,7 @@
     },
     "AffiliateOffer": {
       "title": "AffiliateOffer",
-      "description": "Curated physical product, digital product, or freelance service with outbound affiliate link.",
+      "description": "Curated physical product, digital product, or professional service with outbound affiliate link managed by the website owner.",
       "type": "object",
       "properties": {
         "authorId": {
@@ -118,19 +139,19 @@
           "minLength": 1,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$",
-          "description": "Creator Firebase Auth UID."
+          "description": "Website owner Firebase Auth UID."
         },
         "authorName": {
           "type": "string",
           "minLength": 1,
           "maxLength": 80,
-          "description": "Creator public display name."
+          "description": "Publisher public display name."
         },
         "title": {
           "type": "string",
           "minLength": 2,
           "maxLength": 140,
-          "description": "Product or freelance service title."
+          "description": "Product or professional service title."
         },
         "kind": {
           "type": "string",
@@ -139,7 +160,25 @@
         },
         "platform": {
           "type": "string",
-          "enum": ["Amazon", "Digistore24", "Upwork", "Fiverr", "Gumroad", "ClickBank", "Custom"],
+          "enum": [
+            "Amazon",
+            "Digistore24",
+            "Upwork",
+            "Fiverr",
+            "Gumroad",
+            "ClickBank",
+            "CJ Affiliate",
+            "ShareASale",
+            "Impact",
+            "eBay",
+            "Etsy",
+            "AliExpress",
+            "Toptal",
+            "99designs",
+            "Contra",
+            "PeoplePerHour",
+            "Custom"
+          ],
           "description": "Partner marketplace or affiliate network."
         },
         "category": {
@@ -171,8 +210,8 @@
         "imageKey": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 500,
-          "description": "Preset asset key or HTTPS image URL."
+          "maxLength": 180000,
+          "description": "Preset asset key, HTTPS image URL, or compressed data:image upload."
         },
         "summary": {
           "type": "string",
@@ -220,7 +259,7 @@
     },
     "BlogPost": {
       "title": "BlogPost",
-      "description": "Editorial blog article with inline and rail-attached affiliate product and service links.",
+      "description": "Medium-style editorial blog article with uploaded images, links, videos, color themes, and embedded commerce.",
       "type": "object",
       "properties": {
         "authorId": {
@@ -267,14 +306,19 @@
         "coverImageKey": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 500,
-          "description": "Preset asset key or HTTPS cover image URL."
+          "maxLength": 180000,
+          "description": "Preset asset key, HTTPS cover image URL, or compressed data:image upload."
         },
         "content": {
           "type": "string",
           "minLength": 20,
-          "maxLength": 25000,
-          "description": "Long-form markdown prose supporting [[offer:ID]] inline affiliate embeds."
+          "maxLength": 350000,
+          "description": "Long-form rich markdown supporting uploaded images, links, videos, color callouts, [[offer:ID]], and [[product:ID]]."
+        },
+        "theme": {
+          "type": "string",
+          "enum": ["classic", "midnight", "sage", "terracotta", "slate"],
+          "description": "Article reading surface color theme."
         },
         "attachedOfferIds": {
           "type": "array",
@@ -330,28 +374,601 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "DirectProduct": {
+      "title": "DirectProduct",
+      "description": "Creator-published physical or digital product sold directly on the Pickra multi-creator store.",
+      "type": "object",
+      "properties": {
+        "sellerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Creator seller Firebase Auth UID."
+        },
+        "sellerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Creator seller public store name."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 140,
+          "description": "Direct product title."
+        },
+        "subtitle": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 220,
+          "description": "Concise product positioning subtitle."
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["physical", "digital"],
+          "description": "Direct product fulfillment format."
+        },
+        "category": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "description": "Storefront collection or department."
+        },
+        "sku": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 40,
+          "pattern": "^[A-Z0-9\\-]+$",
+          "description": "Uppercase product SKU code."
+        },
+        "priceCents": {
+          "type": "integer",
+          "description": "Unit sale price in USD cents (100 to 10000000)."
+        },
+        "compareAtCents": {
+          "type": "integer",
+          "description": "Optional compare-at markdown price in USD cents (0 if none)."
+        },
+        "stockCount": {
+          "type": "integer",
+          "description": "Available units in stock (0 to 100000)."
+        },
+        "badgeLabel": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 40,
+          "description": "Optional editorial marketing kicker."
+        },
+        "imageKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180000,
+          "description": "Preset studio asset key, HTTPS image URL, or compressed data:image upload."
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 500,
+          "description": "Detailed product craft, materials, or digital deliverables overview."
+        },
+        "highlights": {
+          "type": "array",
+          "description": "Up to 4 concise specification or deliverable highlights."
+        },
+        "deliveryNote": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 200,
+          "description": "Shipping dispatch timeline or instant download format note."
+        },
+        "featured": {
+          "type": "boolean",
+          "description": "Whether highlighted as a flagship storefront release."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["draft", "published", "archived"],
+          "description": "Storefront listing status with terminal archived state."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "sellerId",
+        "sellerName",
+        "title",
+        "subtitle",
+        "kind",
+        "category",
+        "sku",
+        "priceCents",
+        "compareAtCents",
+        "stockCount",
+        "badgeLabel",
+        "imageKey",
+        "summary",
+        "highlights",
+        "deliveryNote",
+        "featured",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MarketingCampaign": {
+      "title": "MarketingCampaign",
+      "description": "Promotional marketing campaign, discount coupon code, and storefront offer banner managed by the website owner.",
+      "type": "object",
+      "properties": {
+        "authorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Creator Firebase Auth UID."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 120,
+          "description": "Campaign headline."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 280,
+          "description": "Promotional offer copy and terms."
+        },
+        "promoCode": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 24,
+          "pattern": "^[A-Z0-9_\\-]+$",
+          "description": "Uppercase checkout coupon code."
+        },
+        "discountPercent": {
+          "type": "integer",
+          "description": "Percentage discount from 5 to 90."
+        },
+        "minOrderCents": {
+          "type": "integer",
+          "description": "Minimum cart subtotal in cents required to apply code."
+        },
+        "channel": {
+          "type": "string",
+          "enum": ["Storefront Banner", "Blog Callout", "Social & Email", "Flash Bundle"],
+          "description": "Primary marketing placement channel."
+        },
+        "featuredProductId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 128,
+          "description": "Optional target DirectProduct ID spotlighted by this campaign."
+        },
+        "ctaLabel": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 40,
+          "description": "Call-to-action button label."
+        },
+        "expiresLabel": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 40,
+          "description": "Human-readable campaign validity window."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["draft", "published", "archived"],
+          "description": "Campaign lifecycle status with terminal archived state."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "authorId",
+        "title",
+        "description",
+        "promoCode",
+        "discountPercent",
+        "minOrderCents",
+        "channel",
+        "featuredProductId",
+        "ctaLabel",
+        "expiresLabel",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "DirectOrder": {
+      "title": "DirectOrder",
+      "description": "Private customer order and creator seller payout record for direct physical or digital products purchased on Pickra.",
+      "type": "object",
+      "properties": {
+        "buyerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Verified customer Firebase Auth UID."
+        },
+        "sellerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Creator seller UID or house store identifier."
+        },
+        "sellerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Creator seller store display name."
+        },
+        "orderNumber": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 32,
+          "pattern": "^PKR-[A-Z0-9\\-]+$",
+          "description": "Human-readable Pickra order reference number."
+        },
+        "buyerName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80,
+          "description": "Customer full name for receipt and shipping."
+        },
+        "buyerEmail": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 254,
+          "description": "Customer receipt and digital delivery email."
+        },
+        "shippingAddress": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 300,
+          "description": "Physical shipping address (empty for digital-only orders)."
+        },
+        "productIds": {
+          "type": "array",
+          "description": "Bounded list (1 to 8) of purchased DirectProduct IDs."
+        },
+        "itemsSummary": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 600,
+          "description": "Formatted line-item summary with quantities and SKUs."
+        },
+        "itemCount": {
+          "type": "integer",
+          "description": "Total unit count across the order (1 to 50)."
+        },
+        "fulfillmentType": {
+          "type": "string",
+          "enum": ["physical", "digital", "mixed"],
+          "description": "Fulfillment mode required for the order."
+        },
+        "promoCode": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 24,
+          "description": "Applied promotional code if any."
+        },
+        "subtotalCents": {
+          "type": "integer",
+          "description": "Order subtotal before discount in USD cents."
+        },
+        "discountCents": {
+          "type": "integer",
+          "description": "Promotional discount amount in USD cents."
+        },
+        "shippingCents": {
+          "type": "integer",
+          "description": "Shipping fee in USD cents."
+        },
+        "totalCents": {
+          "type": "integer",
+          "description": "Final charged order total in USD cents."
+        },
+        "platformFeeCents": {
+          "type": "integer",
+          "description": "Platform marketplace fee in USD cents."
+        },
+        "sellerPayoutCents": {
+          "type": "integer",
+          "description": "Net creator seller payout in USD cents."
+        },
+        "payoutStatus": {
+          "type": "string",
+          "enum": ["pending", "paid_out", "not_applicable"],
+          "description": "Creator seller payout settlement status."
+        },
+        "sellerPayoutDetails": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 180,
+          "description": "Creator payout rail and destination reference."
+        },
+        "payoutNote": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 200,
+          "description": "Disbursement transaction reference recorded by the website owner."
+        },
+        "fulfillmentNote": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 300,
+          "description": "Tracking number or digital access instructions."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["paid", "processing", "shipped", "fulfilled", "cancelled"],
+          "description": "Order fulfillment status with terminal fulfilled and cancelled states."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "buyerId",
+        "sellerId",
+        "orderNumber",
+        "buyerName",
+        "buyerEmail",
+        "shippingAddress",
+        "productIds",
+        "itemsSummary",
+        "itemCount",
+        "fulfillmentType",
+        "promoCode",
+        "subtotalCents",
+        "discountCents",
+        "shippingCents",
+        "totalCents",
+        "fulfillmentNote",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SiteConfig": {
+      "title": "SiteConfig",
+      "description": "Global site-wide publishing, storefront shipping, announcement ribbon, and catalog configuration managed exclusively by the website owner.",
+      "type": "object",
+      "properties": {
+        "siteTagline": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 140,
+          "description": "Editorial masthead and footer positioning line."
+        },
+        "announcementEnabled": {
+          "type": "boolean",
+          "description": "Whether the top site-wide announcement ribbon is visible."
+        },
+        "announcementText": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 180,
+          "description": "Announcement ribbon copy."
+        },
+        "announcementCtaLabel": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 40,
+          "description": "Optional announcement CTA button label."
+        },
+        "announcementTargetSection": {
+          "type": "string",
+          "enum": ["store", "journal", "blog", "products", "services"],
+          "description": "Destination section when announcement CTA is clicked."
+        },
+        "freeShippingThresholdCents": {
+          "type": "integer",
+          "description": "Order subtotal threshold in cents for free physical shipping (0 to 1000000)."
+        },
+        "flatShippingCents": {
+          "type": "integer",
+          "description": "Standard flat physical shipping fee in cents (0 to 100000)."
+        },
+        "defaultDisclosureText": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 400,
+          "description": "Global FTC affiliate and direct store disclosure text."
+        },
+        "storeCheckoutEnabled": {
+          "type": "boolean",
+          "description": "Master switch controlling whether Direct Store checkout accepts new orders."
+        },
+        "showStarterSeeds": {
+          "type": "boolean",
+          "description": "Whether starter showcase dispatches, direct products, and affiliate picks are shown alongside custom Firestore records."
+        },
+        "hiddenSeedIds": {
+          "type": "array",
+          "description": "Bounded list (max 50) of starter seed IDs deleted or replaced by the website owner."
+        },
+        "updatedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Creator admin UID who last saved site configuration."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "siteTagline",
+        "announcementEnabled",
+        "announcementText",
+        "announcementCtaLabel",
+        "announcementTargetSection",
+        "freeShippingThresholdCents",
+        "flatShippingCents",
+        "defaultDisclosureText",
+        "storeCheckoutEnabled",
+        "showStarterSeeds",
+        "updatedBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AnalyticsEvent": {
+      "title": "AnalyticsEvent",
+      "description": "Immutable, non-PII interaction and conversion telemetry event monitored by the website owner.",
+      "type": "object",
+      "properties": {
+        "actorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Authenticated user UID recording the event."
+        },
+        "actorScope": {
+          "type": "string",
+          "enum": ["customer", "creator"],
+          "description": "Non-PII actor role classification."
+        },
+        "targetOwnerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the creator who owns the target item or editorial_desk."
+        },
+        "eventType": {
+          "type": "string",
+          "enum": ["post_view", "affiliate_click", "product_view", "bag_add", "promo_apply", "order_placed"],
+          "description": "Type of monitored website interaction."
+        },
+        "channel": {
+          "type": "string",
+          "enum": ["journal", "blog", "store", "affiliate", "services", "campaigns"],
+          "description": "Website vertical where the interaction occurred."
+        },
+        "targetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Document or seed ID of the post, product, offer, campaign, or order."
+        },
+        "targetTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "Human-readable title of the target item."
+        },
+        "platform": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "Marketplace or internal channel label."
+        },
+        "valueCents": {
+          "type": "integer",
+          "description": "Monetary value associated with the event in USD cents (0 for views/clicks)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        }
+      },
+      "required": [
+        "actorId",
+        "actorScope",
+        "targetOwnerId",
+        "eventType",
+        "channel",
+        "targetId",
+        "targetTitle",
+        "platform",
+        "valueCents",
+        "createdAt"
+      ]
     }
   },
   "firestore": {
     "/admins/{adminId}": {
       "schema": { "$ref": "#/entities/AdminRecord" },
-      "description": "Trusted admin role lookup collection."
+      "description": "Trusted website owner and co-admin role lookup collection."
     },
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
-      "description": "Public author profile records without PII."
+      "description": "Public author, creator seller, and customer profile records without PII."
     },
     "/users/{userId}/private/{infoId}": {
       "schema": { "$ref": "#/entities/UserPrivateInfo" },
-      "description": "Owner-only PII and default affiliate network tags."
+      "description": "Owner-only PII, default affiliate network tags, and seller payout details."
     },
     "/offers/{offerId}": {
       "schema": { "$ref": "#/entities/AffiliateOffer" },
-      "description": "Curated physical products, digital products, and freelance services."
+      "description": "Curated affiliate physical products, digital products, and professional services managed by the website owner."
     },
     "/posts/{postId}": {
       "schema": { "$ref": "#/entities/BlogPost" },
-      "description": "Editorial blog dispatches with attached affiliate offerings."
+      "description": "Medium-style editorial blog posts managed by the website owner."
+    },
+    "/directProducts/{productId}": {
+      "schema": { "$ref": "#/entities/DirectProduct" },
+      "description": "Multi-creator physical and digital products sold directly on Pickra."
+    },
+    "/campaigns/{campaignId}": {
+      "schema": { "$ref": "#/entities/MarketingCampaign" },
+      "description": "Storefront promotional campaigns and checkout discount codes."
+    },
+    "/directOrders/{orderId}": {
+      "schema": { "$ref": "#/entities/DirectOrder" },
+      "description": "Private customer purchase orders and creator seller payout records restricted to buyer, seller, and website owner."
+    },
+    "/siteConfig/{configId}": {
+      "schema": { "$ref": "#/entities/SiteConfig" },
+      "description": "Global site configuration singleton (/siteConfig/main) managed exclusively by the website owner."
+    },
+    "/analyticsEvents/{eventId}": {
+      "schema": { "$ref": "#/entities/AnalyticsEvent" },
+      "description": "Immutable non-PII website monitoring and conversion telemetry readable by the website owner."
     }
   }
 }

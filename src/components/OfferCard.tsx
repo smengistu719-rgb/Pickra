@@ -1,5 +1,5 @@
-import React from 'react';
-import { ArrowUpRight, Check } from 'lucide-react';
+import React, { useState } from 'react';
+import { ArrowUpRight, Check, PenLine, Trash2 } from 'lucide-react';
 import { AffiliateOffer } from '../types';
 import { ResilientImage } from './ResilientImage';
 import { useFirebaseApp } from '../context/FirebaseContext';
@@ -7,6 +7,8 @@ import { useFirebaseApp } from '../context/FirebaseContext';
 interface OfferCardProps {
   offer: AffiliateOffer;
   variant?: 'grid' | 'inline' | 'rail';
+  onEdit?: (offer: AffiliateOffer) => void;
+  onDelete?: (offer: AffiliateOffer) => Promise<void> | void;
 }
 
 function getKindLabel(kind: AffiliateOffer['kind']): string {
@@ -16,27 +18,42 @@ function getKindLabel(kind: AffiliateOffer['kind']): string {
     case 'digital':
       return 'Digital Product';
     case 'service':
-      return 'Freelance Service';
+      return 'Professional Service';
   }
 }
 
 function getActionLabel(offer: AffiliateOffer): string {
   if (offer.kind === 'service') {
-    if (offer.platform === 'Upwork') return 'Hire on Upwork';
     if (offer.platform === 'Fiverr') return 'Commission on Fiverr';
+    if (offer.platform === 'Upwork') return 'Hire on Upwork';
+    if (offer.platform === 'Toptal') return 'Hire via Toptal';
+    if (offer.platform === '99designs') return 'View on 99designs';
+    if (offer.platform === 'Contra') return 'Hire on Contra';
+    if (offer.platform === 'PeoplePerHour') return 'Book on PeoplePerHour';
+    if (offer.platform === 'Custom') return 'Visit Service Page';
     return `View Service on ${offer.platform}`;
   }
   if (offer.kind === 'digital') {
     if (offer.platform === 'Digistore24') return 'Get via Digistore24';
+    if (offer.platform === 'ClickBank') return 'Access via ClickBank';
     if (offer.platform === 'Gumroad') return 'Get on Gumroad';
-    return `Access on ${offer.platform}`;
+    if (offer.platform === 'Custom') return 'Open Digital Offer';
+    return `Get on ${offer.platform}`;
   }
-  if (offer.platform === 'Amazon') return 'View on Amazon';
+  if (offer.platform === 'Amazon') return 'Buy on Amazon';
+  if (offer.platform === 'Digistore24') return 'Order via Digistore24';
+  if (offer.platform === 'Custom') return 'Open Partner Page';
   return `Shop on ${offer.platform}`;
 }
 
-export const OfferCard: React.FC<OfferCardProps> = ({ offer, variant = 'grid' }) => {
+export const OfferCard: React.FC<OfferCardProps> = ({
+  offer,
+  variant = 'grid',
+  onEdit,
+  onDelete,
+}) => {
   const { recordOutboundClick } = useFirebaseApp();
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   if (variant === 'rail') {
     return (
@@ -84,7 +101,7 @@ export const OfferCard: React.FC<OfferCardProps> = ({ offer, variant = 'grid' })
     return (
       <aside
         aria-label={`Recommended ${getKindLabel(offer.kind)}: ${offer.title}`}
-        className="my-8 bg-[#F5F2EB] border border-stone-200/90 rounded-xl p-5 sm:p-6"
+        className="my-8 bg-[#F5F2EB] border border-stone-200/90 rounded-xl p-5 sm:p-6 text-stone-900"
       >
         <div className="grid grid-cols-1 sm:grid-cols-12 gap-5 items-center">
           <div className="sm:col-span-4 aspect-[4/3] rounded-lg overflow-hidden bg-stone-200/60">
@@ -129,7 +146,7 @@ export const OfferCard: React.FC<OfferCardProps> = ({ offer, variant = 'grid' })
             <div className="mt-4 pt-4 border-t border-stone-200/80 flex flex-wrap items-center justify-between gap-4">
               <div>
                 <span className="block text-[11px] text-stone-500">
-                  Listed price / rate
+                  Partner platform price / rate
                 </span>
                 <span className="font-mono text-base font-medium text-stone-900 tabular-nums">
                   {offer.priceLabel}
@@ -156,24 +173,89 @@ export const OfferCard: React.FC<OfferCardProps> = ({ offer, variant = 'grid' })
   // Default: 'grid' storefront/directory card
   return (
     <article className="group flex flex-col bg-white border border-stone-200/90 rounded-xl overflow-hidden transition-transform duration-150 hover:-translate-y-0.5">
-      <div className="aspect-[4/3] w-full bg-[#F3EFE8] overflow-hidden">
+      <a
+        href={offer.affiliateUrl}
+        target="_blank"
+        rel="noopener noreferrer sponsored"
+        onClick={() => recordOutboundClick(offer.id)}
+        className="block aspect-[4/3] w-full bg-[#F3EFE8] overflow-hidden"
+      >
         <ResilientImage
           imageKey={offer.imageKey}
           alt={offer.title}
           fallbackLabel={offer.title}
           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
         />
-      </div>
+      </a>
 
       <div className="flex flex-col flex-1 p-5 sm:p-6">
-        <div className="flex items-center gap-1.5 text-xs text-stone-500">
-          <span className="font-medium text-stone-700">{offer.platform}</span>
-          <span aria-hidden="true">·</span>
-          <span>{getKindLabel(offer.kind)}</span>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs text-stone-500">
+            <span className="font-medium text-[#9A3412]">{offer.platform}</span>
+            <span aria-hidden="true">·</span>
+            <span>{getKindLabel(offer.kind)}</span>
+          </div>
+
+          {(onEdit || onDelete) && (
+            <div className="flex items-center gap-1.5 shrink-0">
+              {onEdit && (
+                <button
+                  type="button"
+                  onClick={() => onEdit(offer)}
+                  title="Edit listing"
+                  className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-stone-700 hover:text-stone-900 bg-[#F3EFE8] hover:bg-stone-200 rounded cursor-pointer whitespace-nowrap"
+                >
+                  <PenLine className="w-3 h-3" />
+                  <span>Edit</span>
+                </button>
+              )}
+              {onDelete && (
+                confirmDelete ? (
+                  <div className="inline-flex items-center gap-1 text-[11px] bg-red-50 border border-red-200 px-2 py-0.5 rounded">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void onDelete(offer);
+                        setConfirmDelete(false);
+                      }}
+                      className="font-semibold text-red-700 hover:underline cursor-pointer"
+                    >
+                      Confirm
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDelete(false)}
+                      className="text-stone-500 hover:text-stone-800 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDelete(true)}
+                    title="Delete listing"
+                    aria-label={`Delete ${offer.title}`}
+                    className="p-1 text-stone-400 hover:text-red-700 rounded cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )
+              )}
+            </div>
+          )}
         </div>
 
         <h3 className="mt-2 text-base font-semibold text-stone-900 leading-snug line-clamp-2">
-          {offer.title}
+          <a
+            href={offer.affiliateUrl}
+            target="_blank"
+            rel="noopener noreferrer sponsored"
+            onClick={() => recordOutboundClick(offer.id)}
+            className="hover:text-[#9A3412] transition-colors"
+          >
+            {offer.title}
+          </a>
         </h3>
 
         <p className="mt-2 text-sm text-stone-600 leading-relaxed line-clamp-3 flex-1">

@@ -77,9 +77,14 @@ void testConnection();
 export const VALIDATION_LIMITS = {
   ID_REGEX: /^[a-zA-Z0-9_-]+$/,
   SLUG_REGEX: /^[a-z0-9-]+$/,
+  SKU_REGEX: /^[A-Z0-9-]+$/,
+  PROMO_CODE_REGEX: /^[A-Z0-9_-]+$/,
+  ORDER_NUMBER_REGEX: /^PKR-[A-Z0-9-]+$/,
   HTTPS_URL_REGEX: /^https:\/\/.+/,
   DISPLAY_NAME_MAX: 80,
+  STORE_NAME_MAX: 80,
   BIO_MAX: 300,
+  PAYOUT_ACCOUNT_MAX: 160,
   OFFER_TITLE_MIN: 2,
   OFFER_TITLE_MAX: 140,
   OFFER_CATEGORY_MIN: 2,
@@ -88,8 +93,15 @@ export const VALIDATION_LIMITS = {
   COMMISSION_NOTE_MAX: 80,
   URL_MIN: 8,
   URL_MAX: 500,
+  IMAGE_KEY_MAX: 175000,
   SUMMARY_MIN: 10,
   SUMMARY_MAX: 400,
+  PRODUCT_SUMMARY_MAX: 500,
+  PRODUCT_SUBTITLE_MIN: 4,
+  PRODUCT_SUBTITLE_MAX: 220,
+  PRODUCT_BADGE_MAX: 40,
+  PRODUCT_DELIVERY_NOTE_MIN: 2,
+  PRODUCT_DELIVERY_NOTE_MAX: 200,
   HIGHLIGHTS_MAX_COUNT: 4,
   HIGHLIGHT_ITEM_MAX: 140,
   POST_TITLE_MIN: 4,
@@ -97,11 +109,108 @@ export const VALIDATION_LIMITS = {
   POST_SUBTITLE_MIN: 8,
   POST_SUBTITLE_MAX: 280,
   POST_CONTENT_MIN: 20,
-  POST_CONTENT_MAX: 25000,
+  POST_CONTENT_MAX: 340000,
   POST_ATTACHED_OFFERS_MAX: 8,
   DISCLOSURE_MIN: 10,
   DISCLOSURE_MAX: 400,
+  CAMPAIGN_TITLE_MIN: 3,
+  CAMPAIGN_TITLE_MAX: 120,
+  CAMPAIGN_DESC_MIN: 8,
+  CAMPAIGN_DESC_MAX: 280,
+  PROMO_CODE_MIN: 3,
+  PROMO_CODE_MAX: 24,
+  ORDER_ADDRESS_MAX: 300,
+  ORDER_ITEMS_SUMMARY_MAX: 600,
+  ORDER_FULFILLMENT_NOTE_MAX: 300,
+  ORDER_PAYOUT_DETAILS_MAX: 180,
+  ORDER_PAYOUT_NOTE_MAX: 200,
+  SITE_TAGLINE_MIN: 4,
+  SITE_TAGLINE_MAX: 140,
+  ANNOUNCEMENT_TEXT_MAX: 180,
+  ANNOUNCEMENT_CTA_MAX: 40,
+  EVENT_TITLE_MAX: 160,
+  EVENT_PLATFORM_MAX: 40,
 } as const;
+
+/**
+ * Client-side image compression for instant local photo uploads within Firestore document limits.
+ */
+export async function compressImageFileToDataUrl(
+  file: File,
+  maxDimension = 960,
+  initialQuality = 0.74
+): Promise<string> {
+  if (!file.type.startsWith('image/')) {
+    throw new Error('Please choose a valid image file (JPG, PNG, WebP, or GIF).');
+  }
+  if (file.size > 15 * 1024 * 1024) {
+    throw new Error('Image file is too large (max 15 MB before compression).');
+  }
+
+  const rawDataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Could not read the selected image file.'));
+    reader.readAsDataURL(file);
+  });
+
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const el = new Image();
+    el.onload = () => resolve(el);
+    el.onerror = () => reject(new Error('Selected file could not be decoded as an image.'));
+    el.src = rawDataUrl;
+  });
+
+  let width = img.naturalWidth || img.width || 800;
+  let height = img.naturalHeight || img.height || 600;
+  if (width > maxDimension || height > maxDimension) {
+    const scale = Math.min(maxDimension / width, maxDimension / height);
+    width = Math.max(1, Math.round(width * scale));
+    height = Math.max(1, Math.round(height * scale));
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('Browser canvas context unavailable for image processing.');
+  }
+
+  ctx.fillStyle = '#FAF8F5';
+  ctx.fillRect(0, 0, width, height);
+  ctx.drawImage(img, 0, 0, width, height);
+
+  let quality = initialQuality;
+  let output = canvas.toDataURL('image/webp', quality);
+  if (!output.startsWith('data:image/webp')) {
+    output = canvas.toDataURL('image/jpeg', quality);
+  }
+
+  while (output.length > 155000 && quality > 0.35) {
+    quality -= 0.12;
+    output = canvas.toDataURL('image/jpeg', quality);
+  }
+
+  if (output.length > VALIDATION_LIMITS.IMAGE_KEY_MAX) {
+    const smallerCanvas = document.createElement('canvas');
+    smallerCanvas.width = Math.max(1, Math.round(width * 0.65));
+    smallerCanvas.height = Math.max(1, Math.round(height * 0.65));
+    const sCtx = smallerCanvas.getContext('2d');
+    if (sCtx) {
+      sCtx.fillStyle = '#FAF8F5';
+      sCtx.fillRect(0, 0, smallerCanvas.width, smallerCanvas.height);
+      sCtx.drawImage(canvas, 0, 0, smallerCanvas.width, smallerCanvas.height);
+      output = smallerCanvas.toDataURL('image/jpeg', 0.58);
+    }
+  }
+
+  if (output.length > VALIDATION_LIMITS.IMAGE_KEY_MAX) {
+    throw new Error('Image is still too complex after compression. Try a smaller photo.');
+  }
+
+  return output;
+}
 
 export function toSafeSlug(input: string): string {
   const cleaned = input
@@ -113,7 +222,71 @@ export function toSafeSlug(input: string): string {
   return cleaned.length >= 2 ? cleaned : `dispatch-${Date.now()}`;
 }
 
+export function toSafeSku(input: string): string {
+  const cleaned = input
+    .toUpperCase()
+    .trim()
+    .replace(/[^A-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+  return cleaned.length >= 2 ? cleaned : `PKR-${Math.floor(100 + Math.random() * 900)}`;
+}
+
+export function toSafePromoCode(input: string): string {
+  const cleaned = input
+    .toUpperCase()
+    .trim()
+    .replace(/[^A-Z0-9_-]+/g, '')
+    .slice(0, 24);
+  return cleaned.length >= 3 ? cleaned : 'PICKRA10';
+}
+
+export function formatPriceCents(cents: number): string {
+  const safeCents = Number.isFinite(cents) ? Math.max(0, Math.round(cents)) : 0;
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+  }).format(safeCents / 100);
+}
+
 export function generateSafeDocId(prefix: string): string {
   const randomSuffix = Math.random().toString(36).slice(2, 10);
   return `${prefix}_${Date.now()}_${randomSuffix}`.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 120);
+}
+
+export function generateOrderNumber(): string {
+  const year = new Date().getFullYear();
+  const suffix = Math.random().toString(36).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6) || '8042';
+  return `PKR-${year}-${suffix}`;
+}
+
+function escapeCsvCell(value: string | number): string {
+  const raw = String(value ?? '');
+  if (raw.includes(',') || raw.includes('"') || raw.includes('\n')) {
+    return `"${raw.replace(/"/g, '""')}"`;
+  }
+  return raw;
+}
+
+export function downloadCsvFile(
+  filename: string,
+  headers: string[],
+  rows: (string | number)[][]
+): void {
+  const csvLines = [
+    headers.map(escapeCsvCell).join(','),
+    ...rows.map((row) => row.map(escapeCsvCell).join(',')),
+  ];
+  const blob = new Blob([csvLines.join('\n')], {
+    type: 'text/csv;charset=utf-8;',
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
