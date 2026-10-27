@@ -64,8 +64,13 @@ export const InlineFormattedText: React.FC<{
   text: string;
   isDarkSurface?: boolean;
 }> = ({ text, isDarkSurface = false }) => {
-  const tokenRegex = /(\[[^\]]+\]\(https?:\/\/[^)\s]+\)|\*\*[^*]+\*\*|\*[^*\n]+\*)/g;
+  const tokenRegex =
+    /(\[[^\]]+\]\(https?:\/\/[^)\s]+\)|\*\*[^*]+\*\*|\*[^*\n]+\*|https?:\/\/[^\s<>)"]+)/g;
   const parts = text.split(tokenRegex);
+
+  const linkClass = isDarkSurface
+    ? 'text-amber-300 underline decoration-amber-400/70 decoration-[1.5px] underline-offset-4 hover:text-amber-200 transition-colors'
+    : 'text-stone-900 underline decoration-[#9A3412]/70 decoration-[1.5px] underline-offset-4 hover:text-[#9A3412] hover:decoration-[#9A3412] transition-colors';
 
   return (
     <>
@@ -82,14 +87,29 @@ export const InlineFormattedText: React.FC<{
               href={href}
               target="_blank"
               rel="noopener noreferrer sponsored"
-              className={
-                isDarkSurface
-                  ? 'text-amber-300 underline decoration-amber-400/70 decoration-[1.5px] underline-offset-4 hover:text-amber-200 transition-colors'
-                  : 'text-stone-900 underline decoration-[#9A3412]/70 decoration-[1.5px] underline-offset-4 hover:text-[#9A3412] hover:decoration-[#9A3412] transition-colors'
-              }
+              className={linkClass}
             >
               {label}
             </a>
+          );
+        }
+
+        if (/^https?:\/\/[^\s<>)"]+$/.test(part)) {
+          const trailingMatch = part.match(/^(.*?)([.,;:!?]+)?$/);
+          const cleanHref = trailingMatch ? trailingMatch[1] : part;
+          const trailingPunct = trailingMatch?.[2] || '';
+          return (
+            <React.Fragment key={index}>
+              <a
+                href={cleanHref}
+                target="_blank"
+                rel="noopener noreferrer sponsored"
+                className={`${linkClass} break-all`}
+              >
+                {cleanHref}
+              </a>
+              {trailingPunct}
+            </React.Fragment>
           );
         }
 
@@ -124,7 +144,8 @@ export const VideoEmbedFigure: React.FC<{
   url: string;
   caption?: string;
   isDarkSurface?: boolean;
-}> = ({ url, caption, isDarkSurface = false }) => {
+  compact?: boolean;
+}> = ({ url, caption, isDarkSurface = false, compact = false }) => {
   const descriptor = parseVideoEmbedUrl(url);
 
   if (!descriptor) {
@@ -132,7 +153,7 @@ export const VideoEmbedFigure: React.FC<{
   }
 
   return (
-    <figure className="my-8">
+    <figure className={compact ? 'my-3' : 'my-8'}>
       {descriptor.kind === 'iframe' ? (
         <div className="aspect-[16/9] w-full rounded-xl overflow-hidden bg-stone-900 border border-stone-200/90">
           <iframe

@@ -14,6 +14,10 @@ service cloud.firestore {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    function isGuestBuyerId(id) {
+      return id is string && id.size() >= 12 && id.size() <= 128 && id.matches('^guest_[a-zA-Z0-9_\\-]+$');
+    }
+
     function incoming() {
       return request.resource.data;
     }
@@ -74,11 +78,38 @@ service cloud.firestore {
         data.updatedAt is timestamp;
     }
 
+    function isValidPayoutAccountItem(val) {
+      return val is string && val.size() >= 3 && val.size() <= 240;
+    }
+
+    function isValidPayoutAccountsList(items) {
+      return items is list &&
+        items.size() <= 6 &&
+        (items.size() < 1 || isValidPayoutAccountItem(items[0])) &&
+        (items.size() < 2 || isValidPayoutAccountItem(items[1])) &&
+        (items.size() < 3 || isValidPayoutAccountItem(items[2])) &&
+        (items.size() < 4 || isValidPayoutAccountItem(items[3])) &&
+        (items.size() < 5 || isValidPayoutAccountItem(items[4])) &&
+        (items.size() < 6 || isValidPayoutAccountItem(items[5]));
+    }
+
+    function isValidOptionalVideoUrl(val) {
+      return val is string &&
+        val.size() <= 250000 &&
+        (val.size() == 0 || val.matches('^https://.+') || val.matches('^data:video/.+'));
+    }
+
+    function isValidOptionalDigitalFileUrl(val) {
+      return val is string &&
+        val.size() <= 560000 &&
+        (val.size() == 0 || val.matches('^https://.+') || val.matches('^data:.+'));
+    }
+
     function isValidUserPrivateInfo(data) {
       return data.keys().hasAll(['uid', 'email', 'defaultAmazonTag', 'defaultDigistoreId', 'createdAt', 'updatedAt']) &&
         data.keys().hasOnly([
           'uid', 'email', 'defaultAmazonTag', 'defaultDigistoreId',
-          'payoutMethod', 'payoutAccount', 'createdAt', 'updatedAt'
+          'payoutMethod', 'payoutAccount', 'payoutAccounts', 'createdAt', 'updatedAt'
         ]) &&
         isValidId(data.uid) &&
         data.uid == request.auth.uid &&
@@ -88,9 +119,13 @@ service cloud.firestore {
         (!('payoutMethod' in data) || (
           data.payoutMethod is string &&
           data.payoutMethod.size() <= 24 &&
-          data.payoutMethod in ['None', 'Stripe', 'PayPal', 'Wise', 'BankTransfer']
+          data.payoutMethod in [
+            'None', 'Telebirr', 'CBEBirr', 'MobileMoney', 'BankTransfer',
+            'Stripe', 'PayPal', 'Wise', 'Custom'
+          ]
         )) &&
         (!('payoutAccount' in data) || (data.payoutAccount is string && data.payoutAccount.size() <= 160)) &&
+        (!('payoutAccounts' in data) || isValidPayoutAccountsList(data.payoutAccounts)) &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
     }
@@ -116,7 +151,7 @@ service cloud.firestore {
         ]) &&
         data.keys().hasOnly([
           'authorId', 'authorName', 'title', 'kind', 'platform', 'category',
-          'priceLabel', 'commissionNote', 'affiliateUrl', 'imageKey',
+          'priceLabel', 'commissionNote', 'affiliateUrl', 'imageKey', 'videoUrl',
           'summary', 'highlights', 'status', 'createdAt', 'updatedAt'
         ]) &&
         isValidId(data.authorId) &&
@@ -136,7 +171,8 @@ service cloud.firestore {
         data.affiliateUrl is string && data.affiliateUrl.size() >= 8 && data.affiliateUrl.size() <= 500 &&
         data.affiliateUrl.matches('^https://.+') &&
         data.imageKey is string && data.imageKey.size() >= 1 && data.imageKey.size() <= 180000 &&
-        data.summary is string && data.summary.size() >= 10 && data.summary.size() <= 400 &&
+        (!('videoUrl' in data) || isValidOptionalVideoUrl(data.videoUrl)) &&
+        data.summary is string && data.summary.size() >= 10 && data.summary.size() <= 2500 &&
         isValidHighlightsList(data.highlights) &&
         data.status is string && data.status.size() <= 20 && data.status in ['draft', 'published', 'archived'] &&
         data.createdAt is timestamp &&
@@ -205,7 +241,8 @@ service cloud.firestore {
         data.keys().hasOnly([
           'sellerId', 'sellerName', 'title', 'subtitle', 'kind', 'category',
           'sku', 'priceCents', 'compareAtCents', 'stockCount', 'badgeLabel',
-          'imageKey', 'summary', 'highlights', 'deliveryNote', 'featured',
+          'imageKey', 'videoUrl', 'digitalFileUrl', 'digitalFileName', 'digitalFileType',
+          'summary', 'highlights', 'deliveryNote', 'featured',
           'status', 'createdAt', 'updatedAt'
         ]) &&
         isValidId(data.sellerId) &&
@@ -222,7 +259,11 @@ service cloud.firestore {
         data.stockCount is int && data.stockCount >= 0 && data.stockCount <= 100000 &&
         data.badgeLabel is string && data.badgeLabel.size() <= 40 &&
         data.imageKey is string && data.imageKey.size() >= 1 && data.imageKey.size() <= 180000 &&
-        data.summary is string && data.summary.size() >= 10 && data.summary.size() <= 500 &&
+        (!('videoUrl' in data) || isValidOptionalVideoUrl(data.videoUrl)) &&
+        (!('digitalFileUrl' in data) || isValidOptionalDigitalFileUrl(data.digitalFileUrl)) &&
+        (!('digitalFileName' in data) || (data.digitalFileName is string && data.digitalFileName.size() <= 140)) &&
+        (!('digitalFileType' in data) || (data.digitalFileType is string && data.digitalFileType.size() <= 60)) &&
+        data.summary is string && data.summary.size() >= 10 && data.summary.size() <= 1500 &&
         isValidHighlightsList(data.highlights) &&
         data.deliveryNote is string && data.deliveryNote.size() >= 2 && data.deliveryNote.size() <= 200 &&
         data.featured is bool &&
@@ -294,9 +335,12 @@ service cloud.firestore {
         isValidId(data.buyerId) &&
         isValidId(data.sellerId) &&
         (
-          data.buyerId == request.auth.uid ||
-          data.sellerId == request.auth.uid ||
-          isBootstrappedAdmin()
+          (isSignedIn() && (
+            data.buyerId == request.auth.uid ||
+            data.sellerId == request.auth.uid ||
+            isBootstrappedAdmin()
+          )) ||
+          (!isSignedIn() && isGuestBuyerId(data.buyerId))
         ) &&
         (!('sellerName' in data) || (data.sellerName is string && data.sellerName.size() >= 1 && data.sellerName.size() <= 80)) &&
         data.orderNumber is string && data.orderNumber.size() >= 4 && data.orderNumber.size() <= 32 &&
@@ -467,7 +511,8 @@ service cloud.firestore {
           incoming().createdAt == existing().createdAt &&
           incoming().updatedAt == request.time &&
           incoming().diff(existing()).affectedKeys().hasOnly([
-            'email', 'defaultAmazonTag', 'defaultDigistoreId', 'payoutMethod', 'payoutAccount', 'updatedAt'
+            'email', 'defaultAmazonTag', 'defaultDigistoreId',
+            'payoutMethod', 'payoutAccount', 'payoutAccounts', 'updatedAt'
           ]) &&
           exists(/databases/$(database)/documents/users/$(userId)) &&
           get(/databases/$(database)/documents/users/$(userId)).data.uid == request.auth.uid;
@@ -515,7 +560,7 @@ service cloud.firestore {
             existing().status != 'archived' &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'authorName', 'title', 'kind', 'platform', 'category',
-              'priceLabel', 'commissionNote', 'affiliateUrl', 'imageKey',
+              'priceLabel', 'commissionNote', 'affiliateUrl', 'imageKey', 'videoUrl',
               'summary', 'highlights', 'status', 'updatedAt'
             ])
           ) ||
@@ -612,7 +657,8 @@ service cloud.firestore {
             incoming().diff(existing()).affectedKeys().hasOnly([
               'sellerName', 'title', 'subtitle', 'kind', 'category',
               'sku', 'priceCents', 'compareAtCents', 'stockCount', 'badgeLabel',
-              'imageKey', 'summary', 'highlights', 'deliveryNote', 'featured',
+              'imageKey', 'videoUrl', 'digitalFileUrl', 'digitalFileName', 'digitalFileType',
+              'summary', 'highlights', 'deliveryNote', 'featured',
               'status', 'updatedAt'
             ])
           ) ||
@@ -691,16 +737,21 @@ service cloud.firestore {
         existing().sellerId == request.auth.uid ||
         isBootstrappedAdmin()
       );
-      allow create: if isVerifiedUser() &&
-        isValidId(orderId) &&
+      allow create: if isValidId(orderId) &&
         isValidDirectOrder(incoming()) &&
-        incoming().buyerId == request.auth.uid &&
         incoming().status == 'paid' &&
         (!('payoutStatus' in incoming()) || incoming().payoutStatus in ['pending', 'not_applicable']) &&
         (!('payoutNote' in incoming()) || incoming().payoutNote == '') &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
-        exists(/databases/$(database)/documents/users/$(incoming().buyerId)) &&
+        (
+          (
+            isVerifiedUser() &&
+            incoming().buyerId == request.auth.uid &&
+            exists(/databases/$(database)/documents/users/$(incoming().buyerId))
+          ) ||
+          (!isSignedIn() && isGuestBuyerId(incoming().buyerId))
+        ) &&
         (
           !exists(/databases/$(database)/documents/siteConfig/main) ||
           get(/databases/$(database)/documents/siteConfig/main).data.storeCheckoutEnabled == true

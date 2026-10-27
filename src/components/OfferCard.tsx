@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { ArrowUpRight, Check, PenLine, Trash2 } from 'lucide-react';
+import { ArrowUpRight, Check, PenLine, Play, Trash2, Video } from 'lucide-react';
 import { AffiliateOffer } from '../types';
 import { ResilientImage } from './ResilientImage';
+import { InlineFormattedText, VideoEmbedFigure } from './EditorialRichBlocks';
 import { useFirebaseApp } from '../context/FirebaseContext';
 
 interface OfferCardProps {
@@ -54,6 +55,8 @@ export const OfferCard: React.FC<OfferCardProps> = ({
 }) => {
   const { recordOutboundClick } = useFirebaseApp();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showVideo, setShowVideo] = useState(false);
+  const hasVideo = Boolean(offer.videoUrl && offer.videoUrl.trim());
 
   if (variant === 'rail') {
     return (
@@ -125,9 +128,13 @@ export const OfferCard: React.FC<OfferCardProps> = ({
               {offer.title}
             </h3>
 
-            <p className="mt-2 text-sm text-stone-600 leading-relaxed">
-              {offer.summary}
+            <p className="mt-2 text-sm text-stone-600 leading-relaxed whitespace-pre-line">
+              <InlineFormattedText text={offer.summary} />
             </p>
+
+            {hasVideo && offer.videoUrl && (
+              <VideoEmbedFigure url={offer.videoUrl} compact />
+            )}
 
             {offer.highlights.length > 0 && (
               <ul className="mt-3 space-y-1.5">
@@ -173,20 +180,26 @@ export const OfferCard: React.FC<OfferCardProps> = ({
   // Default: 'grid' storefront/directory card
   return (
     <article className="group flex flex-col bg-white border border-stone-200/90 rounded-xl overflow-hidden transition-transform duration-150 hover:-translate-y-0.5">
-      <a
-        href={offer.affiliateUrl}
-        target="_blank"
-        rel="noopener noreferrer sponsored"
-        onClick={() => recordOutboundClick(offer.id)}
-        className="block aspect-[4/3] w-full bg-[#F3EFE8] overflow-hidden"
-      >
-        <ResilientImage
-          imageKey={offer.imageKey}
-          alt={offer.title}
-          fallbackLabel={offer.title}
-          className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
-        />
-      </a>
+      {showVideo && hasVideo && offer.videoUrl ? (
+        <div className="w-full bg-stone-950 px-3 py-1">
+          <VideoEmbedFigure url={offer.videoUrl} compact />
+        </div>
+      ) : (
+        <a
+          href={offer.affiliateUrl}
+          target="_blank"
+          rel="noopener noreferrer sponsored"
+          onClick={() => recordOutboundClick(offer.id)}
+          className="block aspect-[4/3] w-full bg-[#F3EFE8] overflow-hidden"
+        >
+          <ResilientImage
+            imageKey={offer.imageKey}
+            alt={offer.title}
+            fallbackLabel={offer.title}
+            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+          />
+        </a>
+      )}
 
       <div className="flex flex-col flex-1 p-5 sm:p-6">
         <div className="flex items-center justify-between gap-2">
@@ -194,6 +207,28 @@ export const OfferCard: React.FC<OfferCardProps> = ({
             <span className="font-medium text-[#9A3412]">{offer.platform}</span>
             <span aria-hidden="true">·</span>
             <span>{getKindLabel(offer.kind)}</span>
+            {hasVideo && (
+              <>
+                <span aria-hidden="true">·</span>
+                <button
+                  type="button"
+                  onClick={() => setShowVideo((v) => !v)}
+                  className="inline-flex items-center gap-1 font-medium text-stone-700 hover:text-[#9A3412] underline underline-offset-2 cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  {showVideo ? (
+                    <>
+                      <Video className="w-3 h-3" />
+                      <span>Hide Video</span>
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-3 h-3" />
+                      <span>Watch Video</span>
+                    </>
+                  )}
+                </button>
+              </>
+            )}
           </div>
 
           {(onEdit || onDelete) && (
@@ -258,8 +293,8 @@ export const OfferCard: React.FC<OfferCardProps> = ({
           </a>
         </h3>
 
-        <p className="mt-2 text-sm text-stone-600 leading-relaxed line-clamp-3 flex-1">
-          {offer.summary}
+        <p className="mt-2 text-sm text-stone-600 leading-relaxed whitespace-pre-line line-clamp-4 flex-1">
+          <InlineFormattedText text={offer.summary} />
         </p>
 
         {offer.highlights.length > 0 && (

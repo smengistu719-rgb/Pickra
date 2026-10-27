@@ -173,7 +173,7 @@ function parseSingleChunk(chunk: string): StoryBlock {
     return { id: createBlockId(), type: 'product', productId: productMatch[1] };
   }
 
-  const videoMatch = trimmed.match(/^@\[video:([^\]]*)\]\((https?:\/\/[^)]+)\)$/);
+  const videoMatch = trimmed.match(/^@\[video:([^\]]*)\]\(((?:https?:\/\/|data:video\/)[^)]+)\)$/);
   if (videoMatch) {
     return {
       id: createBlockId(),
@@ -339,6 +339,14 @@ export interface ParsedVideoDescriptor {
 export function parseVideoEmbedUrl(rawUrl: string): ParsedVideoDescriptor | null {
   const trimmed = rawUrl.trim();
   if (!trimmed) return null;
+
+  if (trimmed.startsWith('data:video/')) {
+    return {
+      kind: 'video',
+      embedSrc: trimmed,
+      provider: 'Uploaded Video',
+    };
+  }
 
   const normalized = trimmed.startsWith('http') ? trimmed : `https://${trimmed}`;
 

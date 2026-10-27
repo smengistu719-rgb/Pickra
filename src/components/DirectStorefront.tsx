@@ -2,8 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Check,
   Copy,
+  CreditCard,
   DollarSign,
+  Download,
   Edit3,
+  ExternalLink,
+  FileText,
   LogOut,
   Package,
   Plus,
@@ -12,7 +16,9 @@ import {
   Store,
   Tag,
   Trash2,
+  Upload,
   UserPlus,
+  Video,
   X,
 } from 'lucide-react';
 import {
@@ -20,18 +26,29 @@ import {
   DirectProductDraftInput,
   useFirebaseApp,
 } from '../context/FirebaseContext';
-import { formatPriceCents, toSafePromoCode } from '../firebase';
+import {
+  formatPriceCents,
+  readCompactVideoFileToDataUrl,
+  readDigitalProductFileToDataUrl,
+  toSafePromoCode,
+  triggerDigitalAssetDownload,
+} from '../firebase';
 import {
   CampaignChannel,
   DirectProduct,
   DirectProductKind,
+  formatPayoutSummary,
   MarketingCampaign,
   OrderFulfillmentStatus,
+  parsePayoutAccounts,
   PublishStatus,
+  SavedPayoutAccount,
+  SELLER_PAYOUT_METHOD_OPTIONS,
   SellerPayoutMethod,
 } from '../types';
 import { AuthPanel } from './AuthModal';
 import { DirectProductCard } from './DirectProductCard';
+import { InlineFormattedText, VideoEmbedFigure } from './EditorialRichBlocks';
 import { ImageUploadPicker } from './ImageUploadPicker';
 import { ResilientImage } from './ResilientImage';
 
@@ -41,11 +58,14 @@ interface DirectStorefrontProps {
   initialSubView?: StoreSubView;
 }
 
-const PAYOUT_METHODS: { value: SellerPayoutMethod; label: string }[] = [
-  { value: 'Stripe', label: 'Stripe Express / Connect' },
-  { value: 'PayPal', label: 'PayPal Business / Email' },
-  { value: 'Wise', label: 'Wise Multi-Currency' },
-  { value: 'BankTransfer', label: 'Direct Bank / Wire (IBAN / ACH)' },
+const DIGITAL_FORMAT_PRESETS = [
+  'HTTPS Link',
+  'PDF Document',
+  'ZIP Archive',
+  'Excel / Spreadsheet',
+  'eBook (EPUB / MOBI / PDF)',
+  'HTML File / Web Tool',
+  'Digital Tool / Script',
 ];
 
 const ORDER_STATUSES: OrderFulfillmentStatus[] = [
@@ -72,6 +92,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
     profile,
     privateInfo,
     publishedDirectProducts,
+    allAccessibleDirectProductsMap,
     mySellerProducts,
     publishedCampaigns,
     myPurchases,
@@ -85,6 +106,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
     openAuthModal,
     signOutUser,
     registerOrUpdateSellerAccount,
+    saveUserPaymentMethods,
     saveDirectProduct,
     updateDirectProductStatus,
     deleteDirectProduct,
@@ -93,6 +115,8 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
     updateDirectOrderFulfillment,
     updateOrderPayoutDetails,
     cancelBuyerOrder,
+    removeLocalPurchaseRecord,
+    deleteDirectOrder,
     siteConfig,
     recordProductView,
   } = useFirebaseApp();
@@ -125,9 +149,21 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
   const [sellerStoreName, setSellerStoreName] = useState('');
   const [sellerBio, setSellerBio] = useState('');
   const [sellerPayoutMethod, setSellerPayoutMethod] =
-    useState<SellerPayoutMethod>('Stripe');
+    useState<SellerPayoutMethod>('Telebirr');
   const [sellerPayoutAccount, setSellerPayoutAccount] = useState('');
   const [savingAccount, setSavingAccount] = useState(false);
+
+  // Multi-Account Payment Details Manager State (Add / Edit / Set Primary / Remove)
+  const [isPaymentFormOpen, setIsPaymentFormOpen] = useState(false);
+  const [editingPaymentId, setEditingPaymentId] = useState<string | null>(null);
+  const [payMethod, setPayMethod] = useState<SellerPayoutMethod>('Telebirr');
+  const [payProviderLabel, setPayProviderLabel] = useState('Telebirr');
+  const [payAccountHolder, setPayAccountHolder] = useState('');
+  const [payAccountNumber, setPayAccountNumber] = useState('');
+  const [savingPayment, setSavingPayment] = useState(false);
+  const [confirmRemovePaymentId, setConfirmRemovePaymentId] = useState<
+    string | null
+  >(null);
 
   // Creator Product Add / Edit Modal State
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
@@ -144,6 +180,12 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
   const [prodStock, setProdStock] = useState('25');
   const [prodBadge, setProdBadge] = useState('Creator Edition');
   const [prodImageKey, setProdImageKey] = useState('edition');
+  const [prodVideoUrl, setProdVideoUrl] = useState('');
+  const [uploadingProdVideo, setUploadingProdVideo] = useState(false);
+  const [prodDigitalFileUrl, setProdDigitalFileUrl] = useState('');
+  const [prodDigitalFileName, setProdDigitalFileName] = useState('');
+  const [prodDigitalFileType, setProdDigitalFileType] = useState('');
+  const [uploadingDigitalFile, setUploadingDigitalFile] = useState(false);
   const [prodDeliveryNote, setProdDeliveryNote] = useState(
     'Ships in 48 hours with courier tracking'
   );
@@ -203,6 +245,17 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
       setSellerPayoutAccount(privateInfo.payoutAccount || '');
     }
   }, [profile, privateInfo, user]);
+
+  const savedPayoutAccounts = useMemo(
+    () =>
+      parsePayoutAccounts(
+        privateInfo?.payoutAccounts,
+        privateInfo?.payoutMethod,
+        privateInfo?.payoutAccount,
+        profile?.storeName || profile?.displayName || user?.displayName || ''
+      ),
+    [privateInfo, profile, user]
+  );
 
   const categories = useMemo(() => {
     const set = new Set<string>();
@@ -289,6 +342,10 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
       profile?.storeName ? `By ${profile.storeName}` : 'Creator Edition'
     );
     setProdImageKey('edition');
+    setProdVideoUrl('');
+    setProdDigitalFileUrl('');
+    setProdDigitalFileName('');
+    setProdDigitalFileType('');
     setProdDeliveryNote('Ships in 48 hours with courier tracking');
     setProdSummary('');
     setProdHighlightsText('');
@@ -311,12 +368,63 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
     setProdStock(String(prod.stockCount));
     setProdBadge(prod.badgeLabel);
     setProdImageKey(prod.imageKey || 'edition');
+    setProdVideoUrl(prod.videoUrl || '');
+    setProdDigitalFileUrl(prod.digitalFileUrl || '');
+    setProdDigitalFileName(prod.digitalFileName || '');
+    setProdDigitalFileType(prod.digitalFileType || '');
     setProdDeliveryNote(prod.deliveryNote);
     setProdSummary(prod.summary);
     setProdHighlightsText(prod.highlights.join('\n'));
     setProdFeatured(prod.featured);
     setProdStatus(prod.status);
     setIsProductModalOpen(true);
+  }
+
+  async function handleProdVideoFileUpload(
+    e: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingProdVideo(true);
+    setFeedback(null);
+    try {
+      const dataUrl = await readCompactVideoFileToDataUrl(file);
+      setProdVideoUrl(dataUrl);
+    } catch (err) {
+      setFeedback({
+        tone: 'err',
+        text: err instanceof Error ? err.message : 'Unable to upload video.',
+      });
+    } finally {
+      setUploadingProdVideo(false);
+      e.target.value = '';
+    }
+  }
+
+  async function handleDigitalAssetFileUpload(
+    e: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingDigitalFile(true);
+    setFeedback(null);
+    try {
+      const uploaded = await readDigitalProductFileToDataUrl(file);
+      setProdDigitalFileUrl(uploaded.dataUrl);
+      setProdDigitalFileName(uploaded.fileName);
+      setProdDigitalFileType(uploaded.fileTypeLabel);
+    } catch (err) {
+      setFeedback({
+        tone: 'err',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'Unable to attach digital product file.',
+      });
+    } finally {
+      setUploadingDigitalFile(false);
+      e.target.value = '';
+    }
   }
 
   async function handleSaveProductSubmit(e: React.FormEvent) {
@@ -358,6 +466,15 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
         stockCount,
         badgeLabel: prodBadge,
         imageKey: prodImageKey || 'edition',
+        videoUrl: prodVideoUrl.trim(),
+        digitalFileUrl: prodKind === 'digital' ? prodDigitalFileUrl.trim() : '',
+        digitalFileName:
+          prodKind === 'digital' ? prodDigitalFileName.trim() : '',
+        digitalFileType:
+          prodKind === 'digital'
+            ? prodDigitalFileType.trim() ||
+              (prodDigitalFileUrl.startsWith('https://') ? 'HTTPS Link' : '')
+            : '',
         summary: prodSummary,
         highlights,
         deliveryNote: prodDeliveryNote,
@@ -465,15 +582,18 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
     setSavingAccount(true);
     setFeedback(null);
     try {
+      const primary = savedPayoutAccounts[0];
       await registerOrUpdateSellerAccount({
         storeName: sellerStoreName,
         bio: sellerBio,
-        payoutMethod: sellerPayoutMethod,
-        payoutAccount: sellerPayoutAccount,
+        payoutMethod: primary?.method || sellerPayoutMethod,
+        payoutAccount: primary
+          ? formatPayoutSummary(primary)
+          : sellerPayoutAccount,
       });
       setFeedback({
         tone: 'ok',
-        text: 'Creator Seller Account and payout destination saved. You are ready to publish products and receive 90% net payouts on every sale.',
+        text: 'Creator storefront profile saved. You can publish physical & digital products and manage your payment accounts below.',
       });
     } catch (err) {
       setFeedback({
@@ -485,6 +605,124 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
       });
     } finally {
       setSavingAccount(false);
+    }
+  }
+
+  function openAddPaymentForm() {
+    setEditingPaymentId(null);
+    setPayMethod('Telebirr');
+    setPayProviderLabel('Telebirr');
+    setPayAccountHolder(
+      profile?.storeName || profile?.displayName || user?.displayName || ''
+    );
+    setPayAccountNumber('');
+    setIsPaymentFormOpen(true);
+  }
+
+  function openEditPaymentForm(acc: SavedPayoutAccount) {
+    setEditingPaymentId(acc.id);
+    setPayMethod(acc.method);
+    setPayProviderLabel(acc.providerLabel);
+    setPayAccountHolder(acc.accountHolder);
+    setPayAccountNumber(acc.accountNumber);
+    setIsPaymentFormOpen(true);
+  }
+
+  async function handleSavePaymentMethodSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!payAccountNumber.trim()) return;
+    setSavingPayment(true);
+    setFeedback(null);
+    try {
+      const defaultOpt = SELLER_PAYOUT_METHOD_OPTIONS.find(
+        (m) => m.value === payMethod
+      );
+      const entry: SavedPayoutAccount = {
+        id:
+          editingPaymentId ||
+          `pm_${Date.now().toString(36)}_${Math.random()
+            .toString(36)
+            .slice(2, 6)}`,
+        method: payMethod,
+        providerLabel:
+          payProviderLabel.trim() || defaultOpt?.label || payMethod,
+        accountHolder:
+          payAccountHolder.trim() ||
+          profile?.storeName ||
+          profile?.displayName ||
+          'Account Holder',
+        accountNumber: payAccountNumber.trim(),
+      };
+
+      const nextList = editingPaymentId
+        ? savedPayoutAccounts.map((a) => (a.id === editingPaymentId ? entry : a))
+        : [...savedPayoutAccounts, entry].slice(0, 8);
+
+      await saveUserPaymentMethods(nextList, nextList[0]?.id);
+      setIsPaymentFormOpen(false);
+      setEditingPaymentId(null);
+      setFeedback({
+        tone: 'ok',
+        text: editingPaymentId
+          ? 'Payment account updated.'
+          : 'Payment account saved to your private payout vault.',
+      });
+    } catch (err) {
+      setFeedback({
+        tone: 'err',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'Unable to save payment details.',
+      });
+    } finally {
+      setSavingPayment(false);
+    }
+  }
+
+  async function handleSetPrimaryPaymentMethod(accountId: string) {
+    setSavingPayment(true);
+    setFeedback(null);
+    try {
+      await saveUserPaymentMethods(savedPayoutAccounts, accountId);
+      setFeedback({
+        tone: 'ok',
+        text: 'Primary payout destination updated.',
+      });
+    } catch (err) {
+      setFeedback({
+        tone: 'err',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'Unable to update primary payment method.',
+      });
+    } finally {
+      setSavingPayment(false);
+    }
+  }
+
+  async function handleRemovePaymentMethod(accountId: string) {
+    setSavingPayment(true);
+    setFeedback(null);
+    try {
+      const nextList = savedPayoutAccounts.filter((a) => a.id !== accountId);
+      await saveUserPaymentMethods(nextList, nextList[0]?.id);
+      setConfirmRemovePaymentId(null);
+      setFeedback({
+        tone: 'ok',
+        text: 'Payment account removed.',
+      });
+    } catch (err) {
+      setFeedback({
+        tone: 'err',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'Unable to remove payment account.',
+      });
+    } finally {
+      setSavingPayment(false);
     }
   }
 
@@ -602,7 +840,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                   : 'text-stone-600 hover:text-stone-900'
               }`}
             >
-              Sell on Pickra
+              My Dashboard &amp; Sell
               {user ? ` (${mySellerProducts.length})` : ''}
             </button>
             <button
@@ -1158,113 +1396,376 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                 </div>
               </div>
 
-              {/* 12-Col Split: Seller Account & Payout Setup (5) + Creator Products List (7) */}
+              {/* 12-Col Split: User Profile & Payment Methods (5) + Published Products List (7) */}
               <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-                <form
-                  onSubmit={(e) => void handleSaveSellerAccountSubmit(e)}
-                  className="xl:col-span-5 bg-white border border-stone-200/90 rounded-xl p-6 space-y-4"
-                >
-                  <div className="pb-3.5 border-b border-stone-200/80 flex items-center justify-between gap-2">
-                    <div>
-                      <div className="text-[11px] font-medium text-[#9A3412]">
-                        {profile?.isSeller
-                          ? 'Verified Seller Account Active'
-                          : 'Step 1 · Seller Onboarding'}
+                <div className="xl:col-span-5 space-y-6">
+                  {/* Payment Details & Payout Accounts Manager (Telebirr, Bank, CBE Birr, Stripe, PayPal, etc.) */}
+                  <div className="bg-white border border-stone-200/90 rounded-xl p-6 space-y-4">
+                    <div className="pb-3.5 border-b border-stone-200/80 flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[11px] font-medium text-[#9A3412]">
+                          Private Payout Vault · Bank, Telebirr &amp; Global
+                        </div>
+                        <h2 className="mt-0.5 font-serif text-lg font-medium text-stone-900">
+                          Payment Details &amp; Payout Accounts
+                        </h2>
                       </div>
-                      <h2 className="mt-0.5 font-serif text-lg font-medium text-stone-900">
-                        Creator Store &amp; Payout Settings
-                      </h2>
-                    </div>
-                    <Store className="w-4 h-4 text-[#9A3412] shrink-0" />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-stone-700 mb-1">
-                      Creator / Storefront Name
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      minLength={2}
-                      maxLength={80}
-                      value={sellerStoreName}
-                      onChange={(e) => setSellerStoreName(e.target.value)}
-                      placeholder="e.g., Atelier Kibo Studio"
-                      className="w-full px-3 py-2 text-sm bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-stone-700 mb-1">
-                      Creator Bio (Optional)
-                    </label>
-                    <textarea
-                      rows={2}
-                      maxLength={300}
-                      value={sellerBio}
-                      onChange={(e) => setSellerBio(e.target.value)}
-                      placeholder="Independent industrial designer & digital systems maker..."
-                      className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-stone-700 mb-1">
-                        Payout Method
-                      </label>
-                      <select
-                        value={sellerPayoutMethod}
-                        onChange={(e) =>
-                          setSellerPayoutMethod(
-                            e.target.value as SellerPayoutMethod
-                          )
-                        }
-                        className="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                      <button
+                        type="button"
+                        onClick={openAddPaymentForm}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg cursor-pointer whitespace-nowrap shrink-0"
                       >
-                        {PAYOUT_METHODS.map((pm) => (
-                          <option key={pm.value} value={pm.value}>
-                            {pm.label}
-                          </option>
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add Account</span>
+                      </button>
+                    </div>
+
+                    {savedPayoutAccounts.length === 0 ? (
+                      <div className="py-5 px-4 bg-[#FBF9F5] border border-dashed border-stone-300 rounded-lg text-center space-y-2">
+                        <CreditCard className="w-5 h-5 text-stone-400 mx-auto" />
+                        <p className="text-xs text-stone-600">
+                          Add your Telebirr, Bank Account (CBE, Awash, IBAN),
+                          CBE Birr, Mobile Money, PayPal, or Stripe payout
+                          details to receive 90% net earnings on sales.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={openAddPaymentForm}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-[#9A3412] hover:underline cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Add Payment Details</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-stone-200/80">
+                        {savedPayoutAccounts.map((acc, idx) => (
+                          <div
+                            key={acc.id}
+                            className="py-3 first:pt-0 last:pb-0 flex flex-col gap-1.5"
+                          >
+                            <div className="flex items-center justify-between gap-2 text-xs">
+                              <div className="flex flex-wrap items-center gap-1.5 font-semibold text-stone-900">
+                                <span>{acc.providerLabel || acc.method}</span>
+                                {idx === 0 && (
+                                  <span className="text-[11px] font-medium text-[#9A3412]">
+                                    · Primary
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2.5 text-[11px]">
+                                {idx > 0 && (
+                                  <button
+                                    type="button"
+                                    disabled={savingPayment}
+                                    onClick={() =>
+                                      void handleSetPrimaryPaymentMethod(acc.id)
+                                    }
+                                    className="font-medium text-stone-600 hover:text-[#9A3412] cursor-pointer whitespace-nowrap"
+                                  >
+                                    Set Primary
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => openEditPaymentForm(acc)}
+                                  className="font-medium text-stone-700 hover:text-stone-900 cursor-pointer"
+                                >
+                                  Edit
+                                </button>
+                                {confirmRemovePaymentId === acc.id ? (
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      disabled={savingPayment}
+                                      onClick={() =>
+                                        void handleRemovePaymentMethod(acc.id)
+                                      }
+                                      className="font-semibold text-red-700 hover:underline cursor-pointer"
+                                    >
+                                      Confirm
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setConfirmRemovePaymentId(null)
+                                      }
+                                      className="text-stone-500 cursor-pointer"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setConfirmRemovePaymentId(acc.id)
+                                    }
+                                    className="text-stone-500 hover:text-red-700 cursor-pointer"
+                                  >
+                                    Remove
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                            <div className="text-xs text-stone-600">
+                              {acc.accountHolder ? (
+                                <span>{acc.accountHolder} · </span>
+                              ) : null}
+                              <span className="font-mono text-stone-900">
+                                {acc.accountNumber}
+                              </span>
+                            </div>
+                          </div>
                         ))}
-                      </select>
+                      </div>
+                    )}
+
+                    {isPaymentFormOpen && (
+                      <form
+                        onSubmit={(e) => void handleSavePaymentMethodSubmit(e)}
+                        className="pt-3 border-t border-stone-200 space-y-3"
+                      >
+                        <div className="flex items-center justify-between text-xs font-semibold text-stone-900">
+                          <span>
+                            {editingPaymentId
+                              ? 'Edit Payment Account'
+                              : 'Add Payment / Bank / Telebirr Account'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsPaymentFormOpen(false);
+                              setEditingPaymentId(null);
+                            }}
+                            className="text-stone-400 hover:text-stone-700 cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          <div>
+                            <label className="block text-[11px] font-medium text-stone-600 mb-1">
+                              Payment Type
+                            </label>
+                            <select
+                              value={payMethod}
+                              onChange={(e) => {
+                                const next = e.target
+                                  .value as SellerPayoutMethod;
+                                setPayMethod(next);
+                                const found =
+                                  SELLER_PAYOUT_METHOD_OPTIONS.find(
+                                    (m) => m.value === next
+                                  );
+                                setPayProviderLabel(
+                                  next === 'BankTransfer'
+                                    ? 'Commercial Bank of Ethiopia (CBE)'
+                                    : found?.label || next
+                                );
+                              }}
+                              className="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                            >
+                              {SELLER_PAYOUT_METHOD_OPTIONS.map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] font-medium text-stone-600 mb-1">
+                              Bank / Provider Name
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              maxLength={60}
+                              value={payProviderLabel}
+                              onChange={(e) =>
+                                setPayProviderLabel(e.target.value)
+                              }
+                              placeholder="e.g., Telebirr, CBE, Awash Bank, PayPal"
+                              className="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          <div>
+                            <label className="block text-[11px] font-medium text-stone-600 mb-1">
+                              Account Holder Name
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              maxLength={60}
+                              value={payAccountHolder}
+                              onChange={(e) =>
+                                setPayAccountHolder(e.target.value)
+                              }
+                              placeholder="Full name on account"
+                              className="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] font-medium text-stone-600 mb-1">
+                              Phone / Account # / Email / IBAN
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              minLength={3}
+                              maxLength={100}
+                              value={payAccountNumber}
+                              onChange={(e) =>
+                                setPayAccountNumber(e.target.value)
+                              }
+                              placeholder={
+                                SELLER_PAYOUT_METHOD_OPTIONS.find(
+                                  (m) => m.value === payMethod
+                                )?.placeholder || '+251 9... or 1000...'
+                              }
+                              className="w-full px-2.5 py-2 text-xs font-mono bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsPaymentFormOpen(false);
+                              setEditingPaymentId(null);
+                            }}
+                            className="px-3 py-1.5 text-xs text-stone-600 cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={savingPayment}
+                            className="px-3.5 py-1.5 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-lg cursor-pointer"
+                          >
+                            {savingPayment
+                              ? 'Saving...'
+                              : editingPaymentId
+                              ? 'Update Payment'
+                              : 'Save Payment Account'}
+                          </button>
+                        </div>
+                      </form>
+                    )}
+                  </div>
+
+                  {/* Storefront Profile Form */}
+                  <form
+                    onSubmit={(e) => void handleSaveSellerAccountSubmit(e)}
+                    className="bg-white border border-stone-200/90 rounded-xl p-6 space-y-4"
+                  >
+                    <div className="pb-3.5 border-b border-stone-200/80 flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[11px] font-medium text-[#9A3412]">
+                          {profile?.isSeller
+                            ? 'Creator Storefront Active'
+                            : 'Seller Storefront Setup'}
+                        </div>
+                        <h2 className="mt-0.5 font-serif text-lg font-medium text-stone-900">
+                          Storefront Identity &amp; Bio
+                        </h2>
+                      </div>
+                      <Store className="w-4 h-4 text-[#9A3412] shrink-0" />
                     </div>
 
                     <div>
                       <label className="block text-xs font-medium text-stone-700 mb-1">
-                        Payout Account / Email / IBAN
+                        Creator / Storefront Name
                       </label>
                       <input
                         type="text"
                         required
-                        minLength={3}
-                        maxLength={160}
-                        value={sellerPayoutAccount}
-                        onChange={(e) => setSellerPayoutAccount(e.target.value)}
-                        placeholder="payouts@yourstudio.com or acct_..."
-                        className="w-full px-3 py-2 text-xs font-mono bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                        minLength={2}
+                        maxLength={80}
+                        value={sellerStoreName}
+                        onChange={(e) => setSellerStoreName(e.target.value)}
+                        placeholder="e.g., Atelier Kibo Studio"
+                        className="w-full px-3 py-2 text-sm bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
                       />
                     </div>
-                  </div>
 
-                  <p className="text-[11px] text-stone-500 leading-relaxed">
-                    Your payout destination is stored privately in your isolated
-                    account vault and attached solely to incoming orders so
-                    payouts can be settled accurately when your products sell.
-                  </p>
+                    <div>
+                      <label className="block text-xs font-medium text-stone-700 mb-1">
+                        Creator Bio (Optional)
+                      </label>
+                      <textarea
+                        rows={2}
+                        maxLength={300}
+                        value={sellerBio}
+                        onChange={(e) => setSellerBio(e.target.value)}
+                        placeholder="Independent designer, digital tool builder, or maker..."
+                        className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                      />
+                    </div>
 
-                  <button
-                    type="submit"
-                    disabled={savingAccount}
-                    className="w-full py-2.5 px-4 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] disabled:bg-stone-300 rounded-lg transition-colors cursor-pointer"
-                  >
-                    {savingAccount
-                      ? 'Saving Creator Account...'
-                      : profile?.isSeller
-                      ? 'Update Seller & Payout Profile'
-                      : 'Activate Creator Seller Account'}
-                  </button>
-                </form>
+                    {savedPayoutAccounts.length === 0 && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-stone-700 mb-1">
+                            Quick Payout Method
+                          </label>
+                          <select
+                            value={sellerPayoutMethod}
+                            onChange={(e) =>
+                              setSellerPayoutMethod(
+                                e.target.value as SellerPayoutMethod
+                              )
+                            }
+                            className="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                          >
+                            {SELLER_PAYOUT_METHOD_OPTIONS.map((pm) => (
+                              <option key={pm.value} value={pm.value}>
+                                {pm.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-stone-700 mb-1">
+                            Account / Phone / IBAN
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            minLength={3}
+                            maxLength={160}
+                            value={sellerPayoutAccount}
+                            onChange={(e) =>
+                              setSellerPayoutAccount(e.target.value)
+                            }
+                            placeholder="+251 9... or 1000... or email"
+                            className="w-full px-3 py-2 text-xs font-mono bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    <button
+                      type="submit"
+                      disabled={savingAccount}
+                      className="w-full py-2.5 px-4 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] disabled:bg-stone-300 rounded-lg transition-colors cursor-pointer"
+                    >
+                      {savingAccount
+                        ? 'Saving Storefront...'
+                        : profile?.isSeller
+                        ? 'Update Storefront Profile'
+                        : 'Activate Creator Storefront'}
+                    </button>
+                  </form>
+                </div>
 
                 {/* Creator Published Products Management */}
                 <div className="xl:col-span-7 bg-white border border-stone-200/90 rounded-xl overflow-hidden">
@@ -1637,121 +2138,232 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
       )}
 
       {/* =================================================================
-          SUB-VIEW 3: CUSTOMER PURCHASES & DIGITAL DOWNLOADS
+          SUB-VIEW 3: CUSTOMER PURCHASES & INSTANT DIGITAL DOWNLOADS (GUEST + ACCOUNT)
          ================================================================= */}
       {subView === 'purchases' && (
-        <div className="mt-8">
-          {!user ? (
-            <div className="max-w-lg">
-              <AuthPanel
-                defaultMode="signin"
-                defaultAsSeller={false}
-                heading="Sign in to view your Pickra orders"
-                subheading="Sign in or create an account to access order receipts, live courier dispatch updates, and instant digital downloads."
-              />
-            </div>
-          ) : myPurchases.length === 0 ? (
-            <div className="p-10 bg-white border border-stone-200 rounded-2xl text-center">
-              <Package className="w-7 h-7 text-stone-300 mx-auto" />
-              <h2 className="mt-3 font-serif text-xl font-medium text-stone-900">
-                No direct purchases yet
-              </h2>
-              <p className="mt-1.5 text-sm text-stone-600">
-                Orders placed through the Pickra Store appear here immediately.
-              </p>
-              <button
-                type="button"
-                onClick={() => setSubView('catalog')}
-                className="mt-5 px-4 py-2 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-lg cursor-pointer"
-              >
-                Browse Store Catalog
-              </button>
+        <div className="mt-8 space-y-6">
+          {myPurchases.length === 0 ? (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+              <div className="lg:col-span-7 p-10 bg-white border border-stone-200 rounded-2xl text-center">
+                <Package className="w-7 h-7 text-stone-300 mx-auto" />
+                <h2 className="mt-3 font-serif text-xl font-medium text-stone-900">
+                  No direct purchases on this device yet
+                </h2>
+                <p className="mt-1.5 text-sm text-stone-600 max-w-md mx-auto">
+                  You can shop and buy physical or digital products directly
+                  without creating an account. Purchased digital files and
+                  order receipts appear here immediately.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setSubView('catalog')}
+                  className="mt-5 px-4 py-2 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-lg cursor-pointer"
+                >
+                  Browse Store Catalog
+                </button>
+              </div>
+
+              {!user && (
+                <div className="lg:col-span-5">
+                  <AuthPanel
+                    defaultMode="signin"
+                    defaultAsSeller={false}
+                    heading="Have an account? Sign in"
+                    subheading="Optional: sign in with Google or Email to sync order history across devices."
+                  />
+                </div>
+              )}
             </div>
           ) : (
             <div className="space-y-4">
-              {myPurchases.map((order) => (
-                <div
-                  key={order.id}
-                  className="p-6 bg-white border border-stone-200 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-6"
-                >
-                  <div className="space-y-1.5 max-w-2xl">
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
-                      <span className="font-mono font-semibold text-stone-900">
-                        {order.orderNumber}
-                      </span>
-                      <span aria-hidden="true">·</span>
-                      <span className="capitalize font-medium text-[#9A3412]">
-                        Status: {order.status}
-                      </span>
-                      {order.sellerName && (
-                        <>
-                          <span aria-hidden="true">·</span>
-                          <span>Seller: {order.sellerName}</span>
-                        </>
-                      )}
-                      <span aria-hidden="true">·</span>
-                      <span>
-                        {new Date(order.createdAtMs).toLocaleDateString(
-                          'en-US',
-                          {
-                            month: 'short',
-                            day: 'numeric',
-                            year: 'numeric',
-                          }
-                        )}
-                      </span>
-                      {order.promoCode && (
-                        <>
-                          <span aria-hidden="true">·</span>
-                          <span className="font-mono text-emerald-800">
-                            Promo {order.promoCode}
-                          </span>
-                        </>
-                      )}
-                    </div>
-
-                    <h3 className="text-base font-semibold text-stone-900">
-                      {order.itemsSummary}
-                    </h3>
-
-                    {order.fulfillmentNote && (
-                      <p className="text-xs text-stone-600 leading-relaxed">
-                        {order.fulfillmentNote}
-                      </p>
-                    )}
-
-                    {order.shippingAddress && (
-                      <p className="text-xs text-stone-500">
-                        Ship to: {order.shippingAddress}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="flex flex-row md:flex-col items-center md:items-end justify-between gap-3 shrink-0">
-                    <div className="text-right">
-                      <span className="block text-[11px] text-stone-500">
-                        Order Total
-                      </span>
-                      <span className="font-mono text-base font-semibold text-stone-900 tabular-nums">
-                        {formatPriceCents(order.totalCents)}
-                      </span>
-                    </div>
-
-                    {order.status === 'paid' && (
-                      <button
-                        type="button"
-                        disabled={busyCancelId === order.id}
-                        onClick={() => void handleCancelOrder(order.id)}
-                        className="px-3 py-1.5 text-xs font-medium text-stone-600 hover:text-red-700 border border-stone-200 hover:border-red-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
-                      >
-                        {busyCancelId === order.id
-                          ? 'Cancelling...'
-                          : 'Cancel Order'}
-                      </button>
-                    )}
-                  </div>
+              {!user && (
+                <div className="px-4 py-3 bg-[#F5F2EB] border border-stone-200 rounded-xl flex flex-wrap items-center justify-between gap-3 text-xs text-stone-700">
+                  <span>
+                    Showing guest checkout receipts saved on this browser. You
+                    can download your digital purchases anytime below.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => openAuthModal('signin', false)}
+                    className="font-semibold text-[#9A3412] hover:underline cursor-pointer whitespace-nowrap"
+                  >
+                    Sign in to sync across devices →
+                  </button>
                 </div>
-              ))}
+              )}
+
+              {myPurchases.map((order) => {
+                const digitalDeliverables = (order.productIds || [])
+                  .map((pid) => allAccessibleDirectProductsMap[pid])
+                  .filter(
+                    (p): p is DirectProduct =>
+                      Boolean(p && p.kind === 'digital' && p.digitalFileUrl)
+                  );
+                const isGuestLocalOrder = order.id.startsWith('guest_');
+
+                return (
+                  <div
+                    key={order.id}
+                    className="p-6 bg-white border border-stone-200 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-6"
+                  >
+                    <div className="space-y-2 max-w-2xl">
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
+                        <span className="font-mono font-semibold text-stone-900">
+                          {order.orderNumber}
+                        </span>
+                        <span aria-hidden="true">·</span>
+                        <span className="capitalize font-medium text-[#9A3412]">
+                          Status: {order.status}
+                        </span>
+                        {order.sellerName && (
+                          <>
+                            <span aria-hidden="true">·</span>
+                            <span>Seller: {order.sellerName}</span>
+                          </>
+                        )}
+                        <span aria-hidden="true">·</span>
+                        <span>
+                          {new Date(order.createdAtMs).toLocaleDateString(
+                            'en-US',
+                            {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                            }
+                          )}
+                        </span>
+                        {order.promoCode && (
+                          <>
+                            <span aria-hidden="true">·</span>
+                            <span className="font-mono text-emerald-800">
+                              Promo {order.promoCode}
+                            </span>
+                          </>
+                        )}
+                      </div>
+
+                      <h3 className="text-base font-semibold text-stone-900">
+                        {order.itemsSummary}
+                      </h3>
+
+                      {order.fulfillmentNote && (
+                        <p className="text-xs text-stone-600 leading-relaxed">
+                          {order.fulfillmentNote}
+                        </p>
+                      )}
+
+                      {order.shippingAddress && (
+                        <p className="text-xs text-stone-500">
+                          Ship to: {order.shippingAddress}
+                        </p>
+                      )}
+
+                      {digitalDeliverables.length > 0 &&
+                        order.status !== 'cancelled' && (
+                          <div className="pt-2 flex flex-wrap items-center gap-2">
+                            {digitalDeliverables.map((prod) =>
+                              prod.digitalFileUrl?.startsWith('https://') ? (
+                                <a
+                                  key={prod.id}
+                                  href={prod.digitalFileUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg transition-colors whitespace-nowrap"
+                                >
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                  <span>
+                                    Open {prod.digitalFileName || prod.title}
+                                  </span>
+                                </a>
+                              ) : (
+                                <button
+                                  key={prod.id}
+                                  type="button"
+                                  onClick={() =>
+                                    triggerDigitalAssetDownload(
+                                      prod.digitalFileUrl || '',
+                                      prod.digitalFileName || prod.title
+                                    )
+                                  }
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+                                >
+                                  <Download className="w-3.5 h-3.5" />
+                                  <span>
+                                    Download{' '}
+                                    {prod.digitalFileName || prod.title}
+                                  </span>
+                                </button>
+                              )
+                            )}
+                          </div>
+                        )}
+                    </div>
+
+                    <div className="flex flex-row md:flex-col items-center md:items-end justify-between gap-3 shrink-0">
+                      <div className="text-right">
+                        <span className="block text-[11px] text-stone-500">
+                          Order Total
+                        </span>
+                        <span className="font-mono text-base font-semibold text-stone-900 tabular-nums">
+                          {formatPriceCents(order.totalCents)}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        {order.status === 'paid' && !isGuestLocalOrder && (
+                          <button
+                            type="button"
+                            disabled={busyCancelId === order.id}
+                            onClick={() => void handleCancelOrder(order.id)}
+                            className="px-3 py-1.5 text-xs font-medium text-stone-600 hover:text-red-700 border border-stone-200 hover:border-red-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+                          >
+                            {busyCancelId === order.id
+                              ? 'Cancelling...'
+                              : 'Cancel Order'}
+                          </button>
+                        )}
+
+                        {(isGuestLocalOrder || isCreatorAdmin) &&
+                          (confirmDeleteId === order.id ? (
+                            <span className="inline-flex items-center gap-1.5 text-xs">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (isGuestLocalOrder) {
+                                    removeLocalPurchaseRecord(order.id);
+                                  } else {
+                                    void deleteDirectOrder(order.id);
+                                  }
+                                  setConfirmDeleteId(null);
+                                }}
+                                className="font-semibold text-red-700 hover:underline cursor-pointer"
+                              >
+                                Confirm
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteId(null)}
+                                className="text-stone-500 cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteId(order.id)}
+                              className="p-1.5 text-stone-400 hover:text-red-700 cursor-pointer"
+                              aria-label="Remove order receipt"
+                              title="Remove order receipt"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -1806,20 +2418,29 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
             </div>
 
             <div className="mt-6 grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
-              <div className="md:col-span-6 aspect-[4/3] rounded-xl overflow-hidden bg-[#F3EFE8] border border-stone-200/80">
-                <ResilientImage
-                  imageKey={selectedProduct.imageKey}
-                  alt={selectedProduct.title}
-                  fallbackLabel={selectedProduct.title}
-                  className="w-full h-full object-cover"
-                />
+              <div className="md:col-span-6 space-y-4">
+                <div className="aspect-[4/3] rounded-xl overflow-hidden bg-[#F3EFE8] border border-stone-200/80">
+                  <ResilientImage
+                    imageKey={selectedProduct.imageKey}
+                    alt={selectedProduct.title}
+                    fallbackLabel={selectedProduct.title}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                {selectedProduct.videoUrl && (
+                  <VideoEmbedFigure url={selectedProduct.videoUrl} compact />
+                )}
               </div>
 
               <div className="md:col-span-6 space-y-4">
                 <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
                   <span className="font-semibold text-[#9A3412]">
                     {selectedProduct.kind === 'digital'
-                      ? 'Instant Digital Download'
+                      ? `Instant Digital Download${
+                          selectedProduct.digitalFileType
+                            ? ` · ${selectedProduct.digitalFileType}`
+                            : ''
+                        }`
                       : 'Physical Creator Product'}
                   </span>
                   {selectedProduct.badgeLabel && (
@@ -1848,9 +2469,25 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                   )}
                 </div>
 
-                <p className="text-sm text-stone-600 leading-relaxed">
-                  {selectedProduct.summary}
+                <p className="text-sm text-stone-600 leading-relaxed whitespace-pre-line">
+                  <InlineFormattedText text={selectedProduct.summary} />
                 </p>
+
+                {selectedProduct.kind === 'digital' &&
+                  (selectedProduct.digitalFileName ||
+                    selectedProduct.digitalFileType) && (
+                    <div className="text-xs text-stone-600">
+                      Included Digital Asset:{' '}
+                      <strong className="text-stone-900">
+                        {selectedProduct.digitalFileName ||
+                          selectedProduct.digitalFileType}
+                      </strong>
+                      {selectedProduct.digitalFileType &&
+                      selectedProduct.digitalFileName
+                        ? ` (${selectedProduct.digitalFileType})`
+                        : ''}
+                    </div>
+                  )}
 
                 {selectedProduct.highlights.length > 0 && (
                   <ul className="space-y-2 pt-2">
@@ -2096,6 +2733,179 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
               compact
             />
 
+            {/* Optional Product Video Attachment (URL or Compact Video Upload) */}
+            <div className="p-3.5 bg-[#FBF9F5] border border-stone-200 rounded-xl space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-medium text-stone-800 inline-flex items-center gap-1.5">
+                  <Video className="w-3.5 h-3.5 text-[#9A3412]" />
+                  <span>Product Demo Video (Optional — URL or Upload)</span>
+                </span>
+                <div className="flex items-center gap-2">
+                  <label className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-white bg-[#1C1917] hover:bg-[#9A3412] rounded cursor-pointer whitespace-nowrap">
+                    <Upload className="w-3 h-3" />
+                    <span>
+                      {uploadingProdVideo ? 'Uploading...' : 'Upload Video'}
+                    </span>
+                    <input
+                      type="file"
+                      accept="video/mp4,video/webm,video/quicktime"
+                      onChange={(e) => void handleProdVideoFileUpload(e)}
+                      className="hidden"
+                    />
+                  </label>
+                  {prodVideoUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setProdVideoUrl('')}
+                      className="text-[11px] font-medium text-stone-500 hover:text-red-700 cursor-pointer"
+                    >
+                      Remove Video
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <input
+                type="text"
+                value={
+                  prodVideoUrl.startsWith('data:video/')
+                    ? ''
+                    : prodVideoUrl
+                }
+                onChange={(e) => setProdVideoUrl(e.target.value)}
+                placeholder={
+                  prodVideoUrl.startsWith('data:video/')
+                    ? 'Uploaded video clip attached'
+                    : 'https://www.youtube.com/watch?v=... or https://vimeo.com/... or .mp4'
+                }
+                className="w-full px-3 py-2 text-xs bg-white border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+              />
+
+              {prodVideoUrl && (
+                <VideoEmbedFigure url={prodVideoUrl} compact />
+              )}
+            </div>
+
+            {/* Digital Deliverable Upload / Link (Shown when Digital Download is selected) */}
+            {prodKind === 'digital' && (
+              <div className="p-4 bg-[#F5F2EB] border border-stone-300/90 rounded-xl space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-semibold text-stone-900 inline-flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-[#9A3412]" />
+                      <span>
+                        Digital Product Upload / Download Link (PDF, ZIP, Excel,
+                        eBook, HTML, Digital Tools, Link)
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-stone-600 mt-0.5">
+                      Upload the deliverable file directly (PDF, ZIP, XLSX/CSV,
+                      EPUB/MOBI, HTML, JSON/JS/PY, DOCX/PPTX) or paste a direct
+                      access link (Google Drive, Dropbox, OneDrive, GitHub, Web
+                      Tool).
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <label className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg cursor-pointer whitespace-nowrap">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>
+                        {uploadingDigitalFile
+                          ? 'Uploading File...'
+                          : 'Upload Digital File'}
+                      </span>
+                      <input
+                        type="file"
+                        accept=".pdf,.zip,.xlsx,.xls,.csv,.epub,.mobi,.html,.htm,.json,.js,.ts,.py,.txt,.md,.xml,.svg,.docx,.pptx"
+                        onChange={(e) => void handleDigitalAssetFileUpload(e)}
+                        className="hidden"
+                      />
+                    </label>
+                    {prodDigitalFileUrl && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProdDigitalFileUrl('');
+                          setProdDigitalFileName('');
+                          setProdDigitalFileType('');
+                        }}
+                        className="text-xs font-medium text-stone-600 hover:text-red-700 cursor-pointer"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {prodDigitalFileUrl.startsWith('data:') ? (
+                  <div className="px-3 py-2 bg-white border border-stone-200 rounded-lg flex items-center justify-between gap-2 text-xs">
+                    <span className="truncate font-medium text-stone-900">
+                      Attached File: {prodDigitalFileName || 'Digital Asset'}{' '}
+                      {prodDigitalFileType ? `(${prodDigitalFileType})` : ''}
+                    </span>
+                    <span className="text-emerald-800 font-semibold shrink-0">
+                      Ready for Instant Download
+                    </span>
+                  </div>
+                ) : (
+                  <input
+                    type="url"
+                    value={prodDigitalFileUrl}
+                    onChange={(e) => {
+                      setProdDigitalFileUrl(e.target.value);
+                      if (!prodDigitalFileType && e.target.value.trim()) {
+                        setProdDigitalFileType('HTTPS Link');
+                      }
+                    }}
+                    placeholder="Or paste HTTPS product link (https://drive.google.com/..., Dropbox, Web App, etc.)"
+                    className="w-full px-3 py-2 text-xs font-mono bg-white border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                  />
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-medium text-stone-600 mb-1">
+                      Asset Format / Type
+                    </label>
+                    <select
+                      value={prodDigitalFileType}
+                      onChange={(e) => setProdDigitalFileType(e.target.value)}
+                      className="w-full px-2.5 py-2 text-xs bg-white border border-stone-300 rounded-lg"
+                    >
+                      <option value="">Select format (optional)...</option>
+                      {DIGITAL_FORMAT_PRESETS.map((fmt) => (
+                        <option key={fmt} value={fmt}>
+                          {fmt}
+                        </option>
+                      ))}
+                      {prodDigitalFileType &&
+                        !DIGITAL_FORMAT_PRESETS.includes(
+                          prodDigitalFileType
+                        ) && (
+                          <option value={prodDigitalFileType}>
+                            {prodDigitalFileType}
+                          </option>
+                        )}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-stone-600 mb-1">
+                      Deliverable Filename / Label
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={140}
+                      value={prodDigitalFileName}
+                      onChange={(e) => setProdDigitalFileName(e.target.value)}
+                      placeholder="e.g., Grade9_Math_Tool.html or Workbook.pdf"
+                      className="w-full px-2.5 py-2 text-xs bg-white border border-stone-300 rounded-lg"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-stone-700 mb-1">
@@ -2137,7 +2947,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                 rows={3}
                 required
                 minLength={10}
-                maxLength={500}
+                maxLength={1500}
                 value={prodSummary}
                 onChange={(e) => setProdSummary(e.target.value)}
                 placeholder="Describe materials, dimensions, or included digital files..."

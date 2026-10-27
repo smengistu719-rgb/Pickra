@@ -172,10 +172,151 @@ export type OrderFulfillmentStatus =
 
 export type SellerPayoutMethod =
   | 'None'
+  | 'Telebirr'
+  | 'CBEBirr'
+  | 'MobileMoney'
+  | 'BankTransfer'
   | 'Stripe'
   | 'PayPal'
   | 'Wise'
-  | 'BankTransfer';
+  | 'Custom';
+
+export const SELLER_PAYOUT_METHOD_OPTIONS: {
+  value: SellerPayoutMethod;
+  label: string;
+  placeholder: string;
+}[] = [
+  {
+    value: 'Telebirr',
+    label: 'Telebirr',
+    placeholder: 'e.g., +251 911 234 567 (Telebirr)',
+  },
+  {
+    value: 'BankTransfer',
+    label: 'Bank Account (CBE / Awash / IBAN / ACH)',
+    placeholder: 'e.g., CBE 1000123456789 · Account Holder',
+  },
+  {
+    value: 'CBEBirr',
+    label: 'CBE Birr',
+    placeholder: 'e.g., +251 912 345 678 (CBE Birr)',
+  },
+  {
+    value: 'MobileMoney',
+    label: 'M-Pesa / Mobile Money',
+    placeholder: 'e.g., +251 7... or Mobile Wallet ID',
+  },
+  {
+    value: 'Stripe',
+    label: 'Stripe Connect',
+    placeholder: 'e.g., acct_1P... or payouts@domain.com',
+  },
+  {
+    value: 'PayPal',
+    label: 'PayPal',
+    placeholder: 'e.g., paypal@domain.com',
+  },
+  {
+    value: 'Wise',
+    label: 'Wise Multi-Currency',
+    placeholder: 'e.g., wise@domain.com or IBAN',
+  },
+  {
+    value: 'Custom',
+    label: 'Other Payment Account',
+    placeholder: 'Provider name & account number / handle',
+  },
+];
+
+export interface SavedPayoutAccount {
+  id: string;
+  method: SellerPayoutMethod;
+  providerLabel: string;
+  accountHolder: string;
+  accountNumber: string;
+}
+
+const VALID_PAYOUT_METHODS: SellerPayoutMethod[] = [
+  'None',
+  'Telebirr',
+  'CBEBirr',
+  'MobileMoney',
+  'BankTransfer',
+  'Stripe',
+  'PayPal',
+  'Wise',
+  'Custom',
+];
+
+function cleanPayoutToken(input: string, maxLen: number): string {
+  return input.replace(/::/g, ' - ').replace(/[\r\n]+/g, ' ').trim().slice(0, maxLen);
+}
+
+export function serializePayoutAccount(acc: SavedPayoutAccount): string {
+  const safeId = cleanPayoutToken(acc.id || `pay_${Date.now()}`, 32).replace(
+    /[^a-zA-Z0-9_-]/g,
+    ''
+  );
+  const method: SellerPayoutMethod = VALID_PAYOUT_METHODS.includes(acc.method)
+    ? acc.method
+    : 'BankTransfer';
+  const provider = cleanPayoutToken(acc.providerLabel || method, 48);
+  const holder = cleanPayoutToken(acc.accountHolder || '', 60);
+  const number = cleanPayoutToken(acc.accountNumber || '', 80);
+  return `${safeId}::${method}::${provider}::${holder}::${number}`.slice(0, 240);
+}
+
+export function parsePayoutAccounts(
+  entries?: string[],
+  fallbackMethod?: SellerPayoutMethod,
+  fallbackAccount?: string,
+  fallbackHolder?: string
+): SavedPayoutAccount[] {
+  const parsed: SavedPayoutAccount[] = [];
+  if (Array.isArray(entries)) {
+    for (const raw of entries) {
+      if (typeof raw !== 'string' || !raw.trim()) continue;
+      const parts = raw.split('::');
+      if (parts.length >= 5) {
+        const rawMethod = parts[1] as SellerPayoutMethod;
+        const method: SellerPayoutMethod = VALID_PAYOUT_METHODS.includes(rawMethod)
+          ? rawMethod
+          : 'BankTransfer';
+        const accountNumber = parts.slice(4).join('::').trim();
+        if (!accountNumber) continue;
+        parsed.push({
+          id: parts[0].trim() || `pay_${parsed.length + 1}`,
+          method,
+          providerLabel: parts[2].trim() || method,
+          accountHolder: parts[3].trim(),
+          accountNumber,
+        });
+      }
+    }
+  }
+  if (
+    parsed.length === 0 &&
+    fallbackAccount &&
+    fallbackAccount.trim() &&
+    fallbackMethod &&
+    fallbackMethod !== 'None'
+  ) {
+    parsed.push({
+      id: 'pay_primary',
+      method: fallbackMethod,
+      providerLabel: fallbackMethod,
+      accountHolder: fallbackHolder || '',
+      accountNumber: fallbackAccount.trim(),
+    });
+  }
+  return parsed;
+}
+
+export function formatPayoutSummary(acc: SavedPayoutAccount): string {
+  const label = acc.providerLabel || acc.method;
+  const holderPart = acc.accountHolder ? ` (${acc.accountHolder})` : '';
+  return `${label}: ${acc.accountNumber}${holderPart}`.slice(0, 160);
+}
 
 export type PayoutSettlementStatus =
   | 'pending'
@@ -217,6 +358,7 @@ export interface AffiliateOffer {
   commissionNote: string;
   affiliateUrl: string;
   imageKey: string;
+  videoUrl?: string;
   summary: string;
   highlights: string[];
   status: PublishStatus;
@@ -261,6 +403,10 @@ export interface DirectProduct {
   stockCount: number;
   badgeLabel: string;
   imageKey: string;
+  videoUrl?: string;
+  digitalFileUrl?: string;
+  digitalFileName?: string;
+  digitalFileType?: string;
   summary: string;
   highlights: string[];
   deliveryNote: string;
@@ -374,6 +520,7 @@ export interface UserPrivateInfo {
   defaultDigistoreId: string;
   payoutMethod?: SellerPayoutMethod;
   payoutAccount?: string;
+  payoutAccounts?: string[];
 }
 
 export type ActiveSection =

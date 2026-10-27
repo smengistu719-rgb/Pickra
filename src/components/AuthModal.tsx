@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Check,
+  CreditCard,
   Eye,
   EyeOff,
   Loader2,
@@ -11,14 +12,10 @@ import {
   X,
 } from 'lucide-react';
 import { AuthModalMode, useFirebaseApp } from '../context/FirebaseContext';
-import { SellerPayoutMethod } from '../types';
-
-const PAYOUT_OPTIONS: { value: SellerPayoutMethod; label: string }[] = [
-  { value: 'Stripe', label: 'Stripe Connect' },
-  { value: 'PayPal', label: 'PayPal' },
-  { value: 'Wise', label: 'Wise Multi-Currency' },
-  { value: 'BankTransfer', label: 'Direct Bank Wire / ACH' },
-];
+import {
+  SELLER_PAYOUT_METHOD_OPTIONS,
+  SellerPayoutMethod,
+} from '../types';
 
 interface AuthPanelProps {
   defaultMode?: AuthModalMode;
@@ -54,9 +51,12 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
   const [showPassword, setShowPassword] = useState(false);
 
   const [asSeller, setAsSeller] = useState(defaultAsSeller);
+  const [includePaymentOnSignup, setIncludePaymentOnSignup] =
+    useState(defaultAsSeller);
   const [storeName, setStoreName] = useState('');
   const [payoutMethod, setPayoutMethod] =
-    useState<SellerPayoutMethod>('Stripe');
+    useState<SellerPayoutMethod>('Telebirr');
+  const [payoutProviderLabel, setPayoutProviderLabel] = useState('Telebirr');
   const [payoutAccount, setPayoutAccount] = useState('');
 
   const [resetMessage, setResetMessage] = useState<string | null>(null);
@@ -67,7 +67,26 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
 
   useEffect(() => {
     setAsSeller(defaultAsSeller);
+    if (defaultAsSeller) {
+      setIncludePaymentOnSignup(true);
+    }
   }, [defaultAsSeller]);
+
+  const activePayoutOption =
+    SELLER_PAYOUT_METHOD_OPTIONS.find((o) => o.value === payoutMethod) ||
+    SELLER_PAYOUT_METHOD_OPTIONS[0];
+
+  function handleMethodSelect(nextMethod: SellerPayoutMethod) {
+    setPayoutMethod(nextMethod);
+    const found = SELLER_PAYOUT_METHOD_OPTIONS.find(
+      (o) => o.value === nextMethod
+    );
+    if (found) {
+      setPayoutProviderLabel(
+        nextMethod === 'BankTransfer' ? 'Commercial Bank of Ethiopia' : found.label
+      );
+    }
+  }
 
   async function handleFormSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -75,14 +94,19 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
     clearAuthError();
 
     if (mode === 'signup') {
+      const formattedAccount = payoutAccount.trim()
+        ? `${payoutProviderLabel.trim() || payoutMethod}: ${payoutAccount.trim()}`
+        : '';
       const ok = await registerWithEmailPassword({
         fullName,
         email,
         password,
         asSeller,
         storeName: storeName.trim() || fullName.trim(),
-        payoutMethod,
-        payoutAccount: payoutAccount.trim() || email.trim(),
+        payoutMethod:
+          asSeller || includePaymentOnSignup ? payoutMethod : 'None',
+        payoutProviderLabel: payoutProviderLabel.trim() || payoutMethod,
+        payoutAccount: formattedAccount,
       });
       if (ok && onSuccess) {
         onSuccess();
@@ -98,7 +122,22 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
   async function handleGoogleClick() {
     setResetMessage(null);
     clearAuthError();
-    const ok = await signInWithGoogle();
+    const formattedAccount = payoutAccount.trim()
+      ? `${payoutProviderLabel.trim() || payoutMethod}: ${payoutAccount.trim()}`
+      : '';
+    const ok = await signInWithGoogle(
+      mode === 'signup'
+        ? {
+            asSeller,
+            storeName: storeName.trim() || fullName.trim(),
+            payoutMethod:
+              asSeller || includePaymentOnSignup ? payoutMethod : 'None',
+            payoutProviderLabel: payoutProviderLabel.trim() || payoutMethod,
+            accountHolder: fullName.trim(),
+            payoutAccount: formattedAccount,
+          }
+        : undefined
+    );
     if (ok && onSuccess) {
       onSuccess();
     }
@@ -122,7 +161,7 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
       <div className="flex items-start justify-between gap-4 pb-5 border-b border-stone-200/80">
         <div>
           <div className="text-xs font-medium text-[#9A3412]">
-            Pickra Account &amp; Creator Commerce
+            Pickra Account &amp; Creator Dashboard
           </div>
           <h2 className="mt-1 font-serif text-2xl font-medium text-stone-900">
             {heading ||
@@ -133,8 +172,8 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
           <p className="mt-1 text-xs text-stone-600 leading-relaxed max-w-lg">
             {subheading ||
               (mode === 'signup'
-                ? 'Register in seconds with Email & Password or Google to publish products, receive 90% creator payouts, or track direct orders.'
-                : 'Sign in with your Email & Password or Google account to access your storefront, orders, or owner backend.')}
+                ? 'Sign up with Google or Email, add your payment details (Bank, Telebirr, PayPal, etc.), and launch your personal dashboard to sell digital or physical products.'
+                : 'Sign in with your Google account or Email & Password to open your personal dashboard, payment details, and published products.')}
           </p>
         </div>
 
@@ -159,7 +198,7 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
             clearAuthError();
             setResetMessage(null);
           }}
-          className={`inline-flex items-center justify-center gap-2 py-2 px-3 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+          className={`inline-flex items-center justify-center gap-2 py-2 px-3 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap ${
             mode === 'signup'
               ? 'bg-white text-stone-900 shadow-xs'
               : 'text-stone-600 hover:text-stone-900'
@@ -176,7 +215,7 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
             clearAuthError();
             setResetMessage(null);
           }}
-          className={`inline-flex items-center justify-center gap-2 py-2 px-3 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+          className={`inline-flex items-center justify-center gap-2 py-2 px-3 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap ${
             mode === 'signin'
               ? 'bg-white text-stone-900 shadow-xs'
               : 'text-stone-600 hover:text-stone-900'
@@ -214,8 +253,56 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
         </div>
       )}
 
-      {/* Email & Password Form (Works inside every browser & iframe with zero popup blockers) */}
-      <form onSubmit={(e) => void handleFormSubmit(e)} className="mt-5 space-y-4">
+      {/* Prominent Google Account Sign-Up / Sign-In */}
+      <div className="mt-5">
+        <button
+          type="button"
+          disabled={authBusy}
+          onClick={() => void handleGoogleClick()}
+          className="w-full inline-flex items-center justify-center gap-2.5 py-3 px-4 text-xs font-semibold text-stone-900 bg-white hover:bg-[#FBF9F5] border border-stone-300 shadow-2xs disabled:opacity-60 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+        >
+          <svg
+            className="w-4 h-4 shrink-0"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+          >
+            <path
+              fill="#4285F4"
+              d="M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47c-.29 1.48-1.14 2.73-2.4 3.58v2.98h3.86c2.26-2.09 3.56-5.17 3.56-8.8z"
+            />
+            <path
+              fill="#34A853"
+              d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-2.98c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.09C3.26 21.3 7.31 24 12 24z"
+            />
+            <path
+              fill="#FBBC05"
+              d="M5.27 14.31c-.24-.72-.38-1.49-.38-2.31s.14-1.59.38-2.31V6.6H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.4l3.98-3.09z"
+            />
+            <path
+              fill="#EA4335"
+              d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.6l3.98 3.09c.95-2.85 3.6-4.94 6.73-4.94z"
+            />
+          </svg>
+          <span>
+            {mode === 'signup'
+              ? 'Sign up with Google Account'
+              : 'Sign in with Google Account'}
+          </span>
+        </button>
+      </div>
+
+      {/* Divider */}
+      <div className="my-4 flex items-center gap-3 text-[11px] text-stone-400">
+        <div className="flex-1 h-px bg-stone-200" />
+        <span>or use Email &amp; Password</span>
+        <div className="flex-1 h-px bg-stone-200" />
+      </div>
+
+      {/* Email & Password Form */}
+      <form
+        onSubmit={(e) => void handleFormSubmit(e)}
+        className="space-y-4"
+      >
         {mode === 'signup' && (
           <div>
             <label className="block text-xs font-medium text-stone-700 mb-1">
@@ -228,7 +315,7 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
               maxLength={80}
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
-              placeholder="e.g., Elena Vance"
+              placeholder="e.g., Abebe Kebede"
               className="w-full px-3.5 py-2.5 text-sm bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
             />
           </div>
@@ -297,59 +384,85 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
           </div>
         </div>
 
-        {/* One-Step Creator Storefront Activation on Sign Up */}
+        {/* Creator Storefront + Payment Detail Registration on Sign Up */}
         {mode === 'signup' && (
-          <div className="pt-2 border-t border-stone-200/80 space-y-3">
+          <div className="pt-3 border-t border-stone-200/80 space-y-3">
             <label className="flex items-start gap-2.5 cursor-pointer">
               <input
                 type="checkbox"
                 checked={asSeller}
-                onChange={(e) => setAsSeller(e.target.checked)}
+                onChange={(e) => {
+                  setAsSeller(e.target.checked);
+                  if (e.target.checked) setIncludePaymentOnSignup(true);
+                }}
                 className="mt-0.5 accent-[#9A3412] w-4 h-4"
               />
               <span className="text-xs text-stone-700 leading-relaxed">
                 <strong className="text-stone-900">
-                  Activate Creator Seller Storefront
+                  Sell Physical or Digital Products on Pickra Store
                 </strong>{' '}
-                — publish physical or digital products on Pickra Store and
-                receive 90% net payouts on every sale.
+                — get your personal seller dashboard and receive 90% net payouts.
               </span>
             </label>
 
-            {asSeller && (
+            {!asSeller && (
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={includePaymentOnSignup}
+                  onChange={(e) => setIncludePaymentOnSignup(e.target.checked)}
+                  className="mt-0.5 accent-[#9A3412] w-4 h-4"
+                />
+                <span className="text-xs text-stone-700 leading-relaxed">
+                  Add payment details now (Bank account, Telebirr, CBE Birr, or PayPal)
+                </span>
+              </label>
+            )}
+
+            {(asSeller || includePaymentOnSignup) && (
               <div className="p-4 bg-[#FBF9F5] border border-stone-200 rounded-xl space-y-3">
                 <div className="flex items-center gap-1.5 text-xs font-semibold text-stone-900">
-                  <Store className="w-3.5 h-3.5 text-[#9A3412]" />
-                  <span>Creator Storefront &amp; Payout Destination</span>
+                  {asSeller ? (
+                    <Store className="w-3.5 h-3.5 text-[#9A3412]" />
+                  ) : (
+                    <CreditCard className="w-3.5 h-3.5 text-[#9A3412]" />
+                  )}
+                  <span>
+                    {asSeller
+                      ? 'Storefront & Payment Details (Bank / Telebirr / Wallet)'
+                      : 'Account Payment Details'}
+                  </span>
                 </div>
 
-                <div>
-                  <label className="block text-[11px] font-medium text-stone-700 mb-1">
-                    Creator / Brand Store Name
-                  </label>
-                  <input
-                    type="text"
-                    maxLength={80}
-                    value={storeName}
-                    onChange={(e) => setStoreName(e.target.value)}
-                    placeholder="e.g., Atelier Kibo Studio"
-                    className="w-full px-3 py-2 text-xs bg-white border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
-                  />
-                </div>
+                {asSeller && (
+                  <div>
+                    <label className="block text-[11px] font-medium text-stone-700 mb-1">
+                      Creator / Brand Store Name
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={80}
+                      value={storeName}
+                      onChange={(e) => setStoreName(e.target.value)}
+                      placeholder="e.g., Horizon Digital Lab"
+                      className="w-full px-3 py-2 text-xs bg-white border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                    />
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-[11px] font-medium text-stone-700 mb-1">
-                      Payout Method
+                      Payment / Payout Method
                     </label>
                     <select
                       value={payoutMethod}
                       onChange={(e) =>
-                        setPayoutMethod(e.target.value as SellerPayoutMethod)
+                        handleMethodSelect(e.target.value as SellerPayoutMethod)
                       }
                       className="w-full px-2.5 py-2 text-xs bg-white border border-stone-300 rounded-lg"
                     >
-                      {PAYOUT_OPTIONS.map((opt) => (
+                      {SELLER_PAYOUT_METHOD_OPTIONS.map((opt) => (
                         <option key={opt.value} value={opt.value}>
                           {opt.label}
                         </option>
@@ -359,17 +472,34 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
 
                   <div>
                     <label className="block text-[11px] font-medium text-stone-700 mb-1">
-                      Payout Account (Email / ID)
+                      Bank / Provider Name
                     </label>
                     <input
                       type="text"
-                      maxLength={160}
-                      value={payoutAccount}
-                      onChange={(e) => setPayoutAccount(e.target.value)}
-                      placeholder="payouts@domain.com or acct_..."
-                      className="w-full px-3 py-2 text-xs font-mono bg-white border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                      maxLength={48}
+                      value={payoutProviderLabel}
+                      onChange={(e) => setPayoutProviderLabel(e.target.value)}
+                      placeholder="e.g., Telebirr, CBE, Awash Bank"
+                      className="w-full px-3 py-2 text-xs bg-white border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
                     />
                   </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-medium text-stone-700 mb-1">
+                    Account Number / Telebirr Phone / Wallet ID
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={80}
+                    value={payoutAccount}
+                    onChange={(e) => setPayoutAccount(e.target.value)}
+                    placeholder={activePayoutOption.placeholder}
+                    className="w-full px-3 py-2 text-xs font-mono bg-white border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                  />
+                  <p className="mt-1 text-[11px] text-stone-500">
+                    You can add, edit, or remove multiple payment accounts anytime from your User Dashboard.
+                  </p>
                 </div>
               </div>
             )}
@@ -405,41 +535,6 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
           )}
         </button>
       </form>
-
-      {/* Divider */}
-      <div className="my-5 flex items-center gap-3 text-[11px] text-stone-400">
-        <div className="flex-1 h-px bg-stone-200" />
-        <span>or continue with Google</span>
-        <div className="flex-1 h-px bg-stone-200" />
-      </div>
-
-      {/* Google OAuth Button */}
-      <button
-        type="button"
-        disabled={authBusy}
-        onClick={() => void handleGoogleClick()}
-        className="w-full inline-flex items-center justify-center gap-2.5 py-2.5 px-4 text-xs font-semibold text-stone-900 bg-[#FBF9F5] hover:bg-[#F3EFE8] border border-stone-300 disabled:opacity-60 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
-      >
-        <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
-          <path
-            fill="#4285F4"
-            d="M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47c-.29 1.48-1.14 2.73-2.4 3.58v2.98h3.86c2.26-2.09 3.56-5.17 3.56-8.8z"
-          />
-          <path
-            fill="#34A853"
-            d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-2.98c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.09C3.26 21.3 7.31 24 12 24z"
-          />
-          <path
-            fill="#FBBC05"
-            d="M5.27 14.31c-.24-.72-.38-1.49-.38-2.31s.14-1.59.38-2.31V6.6H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.4l3.98-3.09z"
-          />
-          <path
-            fill="#EA4335"
-            d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.6l3.98 3.09c.95-2.85 3.6-4.94 6.73-4.94z"
-          />
-        </svg>
-        <span>Continue with Google</span>
-      </button>
     </div>
   );
 };

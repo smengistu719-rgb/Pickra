@@ -7,6 +7,8 @@ import {
   Bookmark,
   Check,
   Copy,
+  Edit3,
+  ExternalLink,
   Image as ImageIcon,
   Italic,
   Link2,
@@ -47,7 +49,11 @@ import {
   PostCategory,
   PublishStatus,
 } from '../types';
-import { compressImageFileToDataUrl, formatPriceCents } from '../firebase';
+import {
+  compressImageFileToDataUrl,
+  formatPriceCents,
+  readCompactVideoFileToDataUrl,
+} from '../firebase';
 import { PRESET_IMAGES } from '../assets/presetImages';
 import { DEFAULT_DISCLOSURE } from '../data/editorialSeed';
 import {
@@ -101,6 +107,648 @@ const CALLOUT_THEMES: CalloutColorTheme[] = [
   'slate',
   'midnight',
 ];
+
+function escapeHtmlText(raw: string): string {
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function markdownInlineToHtml(markdown: string): string {
+  if (!markdown) return '';
+  const tokenRegex =
+    /(\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|\*\*([^*]+)\*\*|\*([^*]+)\*)/g;
+  let result = '';
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = tokenRegex.exec(markdown)) !== null) {
+    if (match.index > lastIndex) {
+      result += escapeHtmlText(markdown.slice(lastIndex, match.index)).replace(
+        /\n/g,
+        '<br>'
+      );
+    }
+    if (match[2] !== undefined && match[3] !== undefined) {
+      const safeHref = escapeHtmlText(match[3]);
+      const safeLabel = escapeHtmlText(match[2]);
+      result += `<a href="${safeHref}" data-inline-link="true" class="text-[#9A3412] underline decoration-[#9A3412]/70 underline-offset-4 font-medium cursor-pointer">${safeLabel}</a>`;
+    } else if (match[4] !== undefined) {
+      result += `<strong class="font-semibold">${escapeHtmlText(
+        match[4]
+      )}</strong>`;
+    } else if (match[5] !== undefined) {
+      result += `<em class="italic">${escapeHtmlText(match[5])}</em>`;
+    }
+    lastIndex = tokenRegex.lastIndex;
+  }
+
+  if (lastIndex < markdown.length) {
+    result += escapeHtmlText(markdown.slice(lastIndex)).replace(/\n/g, '<br>');
+  }
+
+  return result;
+}
+
+function serializeChildNodesToMarkdown(parent: Node): string {
+  let out = '';
+  parent.childNodes.forEach((child, idx) => {
+    if (child.nodeType === Node.TEXT_NODE) {
+      out += (child.textContent || '').replace(/\u00A0/g, ' ');
+      return;
+    }
+    if (child.nodeType !== Node.ELEMENT_NODE) return;
+
+    const el = child as HTMLElement;
+    const tag = el.tagName.toUpperCase();
+
+    if (tag === 'BR') {
+      out += '\n';
+      return;
+    }
+
+    const inner = serializeChildNodesToMarkdown(el);
+
+    if (tag === 'A') {
+      const rawHref = (el.getAttribute('href') || '').trim();
+      const cleanInner = inner.replace(/[\[\]\n]/g, ' ').trim();
+      if (!cleanInner) return;
+      if (rawHref.startsWith('http://') || rawHref.startsWith('https://')) {
+        const httpsHref = rawHref.startsWith('http://')
+          ? `https://${rawHref.slice(7)}`
+          : rawHref;
+        out += `[${cleanInner}](${httpsHref})`;
+      } else {
+        out += cleanInner;
+      }
+      return;
+    }
+
+    if (tag === 'STRONG' || tag === 'B') {
+      out += inner ? `**${inner}**` : '';
+      return;
+    }
+
+    if (tag === 'EM' || tag === 'I') {
+      out += inner ? `*${inner}*` : '';
+      return;
+    }
+
+    if (tag === 'DIV' || tag === 'P') {
+      if (idx > 0 && !out.endsWith('\n')) {
+        out += '\n';
+      }
+      out += inner;
+      return;
+    }
+
+    out += inner;
+  });
+  return out;
+}
+
+function domNodeToMarkdown(root: HTMLElement): string {
+  const raw = serializeChildNodesToMarkdown(root);
+  return raw.replace(/\n+$/, '');
+}
+
+function RichInlineEditable({
+  value,
+  onChange,
+  onFocus,
+  onKeyDown,
+  onClickLink,
+  placeholder,
+  className,
+  editorRef,
+}: {
+  value: string;
+  onChange: (val: string) => void;
+  onFocus?: () => void;
+  onKeyDown?: (e: React.KeyboardEvent<HTMLDivElement>) => void;
+  onClickLink?: (info: {
+    linkIndex: number;
+    label: string;
+    url: string;
+  }) => void;
+  placeholder?: string;
+  className?: string;
+  editorRef?: (el: HTMLDivElement | null) => void;
+}) {
+  const internalRef = useRef<HTMLDivElement | null>(null);
+  const lastMarkdownRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const el = internalRef.current;
+    if (!el) return;
+    if (lastMarkdownRef.current !== value) {
+      el.innerHTML = markdownInlineToHtml(value);
+      lastMarkdownRef.current = value;
+    }
+  }, [value]);
+
+  const isEmpty = value.trim().length === 0;
+
+  return (
+    <div className="relative w-full">
+      {isEmpty && placeholder && (
+        <div
+          aria-hidden="true"
+          className={`pointer-events-none select-none absolute inset-0 text-stone-400 ${
+            className || ''
+          }`}
+        >
+          {placeholder}
+        </div>
+      )}
+      <div
+        ref={(el) => {
+          internalRef.current = el;
+          editorRef?.(el);
+        }}
+        contentEditable
+        suppressContentEditableWarning
+        role="textbox"
+        aria-multiline="true"
+        onFocus={onFocus}
+        onKeyDown={onKeyDown}
+        onInput={(e) => {
+          const nextMd = domNodeToMarkdown(e.currentTarget);
+          lastMarkdownRef.current = nextMd;
+          onChange(nextMd);
+        }}
+        onClick={(e) => {
+          const target = e.target as HTMLElement | null;
+          const anchor = target?.closest('a');
+          if (anchor && internalRef.current?.contains(anchor)) {
+            e.preventDefault();
+            e.stopPropagation();
+            const allAnchors = Array.from(
+              internalRef.current.querySelectorAll('a')
+            );
+            const linkIndex = allAnchors.indexOf(anchor);
+            onClickLink?.({
+              linkIndex: Math.max(0, linkIndex),
+              label: (anchor.textContent || '').trim(),
+              url: (anchor.getAttribute('href') || '').trim(),
+            });
+          }
+        }}
+        onPaste={(e) => {
+          e.preventDefault();
+          const pasted = e.clipboardData.getData('text/plain');
+          if (!pasted) return;
+          const el = internalRef.current;
+          const sel = window.getSelection();
+          if (
+            el &&
+            sel &&
+            sel.rangeCount > 0 &&
+            el.contains(sel.anchorNode) &&
+            !sel.isCollapsed &&
+            /^https?:\/\/\S+$/i.test(pasted.trim())
+          ) {
+            const range = sel.getRangeAt(0);
+            const selectedLabel = sel.toString().trim();
+            if (selectedLabel) {
+              const cleanHref = pasted.trim().startsWith('http://')
+                ? `https://${pasted.trim().slice(7)}`
+                : pasted.trim();
+              const a = document.createElement('a');
+              a.setAttribute('href', cleanHref);
+              a.setAttribute('data-inline-link', 'true');
+              a.className =
+                'text-[#9A3412] underline decoration-[#9A3412]/70 underline-offset-4 font-medium cursor-pointer';
+              a.textContent = selectedLabel;
+              range.deleteContents();
+              range.insertNode(a);
+              range.setStartAfter(a);
+              range.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(range);
+              const nextMd = domNodeToMarkdown(el);
+              lastMarkdownRef.current = nextMd;
+              onChange(nextMd);
+              return;
+            }
+          }
+          document.execCommand('insertText', false, pasted);
+        }}
+        className={`w-full min-h-[1.75em] whitespace-pre-wrap break-words bg-transparent focus:outline-none ${
+          className || ''
+        }`}
+      />
+    </div>
+  );
+}
+
+interface SavedAffiliateCatalogDropdownProps {
+  label: string;
+  placeholderLabel: string;
+  offers: AffiliateOffer[];
+  selectedOfferId?: string;
+  onSelectOffer: (offer: AffiliateOffer) => void;
+  onSaveOffer: (input: OfferDraftInput) => Promise<string>;
+  onDeleteOffer: (offerId: string) => Promise<void>;
+  isAuthenticated: boolean;
+  onRequireAuth: () => void;
+}
+
+const SavedAffiliateCatalogDropdown: React.FC<
+  SavedAffiliateCatalogDropdownProps
+> = ({
+  label,
+  placeholderLabel,
+  offers,
+  selectedOfferId,
+  onSelectOffer,
+  onSaveOffer,
+  onDeleteOffer,
+  isAuthenticated,
+  onRequireAuth,
+}) => {
+  const [internalSelectedId, setInternalSelectedId] = useState<string>(
+    selectedOfferId || ''
+  );
+  const [editorMode, setEditorMode] = useState<'closed' | 'add' | 'edit'>(
+    'closed'
+  );
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const [draftTitle, setDraftTitle] = useState('');
+  const [draftKind, setDraftKind] = useState<OfferKind>('physical');
+  const [draftPlatform, setDraftPlatform] =
+    useState<AffiliatePlatform>('Amazon');
+  const [draftPrice, setDraftPrice] = useState('$99.00');
+  const [draftUrl, setDraftUrl] = useState('');
+  const [draftImageKey, setDraftImageKey] = useState('audio');
+  const [draftVideoUrl, setDraftVideoUrl] = useState('');
+  const [draftSummary, setDraftSummary] = useState('');
+
+  useEffect(() => {
+    if (selectedOfferId !== undefined) {
+      setInternalSelectedId(selectedOfferId);
+    }
+  }, [selectedOfferId]);
+
+  const activeOffer = useMemo(
+    () => offers.find((o) => o.id === internalSelectedId) || null,
+    [offers, internalSelectedId]
+  );
+
+  function openAddForm() {
+    if (!isAuthenticated) {
+      onRequireAuth();
+      return;
+    }
+    setLocalError(null);
+    setConfirmRemove(false);
+    setDraftTitle('');
+    setDraftKind('physical');
+    setDraftPlatform('Amazon');
+    setDraftPrice('$99.00');
+    setDraftUrl('');
+    setDraftImageKey('audio');
+    setDraftVideoUrl('');
+    setDraftSummary('');
+    setEditorMode('add');
+  }
+
+  function openEditForm() {
+    if (!activeOffer) return;
+    if (!isAuthenticated) {
+      onRequireAuth();
+      return;
+    }
+    setLocalError(null);
+    setConfirmRemove(false);
+    setDraftTitle(activeOffer.title);
+    setDraftKind(activeOffer.kind);
+    setDraftPlatform(activeOffer.platform);
+    setDraftPrice(activeOffer.priceLabel);
+    setDraftUrl(activeOffer.affiliateUrl);
+    setDraftImageKey(activeOffer.imageKey || 'audio');
+    setDraftVideoUrl(activeOffer.videoUrl || '');
+    setDraftSummary(activeOffer.summary);
+    setEditorMode('edit');
+  }
+
+  async function handleSaveItem() {
+    if (!isAuthenticated) {
+      onRequireAuth();
+      return;
+    }
+    setSaving(true);
+    setLocalError(null);
+    try {
+      const targetId =
+        editorMode === 'edit' && activeOffer ? activeOffer.id : undefined;
+      const cleanSummary =
+        draftSummary.trim().length >= 10
+          ? draftSummary.trim()
+          : `${draftTitle.trim()} on ${draftPlatform} — curated partner link.`;
+      const payload: OfferDraftInput = {
+        id: targetId,
+        title: draftTitle,
+        kind: draftKind,
+        platform: draftPlatform,
+        category:
+          editorMode === 'edit' && activeOffer
+            ? activeOffer.category
+            : draftKind === 'service'
+            ? 'Professional Service'
+            : 'Featured Pick',
+        priceLabel: draftPrice || '$99.00',
+        commissionNote:
+          editorMode === 'edit' && activeOffer
+            ? activeOffer.commissionNote
+            : '',
+        affiliateUrl: draftUrl,
+        imageKey: draftImageKey || 'audio',
+        videoUrl: draftVideoUrl,
+        summary: cleanSummary,
+        highlights:
+          editorMode === 'edit' && activeOffer ? activeOffer.highlights : [],
+        status: 'published',
+      };
+      const savedId = await onSaveOffer(payload);
+      setInternalSelectedId(savedId);
+      setEditorMode('closed');
+      let cleanHref = draftUrl.trim();
+      if (cleanHref && !cleanHref.startsWith('http')) {
+        cleanHref = `https://${cleanHref}`;
+      }
+      if (cleanHref.startsWith('http://')) {
+        cleanHref = `https://${cleanHref.slice(7)}`;
+      }
+      const nowMs = Date.now();
+      onSelectOffer({
+        id: savedId,
+        title: draftTitle.trim(),
+        kind: draftKind,
+        platform: draftPlatform,
+        category: payload.category,
+        priceLabel: payload.priceLabel,
+        commissionNote: payload.commissionNote,
+        affiliateUrl: cleanHref,
+        imageKey: payload.imageKey,
+        videoUrl: draftVideoUrl.trim(),
+        summary: cleanSummary,
+        highlights: payload.highlights,
+        status: 'published',
+        authorId: editorMode === 'edit' && activeOffer ? activeOffer.authorId : '',
+        authorName:
+          editorMode === 'edit' && activeOffer ? activeOffer.authorName : 'Pickra',
+        createdAtMs:
+          editorMode === 'edit' && activeOffer ? activeOffer.createdAtMs : nowMs,
+        updatedAtMs: nowMs,
+      });
+    } catch (err) {
+      setLocalError(
+        err instanceof Error ? err.message : 'Unable to save catalog item.'
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleConfirmRemove() {
+    if (!activeOffer) return;
+    if (!isAuthenticated) {
+      onRequireAuth();
+      return;
+    }
+    setSaving(true);
+    setLocalError(null);
+    try {
+      await onDeleteOffer(activeOffer.id);
+      setConfirmRemove(false);
+      setEditorMode('closed');
+      const remaining = offers.filter((o) => o.id !== activeOffer.id);
+      const next = remaining[0] || null;
+      setInternalSelectedId(next ? next.id : '');
+      if (next && selectedOfferId !== undefined) {
+        onSelectOffer(next);
+      }
+    } catch (err) {
+      setLocalError(
+        err instanceof Error ? err.message : 'Unable to remove catalog item.'
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <label className="block text-[11px] text-stone-500">{label}</label>
+        <div className="flex items-center gap-2 text-[11px]">
+          <button
+            type="button"
+            onClick={() =>
+              editorMode === 'add' ? setEditorMode('closed') : openAddForm()
+            }
+            className="inline-flex items-center gap-0.5 font-semibold text-[#9A3412] hover:underline cursor-pointer whitespace-nowrap"
+          >
+            <Plus className="w-3 h-3" />
+            <span>{editorMode === 'add' ? 'Cancel Add' : 'Add'}</span>
+          </button>
+
+          {activeOffer && (
+            <>
+              <span className="text-stone-300" aria-hidden="true">
+                ·
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  editorMode === 'edit'
+                    ? setEditorMode('closed')
+                    : openEditForm()
+                }
+                className="inline-flex items-center gap-0.5 font-medium text-stone-700 hover:text-[#9A3412] cursor-pointer whitespace-nowrap"
+              >
+                <Edit3 className="w-3 h-3" />
+                <span>{editorMode === 'edit' ? 'Close Edit' : 'Edit'}</span>
+              </button>
+              <span className="text-stone-300" aria-hidden="true">
+                ·
+              </span>
+              {confirmRemove ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => void handleConfirmRemove()}
+                    className="font-semibold text-red-700 hover:underline cursor-pointer whitespace-nowrap"
+                  >
+                    Confirm
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmRemove(false)}
+                    className="text-stone-500 hover:text-stone-800 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmRemove(true)}
+                  className="inline-flex items-center gap-0.5 text-stone-500 hover:text-red-700 cursor-pointer whitespace-nowrap"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  <span>Remove</span>
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      <select
+        value={internalSelectedId}
+        onChange={(e) => {
+          const val = e.target.value;
+          setInternalSelectedId(val);
+          setConfirmRemove(false);
+          setEditorMode('closed');
+          const picked = offers.find((o) => o.id === val);
+          if (picked) {
+            onSelectOffer(picked);
+          }
+        }}
+        className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
+      >
+        <option value="">{placeholderLabel}</option>
+        {offers.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.platform} ({o.kind}): {o.title} · {o.priceLabel}
+          </option>
+        ))}
+      </select>
+
+      {editorMode !== 'closed' && (
+        <div className="p-3 bg-[#FBF9F5] border border-stone-300 rounded-lg space-y-2.5 text-xs">
+          <div className="flex items-center justify-between">
+            <span className="font-semibold text-stone-900">
+              {editorMode === 'edit'
+                ? 'Edit Saved Affiliate Item'
+                : 'Add New Affiliate Product / Service to List'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setEditorMode('closed')}
+              className="text-stone-400 hover:text-stone-700 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {localError && (
+            <div className="px-2.5 py-1.5 bg-red-50 border border-red-200 rounded text-[11px] text-red-900">
+              {localError}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <input
+              type="text"
+              value={draftTitle}
+              onChange={(e) => setDraftTitle(e.target.value)}
+              placeholder="Product or Service Title"
+              className="sm:col-span-2 px-2.5 py-1.5 bg-white border border-stone-300 rounded"
+            />
+            <select
+              value={draftKind}
+              onChange={(e) => setDraftKind(e.target.value as OfferKind)}
+              className="px-2.5 py-1.5 bg-white border border-stone-300 rounded"
+            >
+              <option value="physical">Physical Product</option>
+              <option value="digital">Digital Product</option>
+              <option value="service">Service Affiliate</option>
+            </select>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <select
+              value={draftPlatform}
+              onChange={(e) =>
+                setDraftPlatform(e.target.value as AffiliatePlatform)
+              }
+              className="px-2.5 py-1.5 bg-white border border-stone-300 rounded"
+            >
+              {ALL_AFFILIATE_PLATFORMS.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+            <input
+              type="text"
+              value={draftPrice}
+              onChange={(e) => setDraftPrice(e.target.value)}
+              placeholder="Price label (e.g. $49.00)"
+              className="px-2.5 py-1.5 font-mono bg-white border border-stone-300 rounded"
+            />
+          </div>
+
+          <input
+            type="url"
+            value={draftUrl}
+            onChange={(e) => setDraftUrl(e.target.value)}
+            placeholder="https://www.amazon.com/... or https://drive.google.com/..."
+            className="w-full px-2.5 py-1.5 font-mono bg-white border border-stone-300 rounded"
+          />
+
+          <input
+            type="url"
+            value={draftVideoUrl}
+            onChange={(e) => setDraftVideoUrl(e.target.value)}
+            placeholder="Optional Video URL (YouTube, Vimeo, Loom, MP4)"
+            className="w-full px-2.5 py-1.5 bg-white border border-stone-300 rounded"
+          />
+
+          <textarea
+            rows={2}
+            value={draftSummary}
+            onChange={(e) => setDraftSummary(e.target.value)}
+            placeholder="Description (optional — auto-generated if brief)..."
+            className="w-full px-2.5 py-1.5 bg-white border border-stone-300 rounded"
+          />
+
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setEditorMode('closed')}
+              className="px-2.5 py-1.5 text-stone-600 hover:text-stone-900 cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void handleSaveItem()}
+              className="px-3.5 py-1.5 font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] disabled:bg-stone-300 rounded cursor-pointer whitespace-nowrap"
+            >
+              {saving
+                ? 'Saving...'
+                : editorMode === 'edit'
+                ? 'Update Item'
+                : 'Add to Catalog'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 function AutoResizeTextarea({
   value,
@@ -168,11 +816,22 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
     savePost,
     deletePost,
     saveOffer,
+    deleteOffer,
     saveDirectProduct,
+    deleteDirectProduct,
   } = useFirebaseApp();
 
   const [copiedOwnUid, setCopiedOwnUid] = useState(false);
   const [confirmDeleteStory, setConfirmDeleteStory] = useState(false);
+  const [confirmRemoveStoreBlockId, setConfirmRemoveStoreBlockId] = useState<
+    string | null
+  >(null);
+  const [confirmRemoveSidebarOfferId, setConfirmRemoveSidebarOfferId] =
+    useState<string | null>(null);
+  const [sidebarOfferEditorOpen, setSidebarOfferEditorOpen] = useState(false);
+  const [editingSidebarOfferId, setEditingSidebarOfferId] = useState<
+    string | undefined
+  >(undefined);
 
   // Preserve initialPost.id (including seed_* IDs so editing replaces starter posts seamlessly)
   const [editingPostId, setEditingPostId] = useState<string | undefined>(
@@ -274,12 +933,15 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
   );
   const [inlineLinkLabel, setInlineLinkLabel] = useState('');
   const [inlineLinkUrl, setInlineLinkUrl] = useState('');
-  const [selectionOffsets, setSelectionOffsets] = useState<{
-    start: number;
-    end: number;
-  }>({ start: 0, end: 0 });
+  const [editingInlineLinkIndex, setEditingInlineLinkIndex] = useState<
+    number | null
+  >(null);
+  const savedSelectionRangeRef = useRef<{
+    blockId: string;
+    range: Range;
+  } | null>(null);
 
-  // Quick-Create Affiliate Offer Inline Modal inside Offer Block
+  // Quick-Create / Edit Affiliate Offer State
   const [quickCreateOfferBlockId, setQuickCreateOfferBlockId] = useState<
     string | null
   >(null);
@@ -292,10 +954,13 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
   const [quickImageKey, setQuickImageKey] = useState('audio');
   const [quickSummary, setQuickSummary] = useState('');
 
-  // Quick-Create Direct Store Product Inline Modal inside Direct Product Block
+  // Quick-Create / Edit Direct Store Product Inline Modal inside Direct Product Block
   const [quickCreateProductBlockId, setQuickCreateProductBlockId] = useState<
     string | null
   >(null);
+  const [editingBlockProductId, setEditingBlockProductId] = useState<
+    string | undefined
+  >(undefined);
   const [quickProdTitle, setQuickProdTitle] = useState('');
   const [quickProdKind, setQuickProdKind] =
     useState<DirectProductKind>('physical');
@@ -310,9 +975,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
     text: string;
   } | null>(null);
 
-  const blockTextareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>(
-    {}
-  );
+  const blockEditableRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   // Auto-save working draft locally when creating a new story
   useEffect(() => {
@@ -362,11 +1025,17 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
   function focusBlockSoon(blockId: string) {
     setFocusedBlockId(blockId);
     requestAnimationFrame(() => {
-      const el = blockTextareaRefs.current[blockId];
+      const el = blockEditableRefs.current[blockId];
       if (el) {
         el.focus();
-        const len = el.value.length;
-        el.setSelectionRange(len, len);
+        const sel = window.getSelection();
+        if (sel) {
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          range.collapse(false);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
       }
     });
   }
@@ -439,59 +1108,97 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
   }
 
   function wrapSelectedText(blockId: string, wrapper: '**' | '*') {
-    const el = blockTextareaRefs.current[blockId];
+    const el = blockEditableRefs.current[blockId];
     const target = blocks.find((b) => b.id === blockId);
     if (
       !target ||
       (target.type !== 'paragraph' &&
         target.type !== 'heading' &&
         target.type !== 'subheading' &&
-        target.type !== 'quote')
+        target.type !== 'quote' &&
+        target.type !== 'callout')
     ) {
       return;
     }
 
-    const start = el?.selectionStart ?? target.text.length;
-    const end = el?.selectionEnd ?? target.text.length;
-    const selected = target.text.slice(start, end) || 'text';
-    const nextText =
-      target.text.slice(0, start) +
-      `${wrapper}${selected}${wrapper}` +
-      target.text.slice(end);
-
-    updateBlock(blockId, (prev) => ({ ...prev, text: nextText } as StoryBlock));
-    requestAnimationFrame(() => {
-      if (el) {
-        el.focus();
-        el.setSelectionRange(
-          start + wrapper.length,
-          start + wrapper.length + selected.length
+    const sel = window.getSelection();
+    if (el && sel && sel.rangeCount > 0 && el.contains(sel.anchorNode)) {
+      if (!sel.isCollapsed) {
+        document.execCommand(wrapper === '**' ? 'bold' : 'italic', false);
+        const nextMd = domNodeToMarkdown(el);
+        updateBlock(
+          blockId,
+          (prev) => ({ ...prev, text: nextMd } as StoryBlock)
         );
+        return;
       }
-    });
+    }
+
+    const suffix = `${wrapper}text${wrapper}`;
+    const nextText = target.text
+      ? `${target.text}${target.text.endsWith(' ') ? '' : ' '}${suffix}`
+      : suffix;
+    updateBlock(blockId, (prev) => ({ ...prev, text: nextText } as StoryBlock));
+    focusBlockSoon(blockId);
   }
 
-  function openInlineLinkPopover(blockId: string) {
-    const el = blockTextareaRefs.current[blockId];
+  function openInlineLinkPopover(
+    blockId: string,
+    existingLink?: { linkIndex: number; label: string; url: string }
+  ) {
+    const el = blockEditableRefs.current[blockId];
     const target = blocks.find((b) => b.id === blockId);
     if (
       !target ||
       (target.type !== 'paragraph' &&
         target.type !== 'heading' &&
         target.type !== 'subheading' &&
-        target.type !== 'quote')
+        target.type !== 'quote' &&
+        target.type !== 'callout')
     ) {
       return;
     }
 
-    const start = el?.selectionStart ?? target.text.length;
-    const end = el?.selectionEnd ?? target.text.length;
-    const selectedText = target.text.slice(start, end).trim();
+    if (existingLink) {
+      savedSelectionRangeRef.current = null;
+      setEditingInlineLinkIndex(existingLink.linkIndex);
+      setInlineLinkLabel(existingLink.label);
+      setInlineLinkUrl(existingLink.url);
+      setLinkPopoverBlockId(blockId);
+      return;
+    }
 
-    setSelectionOffsets({ start, end });
+    setEditingInlineLinkIndex(null);
+    let selectedText = '';
+    const sel = window.getSelection();
+    if (el && sel && sel.rangeCount > 0 && el.contains(sel.anchorNode)) {
+      const range = sel.getRangeAt(0).cloneRange();
+      savedSelectionRangeRef.current = { blockId, range };
+      selectedText = sel.toString().trim();
+    } else {
+      savedSelectionRangeRef.current = null;
+    }
+
     setInlineLinkLabel(selectedText || '');
     setInlineLinkUrl('');
     setLinkPopoverBlockId(blockId);
+  }
+
+  function replaceNthMarkdownLink(
+    source: string,
+    targetIndex: number,
+    replacement: string
+  ): string {
+    const regex = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
+    let currentIndex = 0;
+    return source.replace(regex, (fullMatch) => {
+      if (currentIndex === targetIndex) {
+        currentIndex += 1;
+        return replacement;
+      }
+      currentIndex += 1;
+      return fullMatch;
+    });
   }
 
   function applyInlineLinkToBlock(blockId: string) {
@@ -501,7 +1208,8 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
       (target.type !== 'paragraph' &&
         target.type !== 'heading' &&
         target.type !== 'subheading' &&
-        target.type !== 'quote')
+        target.type !== 'quote' &&
+        target.type !== 'callout')
     ) {
       return;
     }
@@ -518,21 +1226,78 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
     const cleanLabel = (
       inlineLinkLabel.trim() || extractHostnameLabel(cleanUrl)
     ).replace(/[\[\]]/g, '');
-
     const markdownLink = `[${cleanLabel}](${cleanUrl})`;
-    const { start, end } = selectionOffsets;
-    const prefix =
-      start > 0 && end === start && !target.text.slice(0, start).endsWith(' ')
-        ? ' '
-        : '';
-    const nextText =
-      target.text.slice(0, start) +
-      prefix +
-      markdownLink +
-      target.text.slice(end);
 
+    if (editingInlineLinkIndex !== null) {
+      const updated = replaceNthMarkdownLink(
+        target.text,
+        editingInlineLinkIndex,
+        markdownLink
+      );
+      updateBlock(blockId, (prev) => ({ ...prev, text: updated } as StoryBlock));
+      setLinkPopoverBlockId(null);
+      setEditingInlineLinkIndex(null);
+      setInlineLinkLabel('');
+      setInlineLinkUrl('');
+      focusBlockSoon(blockId);
+      return;
+    }
+
+    const el = blockEditableRefs.current[blockId];
+    const saved = savedSelectionRangeRef.current;
+    if (el && saved && saved.blockId === blockId && el.contains(saved.range.startContainer)) {
+      const a = document.createElement('a');
+      a.setAttribute('href', cleanUrl);
+      a.setAttribute('data-inline-link', 'true');
+      a.className =
+        'text-[#9A3412] underline decoration-[#9A3412]/70 underline-offset-4 font-medium cursor-pointer';
+      a.textContent = cleanLabel;
+
+      const range = saved.range;
+      range.deleteContents();
+      range.insertNode(a);
+      const nextMd = domNodeToMarkdown(el);
+      updateBlock(blockId, (prev) => ({ ...prev, text: nextMd } as StoryBlock));
+      savedSelectionRangeRef.current = null;
+      setLinkPopoverBlockId(null);
+      setInlineLinkLabel('');
+      setInlineLinkUrl('');
+      focusBlockSoon(blockId);
+      return;
+    }
+
+    const spacer =
+      target.text.length > 0 && !target.text.endsWith(' ') ? ' ' : '';
+    const nextText = `${target.text}${spacer}${markdownLink}`;
     updateBlock(blockId, (prev) => ({ ...prev, text: nextText } as StoryBlock));
     setLinkPopoverBlockId(null);
+    setInlineLinkLabel('');
+    setInlineLinkUrl('');
+    focusBlockSoon(blockId);
+  }
+
+  function removeInlineLinkFromBlock(blockId: string) {
+    if (editingInlineLinkIndex === null) return;
+    const target = blocks.find((b) => b.id === blockId);
+    if (
+      !target ||
+      (target.type !== 'paragraph' &&
+        target.type !== 'heading' &&
+        target.type !== 'subheading' &&
+        target.type !== 'quote' &&
+        target.type !== 'callout')
+    ) {
+      return;
+    }
+    const cleanPlainText = inlineLinkLabel.trim() || 'link';
+    const updated = replaceNthMarkdownLink(
+      target.text,
+      editingInlineLinkIndex,
+      cleanPlainText
+    );
+    updateBlock(blockId, (prev) => ({ ...prev, text: updated } as StoryBlock));
+    setLinkPopoverBlockId(null);
+    setEditingInlineLinkIndex(null);
     setInlineLinkLabel('');
     setInlineLinkUrl('');
     focusBlockSoon(blockId);
@@ -562,8 +1327,32 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
     }
   }
 
+  async function handleVideoBlockFileUpload(
+    blockId: string,
+    e: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingBlockId(blockId);
+    setStatusMessage(null);
+    try {
+      const dataUrl = await readCompactVideoFileToDataUrl(file);
+      updateBlock(blockId, (prev) =>
+        prev.type === 'video' ? { ...prev, url: dataUrl } : prev
+      );
+    } catch (err) {
+      setStatusMessage({
+        tone: 'err',
+        text: err instanceof Error ? err.message : 'Could not upload video.',
+      });
+    } finally {
+      setUploadingBlockId(null);
+      e.target.value = '';
+    }
+  }
+
   function handleTextBlockKeyDown(
-    e: React.KeyboardEvent<HTMLTextAreaElement>,
+    e: React.KeyboardEvent<HTMLDivElement>,
     block: Extract<
       StoryBlock,
       { type: 'paragraph' | 'heading' | 'subheading' | 'quote' }
@@ -815,27 +1604,39 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
     setBusy(true);
     setStatusMessage(null);
     try {
+      const existingProd = editingBlockProductId
+        ? allAccessibleDirectProductsMap[editingBlockProductId]
+        : undefined;
       const input: DirectProductDraftInput = {
+        id: editingBlockProductId,
         title: quickProdTitle,
         subtitle:
+          existingProd?.subtitle ||
           quickProdSummary.trim().slice(0, 140) ||
           'Sold directly on Pickra Store with tracked fulfillment.',
         kind: quickProdKind,
         category:
-          quickProdKind === 'digital' ? 'Digital Editions' : 'Studio Editions',
+          existingProd?.category ||
+          (quickProdKind === 'digital' ? 'Digital Editions' : 'Studio Editions'),
         sku: quickProdSku || 'PK-DIR-01',
         priceCents,
-        compareAtCents: 0,
-        stockCount: quickProdKind === 'digital' ? 999 : 25,
-        badgeLabel: 'Pickra Direct',
+        compareAtCents: existingProd?.compareAtCents || 0,
+        stockCount:
+          existingProd?.stockCount ?? (quickProdKind === 'digital' ? 999 : 25),
+        badgeLabel: existingProd?.badgeLabel || 'Pickra Direct',
         imageKey: quickProdImageKey,
+        videoUrl: existingProd?.videoUrl,
+        digitalFileUrl: existingProd?.digitalFileUrl,
+        digitalFileName: existingProd?.digitalFileName,
+        digitalFileType: existingProd?.digitalFileType,
         summary: quickProdSummary,
-        highlights: [],
+        highlights: existingProd?.highlights || [],
         deliveryNote:
-          quickProdKind === 'digital'
+          existingProd?.deliveryNote ||
+          (quickProdKind === 'digital'
             ? 'Instant digital download after checkout'
-            : 'Ships in 48 hours',
-        featured: false,
+            : 'Ships in 48 hours'),
+        featured: existingProd?.featured ?? false,
         status: 'published',
       };
       const newProductId = await saveDirectProduct(input);
@@ -845,11 +1646,14 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
         productId: newProductId,
       }));
       setQuickCreateProductBlockId(null);
+      setEditingBlockProductId(undefined);
       setQuickProdTitle('');
       setQuickProdSummary('');
       setStatusMessage({
         tone: 'ok',
-        text: 'Created Store product and embedded it into your blog.',
+        text: editingBlockProductId
+          ? 'Updated Store product and synced inside your blog.'
+          : 'Created Store product and embedded it into your blog.',
       });
     } catch (err) {
       setStatusMessage({
@@ -857,7 +1661,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
         text:
           err instanceof Error
             ? err.message
-            : 'Could not create Store product.',
+            : 'Could not save Store product.',
       });
     } finally {
       setBusy(false);
@@ -1264,24 +2068,171 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
             {/* Sidebar Attached Links & Final Publish Buttons */}
             <div className="lg:col-span-7 flex flex-col justify-between space-y-5">
               <div className="space-y-4">
-                <div>
-                  <h3 className="font-serif text-lg font-medium text-stone-900">
-                    Sidebar Affiliate Picks ({combinedAttachedOfferIds.length}/8)
-                  </h3>
-                  <p className="text-xs text-stone-500 mt-0.5">
-                    Any Affiliate Pick blocks inside your blog are included automatically. You can also attach extra affiliate products or services to the sticky reading rail:
-                  </p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="font-serif text-lg font-medium text-stone-900">
+                      Sidebar Affiliate Picks ({combinedAttachedOfferIds.length}/8)
+                    </h3>
+                    <p className="text-xs text-stone-500 mt-0.5">
+                      Attach, add, edit, or remove affiliate products and services shown in the reading rail:
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!user) {
+                        openAuthModal('signin', false);
+                        return;
+                      }
+                      setEditingSidebarOfferId(undefined);
+                      setQuickTitle('');
+                      setQuickKind('physical');
+                      setQuickPlatform('Amazon');
+                      setQuickPrice('$99.00');
+                      setQuickUrl('');
+                      setQuickSummary('');
+                      setSidebarOfferEditorOpen((v) => !v);
+                    }}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-[#9A3412] bg-[#F5F2EB] hover:bg-stone-200 rounded-lg cursor-pointer whitespace-nowrap"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{sidebarOfferEditorOpen ? 'Close Form' : 'Add Pick'}</span>
+                  </button>
                 </div>
+
+                {sidebarOfferEditorOpen && (
+                  <div className="p-3 bg-[#FBF9F5] border border-stone-300 rounded-lg space-y-2.5 text-xs">
+                    <div className="font-semibold text-stone-900">
+                      {editingSidebarOfferId
+                        ? 'Edit Sidebar Affiliate Pick'
+                        : 'Add New Affiliate Pick'}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <input
+                        type="text"
+                        value={quickTitle}
+                        onChange={(e) => setQuickTitle(e.target.value)}
+                        placeholder="Title"
+                        className="sm:col-span-2 px-2.5 py-1.5 bg-white border border-stone-300 rounded"
+                      />
+                      <select
+                        value={quickPlatform}
+                        onChange={(e) =>
+                          setQuickPlatform(e.target.value as AffiliatePlatform)
+                        }
+                        className="px-2.5 py-1.5 bg-white border border-stone-300 rounded"
+                      >
+                        {ALL_AFFILIATE_PLATFORMS.map((p) => (
+                          <option key={p} value={p}>
+                            {p}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <select
+                        value={quickKind}
+                        onChange={(e) =>
+                          setQuickKind(e.target.value as OfferKind)
+                        }
+                        className="px-2.5 py-1.5 bg-white border border-stone-300 rounded"
+                      >
+                        <option value="physical">Physical Product</option>
+                        <option value="digital">Digital Product</option>
+                        <option value="service">Service Affiliate</option>
+                      </select>
+                      <input
+                        type="text"
+                        value={quickPrice}
+                        onChange={(e) => setQuickPrice(e.target.value)}
+                        placeholder="$99.00"
+                        className="px-2.5 py-1.5 font-mono bg-white border border-stone-300 rounded"
+                      />
+                      <input
+                        type="url"
+                        value={quickUrl}
+                        onChange={(e) => setQuickUrl(e.target.value)}
+                        placeholder="https://..."
+                        className="px-2.5 py-1.5 font-mono bg-white border border-stone-300 rounded"
+                      />
+                    </div>
+                    <input
+                      type="text"
+                      value={quickSummary}
+                      onChange={(e) => setQuickSummary(e.target.value)}
+                      placeholder="Short summary..."
+                      className="w-full px-2.5 py-1.5 bg-white border border-stone-300 rounded"
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSidebarOfferEditorOpen(false)}
+                        className="px-2.5 py-1 text-stone-600 cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={async () => {
+                          setBusy(true);
+                          try {
+                            const savedId = await saveOffer({
+                              id: editingSidebarOfferId,
+                              title: quickTitle,
+                              kind: quickKind,
+                              platform: quickPlatform,
+                              category:
+                                quickKind === 'service'
+                                  ? 'Professional Service'
+                                  : 'Featured Pick',
+                              priceLabel: quickPrice || '$99.00',
+                              commissionNote: '',
+                              affiliateUrl: quickUrl,
+                              imageKey: quickImageKey || 'audio',
+                              summary:
+                                quickSummary.trim().length >= 10
+                                  ? quickSummary.trim()
+                                  : `${quickTitle.trim()} on ${quickPlatform} — partner link.`,
+                              highlights: [],
+                              status: 'published',
+                            });
+                            setExtraAttachedIds((prev) =>
+                              prev.includes(savedId)
+                                ? prev
+                                : [...prev, savedId].slice(0, 8)
+                            );
+                            setSidebarOfferEditorOpen(false);
+                            setEditingSidebarOfferId(undefined);
+                          } catch (err) {
+                            setStatusMessage({
+                              tone: 'err',
+                              text:
+                                err instanceof Error
+                                  ? err.message
+                                  : 'Could not save affiliate pick.',
+                            });
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                        className="px-3 py-1 font-semibold text-white bg-[#9A3412] rounded cursor-pointer"
+                      >
+                        Save Pick
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 <div className="max-h-44 overflow-y-auto divide-y divide-stone-200/80 border border-stone-200 rounded-lg bg-[#FBF9F5]">
                   {attachableOffers.map((offer) => {
                     const checked = combinedAttachedOfferIds.includes(offer.id);
                     return (
-                      <label
+                      <div
                         key={offer.id}
-                        className="px-3 py-2 flex items-center justify-between gap-3 text-xs cursor-pointer hover:bg-white"
+                        className="px-3 py-2 flex items-center justify-between gap-2 text-xs hover:bg-white"
                       >
-                        <span className="flex items-center gap-2 min-w-0">
+                        <label className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer">
                           <input
                             type="checkbox"
                             checked={checked}
@@ -1299,11 +2250,65 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                           <span className="truncate font-medium text-stone-900">
                             {offer.title}
                           </span>
-                        </span>
-                        <span className="text-stone-500 whitespace-nowrap shrink-0">
-                          {offer.platform} · {offer.priceLabel}
-                        </span>
-                      </label>
+                          <span className="text-stone-500 whitespace-nowrap shrink-0">
+                            · {offer.platform} · {offer.priceLabel}
+                          </span>
+                        </label>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingSidebarOfferId(offer.id);
+                              setQuickTitle(offer.title);
+                              setQuickKind(offer.kind);
+                              setQuickPlatform(offer.platform);
+                              setQuickPrice(offer.priceLabel);
+                              setQuickUrl(offer.affiliateUrl);
+                              setQuickImageKey(offer.imageKey || 'audio');
+                              setQuickSummary(offer.summary);
+                              setSidebarOfferEditorOpen(true);
+                            }}
+                            className="text-stone-600 hover:text-[#9A3412] cursor-pointer"
+                            title="Edit pick"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                          {confirmRemoveSidebarOfferId === offer.id ? (
+                            <span className="inline-flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void deleteOffer(offer.id);
+                                  setConfirmRemoveSidebarOfferId(null);
+                                }}
+                                className="font-semibold text-red-700 hover:underline cursor-pointer"
+                              >
+                                Confirm
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setConfirmRemoveSidebarOfferId(null)
+                                }
+                                className="text-stone-500 cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setConfirmRemoveSidebarOfferId(offer.id)
+                              }
+                              className="text-stone-400 hover:text-red-700 cursor-pointer"
+                              title="Remove pick"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     );
                   })}
                 </div>
@@ -1454,15 +2459,6 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                 block.type === 'subheading' ||
                 block.type === 'quote';
 
-              const inlineLinksInBlock: { label: string; url: string }[] = [];
-              if (isTextKind && block.text.includes('](')) {
-                const regex = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
-                let m: RegExpExecArray | null;
-                while ((m = regex.exec(block.text)) !== null) {
-                  inlineLinksInBlock.push({ label: m[1], url: m[2] });
-                }
-              }
-
               return (
                 <div key={block.id} className="group relative">
                   <div className="flex items-start gap-2 sm:gap-3">
@@ -1593,26 +2589,31 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                         </div>
                       )}
 
-                      {/* Inline Link Insertion Popover */}
+                      {/* Inline Link Insertion & Edit Popover */}
                       {linkPopoverBlockId === block.id && (
                         <div className="mb-3 p-4 bg-white text-stone-900 border border-stone-300 rounded-xl shadow-xs space-y-3">
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-semibold text-stone-900">
-                              Insert Inline Link or Affiliate Link
+                              {editingInlineLinkIndex !== null
+                                ? 'Edit or Remove Embedded Hyperlink'
+                                : 'Insert Inline Link or Affiliate Link'}
                             </span>
                             <button
                               type="button"
-                              onClick={() => setLinkPopoverBlockId(null)}
+                              onClick={() => {
+                                setLinkPopoverBlockId(null);
+                                setEditingInlineLinkIndex(null);
+                              }}
                               className="text-stone-400 hover:text-stone-700 cursor-pointer"
                             >
                               <X className="w-4 h-4" />
                             </button>
                           </div>
 
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
                             <div>
                               <label className="block text-[11px] text-stone-500 mb-1">
-                                Link Text
+                                Link Text (Visible Hyperlink Words)
                               </label>
                               <input
                                 type="text"
@@ -1620,39 +2621,25 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                                 onChange={(e) =>
                                   setInlineLinkLabel(e.target.value)
                                 }
-                                placeholder="e.g., Check price on Amazon"
+                                placeholder="e.g., HTML or Check price on Amazon"
                                 className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
                               />
                             </div>
-                            <div>
-                              <label className="block text-[11px] text-stone-500 mb-1">
-                                Quick-Fill from Saved Affiliate Catalog
-                              </label>
-                              <select
-                                defaultValue=""
-                                onChange={(e) => {
-                                  const picked = attachableOffers.find(
-                                    (o) => o.id === e.target.value
-                                  );
-                                  if (picked) {
-                                    if (!inlineLinkLabel.trim()) {
-                                      setInlineLinkLabel(picked.title);
-                                    }
-                                    setInlineLinkUrl(picked.affiliateUrl);
-                                  }
-                                }}
-                                className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
-                              >
-                                <option value="">
-                                  Or choose a saved product/service...
-                                </option>
-                                {attachableOffers.map((o) => (
-                                  <option key={o.id} value={o.id}>
-                                    {o.platform}: {o.title}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
+                            <SavedAffiliateCatalogDropdown
+                              label="Quick-Fill from Saved Affiliate Catalog"
+                              placeholderLabel="Or choose a saved product/service..."
+                              offers={attachableOffers}
+                              onSelectOffer={(picked) => {
+                                if (!inlineLinkLabel.trim()) {
+                                  setInlineLinkLabel(picked.title);
+                                }
+                                setInlineLinkUrl(picked.affiliateUrl);
+                              }}
+                              onSaveOffer={saveOffer}
+                              onDeleteOffer={deleteOffer}
+                              isAuthenticated={Boolean(user)}
+                              onRequireAuth={() => openAuthModal('signin', false)}
+                            />
                           </div>
 
                           <div className="flex flex-col sm:flex-row gap-2">
@@ -1660,30 +2647,60 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                               type="url"
                               value={inlineLinkUrl}
                               onChange={(e) => setInlineLinkUrl(e.target.value)}
-                              placeholder="https://www.amazon.com/... or https://www.fiverr.com/..."
+                              placeholder="https://www.amazon.com/... or https://drive.google.com/..."
                               className="flex-1 px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
                             />
-                            <button
-                              type="button"
-                              onClick={() => applyInlineLinkToBlock(block.id)}
-                              className="px-4 py-2 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg cursor-pointer whitespace-nowrap shrink-0"
-                            >
-                              Apply Link
-                            </button>
+                            <div className="flex flex-wrap items-center gap-2 shrink-0">
+                              {editingInlineLinkIndex !== null &&
+                                inlineLinkUrl.trim().startsWith('http') && (
+                                  <a
+                                    href={inlineLinkUrl.trim()}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 px-3 py-2 text-xs font-medium text-stone-700 bg-[#F3EFE8] hover:bg-stone-200 rounded-lg whitespace-nowrap"
+                                  >
+                                    <span>Open</span>
+                                    <ExternalLink className="w-3 h-3" />
+                                  </a>
+                                )}
+                              {editingInlineLinkIndex !== null && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    removeInlineLinkFromBlock(block.id)
+                                  }
+                                  className="px-3 py-2 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg cursor-pointer whitespace-nowrap"
+                                >
+                                  Remove Link
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => applyInlineLinkToBlock(block.id)}
+                                className="px-4 py-2 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg cursor-pointer whitespace-nowrap shrink-0"
+                              >
+                                {editingInlineLinkIndex !== null
+                                  ? 'Update Link'
+                                  : 'Apply Link'}
+                              </button>
+                            </div>
                           </div>
                         </div>
                       )}
 
-                      {/* PARAGRAPH BLOCK */}
+                      {/* PARAGRAPH BLOCK (WYSIWYG Hyperlinks — Raw URLs Hidden) */}
                       {block.type === 'paragraph' && (
                         <div>
-                          <AutoResizeTextarea
-                            textareaRef={(el) => {
-                              blockTextareaRefs.current[block.id] = el;
+                          <RichInlineEditable
+                            editorRef={(el) => {
+                              blockEditableRefs.current[block.id] = el;
                             }}
                             value={block.text}
                             onFocus={() => setFocusedBlockId(block.id)}
                             onKeyDown={(e) => handleTextBlockKeyDown(e, block)}
+                            onClickLink={(info) =>
+                              openInlineLinkPopover(block.id, info)
+                            }
                             onChange={(val) =>
                               updateBlock(block.id, (prev) => ({
                                 ...(prev as typeof block),
@@ -1695,38 +2712,23 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                                 ? 'Tell your story... (Click + on the left to upload images, embed videos, add links, color callouts, or affiliate products)'
                                 : 'Write paragraph, or press + to insert media...'
                             }
-                            className={`text-base sm:text-[17px] ${activePalette.textClass} placeholder:text-stone-400 leading-[1.8]`}
+                            className={`text-base sm:text-[17px] ${activePalette.textClass} leading-[1.8]`}
                           />
-                          {inlineLinksInBlock.length > 0 && (
-                            <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px] text-stone-500">
-                              {inlineLinksInBlock.map((lnk, i) => (
-                                <a
-                                  key={i}
-                                  href={lnk.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 text-[#9A3412] hover:underline"
-                                >
-                                  <Link2 className="w-3 h-3" />
-                                  <span>
-                                    {lnk.label} ({extractHostnameLabel(lnk.url)})
-                                  </span>
-                                </a>
-                              ))}
-                            </div>
-                          )}
                         </div>
                       )}
 
                       {/* HEADING BLOCK */}
                       {block.type === 'heading' && (
-                        <AutoResizeTextarea
-                          textareaRef={(el) => {
-                            blockTextareaRefs.current[block.id] = el;
+                        <RichInlineEditable
+                          editorRef={(el) => {
+                            blockEditableRefs.current[block.id] = el;
                           }}
                           value={block.text}
                           onFocus={() => setFocusedBlockId(block.id)}
                           onKeyDown={(e) => handleTextBlockKeyDown(e, block)}
+                          onClickLink={(info) =>
+                            openInlineLinkPopover(block.id, info)
+                          }
                           onChange={(val) =>
                             updateBlock(block.id, (prev) => ({
                               ...(prev as typeof block),
@@ -1734,19 +2736,22 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                             }))
                           }
                           placeholder="Section heading..."
-                          className={`pt-2 font-serif text-2xl sm:text-[1.65rem] font-medium ${activePalette.textClass} placeholder:text-stone-400 leading-snug`}
+                          className={`pt-2 font-serif text-2xl sm:text-[1.65rem] font-medium ${activePalette.textClass} leading-snug`}
                         />
                       )}
 
                       {/* SUBHEADING BLOCK */}
                       {block.type === 'subheading' && (
-                        <AutoResizeTextarea
-                          textareaRef={(el) => {
-                            blockTextareaRefs.current[block.id] = el;
+                        <RichInlineEditable
+                          editorRef={(el) => {
+                            blockEditableRefs.current[block.id] = el;
                           }}
                           value={block.text}
                           onFocus={() => setFocusedBlockId(block.id)}
                           onKeyDown={(e) => handleTextBlockKeyDown(e, block)}
+                          onClickLink={(info) =>
+                            openInlineLinkPopover(block.id, info)
+                          }
                           onChange={(val) =>
                             updateBlock(block.id, (prev) => ({
                               ...(prev as typeof block),
@@ -1754,7 +2759,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                             }))
                           }
                           placeholder="Subheading..."
-                          className={`pt-1 font-serif text-xl font-medium ${activePalette.textClass} placeholder:text-stone-400 leading-snug`}
+                          className={`pt-1 font-serif text-xl font-medium ${activePalette.textClass} leading-snug`}
                         />
                       )}
 
@@ -1763,13 +2768,16 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                         <div
                           className={`py-4 border-y ${activePalette.borderClass}`}
                         >
-                          <AutoResizeTextarea
-                            textareaRef={(el) => {
-                              blockTextareaRefs.current[block.id] = el;
+                          <RichInlineEditable
+                            editorRef={(el) => {
+                              blockEditableRefs.current[block.id] = el;
                             }}
                             value={block.text}
                             onFocus={() => setFocusedBlockId(block.id)}
                             onKeyDown={(e) => handleTextBlockKeyDown(e, block)}
+                            onClickLink={(info) =>
+                              openInlineLinkPopover(block.id, info)
+                            }
                             onChange={(val) =>
                               updateBlock(block.id, (prev) => ({
                                 ...(prev as typeof block),
@@ -1777,7 +2785,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                               }))
                             }
                             placeholder="Write a memorable pull quote..."
-                            className={`font-serif italic text-xl sm:text-2xl ${activePalette.textClass} placeholder:text-stone-400 leading-relaxed`}
+                            className={`font-serif italic text-xl sm:text-2xl ${activePalette.textClass} leading-relaxed`}
                           />
                         </div>
                       )}
@@ -1827,7 +2835,18 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                               </div>
                             </div>
 
-                            <div className="flex items-center gap-1">
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  openInlineLinkPopover(block.id);
+                                }}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium bg-black/10 hover:bg-black/20 rounded cursor-pointer"
+                              >
+                                <Link2 className="w-3 h-3" />
+                                <span>Add Link</span>
+                              </button>
                               <button
                                 type="button"
                                 onClick={() => moveBlock(block.id, -1)}
@@ -1870,12 +2889,15 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                             }`}
                           />
 
-                          <AutoResizeTextarea
-                            textareaRef={(el) => {
-                              blockTextareaRefs.current[block.id] = el;
+                          <RichInlineEditable
+                            editorRef={(el) => {
+                              blockEditableRefs.current[block.id] = el;
                             }}
                             value={block.text}
                             onFocus={() => setFocusedBlockId(block.id)}
+                            onClickLink={(info) =>
+                              openInlineLinkPopover(block.id, info)
+                            }
                             onChange={(val) =>
                               updateBlock(block.id, (prev) =>
                                 prev.type === 'callout'
@@ -1883,7 +2905,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                                   : prev
                               )
                             }
-                            placeholder="Write callout content (supports **bold**, *italic*, and [links](https://...))..."
+                            placeholder="Write callout content (highlight words and click Add Link to embed clean hyperlinks)..."
                             className={`text-sm leading-relaxed ${
                               CALLOUT_STYLES[block.theme]?.bodyClass || ''
                             }`}
@@ -2070,10 +3092,26 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                           <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-stone-100">
                             <span className="text-xs font-semibold text-stone-800 inline-flex items-center gap-1.5">
                               <Video className="w-4 h-4 text-[#9A3412]" />
-                              <span>Video Embed (YouTube, Vimeo, Loom, or MP4)</span>
+                              <span>Video Embed or Upload (YouTube, Vimeo, Loom, MP4)</span>
                             </span>
 
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <label className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-white bg-[#1C1917] hover:bg-[#9A3412] rounded cursor-pointer whitespace-nowrap">
+                                <Upload className="w-3 h-3" />
+                                <span>
+                                  {uploadingBlockId === block.id
+                                    ? 'Uploading...'
+                                    : 'Upload Video'}
+                                </span>
+                                <input
+                                  type="file"
+                                  accept="video/mp4,video/webm,video/quicktime"
+                                  onChange={(e) =>
+                                    void handleVideoBlockFileUpload(block.id, e)
+                                  }
+                                  className="hidden"
+                                />
+                              </label>
                               <button
                                 type="button"
                                 onClick={() => moveBlock(block.id, -1)}
@@ -2106,14 +3144,22 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                             </label>
                             <input
                               type="url"
-                              value={block.url}
+                              value={
+                                block.url.startsWith('data:video/')
+                                  ? ''
+                                  : block.url
+                              }
                               onChange={(e) =>
                                 updateBlock(block.id, (prev) => ({
                                   ...(prev as typeof block),
                                   url: e.target.value,
                                 }))
                               }
-                              placeholder="https://www.youtube.com/watch?v=... or https://vimeo.com/..."
+                              placeholder={
+                                block.url.startsWith('data:video/')
+                                  ? 'Uploaded video active — paste a URL to replace'
+                                  : 'https://www.youtube.com/watch?v=... or https://vimeo.com/...'
+                              }
                               className="w-full px-3.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
                             />
                           </div>
@@ -2122,7 +3168,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                             <VideoEmbedFigure url={block.url} />
                           ) : (
                             <div className="py-10 px-4 text-center rounded-lg bg-[#F5F2EB] border border-dashed border-stone-300 text-xs text-stone-500">
-                              Paste a YouTube, Vimeo, Loom, or direct .mp4 video URL above to embed a responsive 16:9 video player in your blog.
+                              Upload a compact video clip or paste a YouTube, Vimeo, Loom, or direct .mp4 video URL above to embed a responsive 16:9 video player in your blog.
                             </div>
                           )}
 
@@ -2177,7 +3223,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
                             <div>
                               <label className="block text-[11px] text-stone-500 mb-1">
                                 Destination URL (https://)
@@ -2196,39 +3242,25 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                               />
                             </div>
 
-                            <div>
-                              <label className="block text-[11px] text-stone-500 mb-1">
-                                Or Auto-Fill From Saved Catalog
-                              </label>
-                              <select
-                                defaultValue=""
-                                onChange={(e) => {
-                                  const picked = attachableOffers.find(
-                                    (o) => o.id === e.target.value
-                                  );
-                                  if (picked) {
-                                    updateBlock(block.id, () => ({
-                                      id: block.id,
-                                      type: 'bookmark',
-                                      url: picked.affiliateUrl,
-                                      title: `${picked.title} (${picked.priceLabel})`,
-                                      description: picked.summary,
-                                      ctaLabel: `View on ${picked.platform}`,
-                                    }));
-                                  }
-                                }}
-                                className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
-                              >
-                                <option value="">
-                                  Select saved product or service...
-                                </option>
-                                {attachableOffers.map((o) => (
-                                  <option key={o.id} value={o.id}>
-                                    {o.platform}: {o.title}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
+                            <SavedAffiliateCatalogDropdown
+                              label="Or Auto-Fill From Saved Catalog"
+                              placeholderLabel="Select saved product or service..."
+                              offers={attachableOffers}
+                              onSelectOffer={(picked) => {
+                                updateBlock(block.id, () => ({
+                                  id: block.id,
+                                  type: 'bookmark',
+                                  url: picked.affiliateUrl,
+                                  title: `${picked.title} (${picked.priceLabel})`,
+                                  description: picked.summary,
+                                  ctaLabel: `View on ${picked.platform}`,
+                                }));
+                              }}
+                              onSaveOffer={saveOffer}
+                              onDeleteOffer={deleteOffer}
+                              isAuthenticated={Boolean(user)}
+                              onRequireAuth={() => openAuthModal('signin', false)}
+                            />
                           </div>
 
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -2297,20 +3329,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                               </span>
                             </span>
 
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setQuickCreateOfferBlockId((prev) =>
-                                    prev === block.id ? null : block.id
-                                  )
-                                }
-                                className="px-2.5 py-1 text-[11px] font-medium text-[#9A3412] bg-[#F5F2EB] hover:bg-stone-200 rounded cursor-pointer"
-                              >
-                                {quickCreateOfferBlockId === block.id
-                                  ? 'Close New Form'
-                                  : '+ Create New Offer'}
-                              </button>
+                            <div className="flex items-center gap-1.5">
                               <button
                                 type="button"
                                 onClick={() => moveBlock(block.id, -1)}
@@ -2337,127 +3356,23 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                             </div>
                           </div>
 
-                          {quickCreateOfferBlockId === block.id ? (
-                            <div className="p-4 bg-[#FBF9F5] border border-stone-200 rounded-lg space-y-3">
-                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                <input
-                                  type="text"
-                                  value={quickTitle}
-                                  onChange={(e) =>
-                                    setQuickTitle(e.target.value)
-                                  }
-                                  placeholder="Product or Service Name"
-                                  className="sm:col-span-2 px-3 py-2 text-xs bg-white border border-stone-300 rounded-md"
-                                />
-                                <select
-                                  value={quickKind}
-                                  onChange={(e) =>
-                                    setQuickKind(e.target.value as OfferKind)
-                                  }
-                                  className="px-3 py-2 text-xs bg-white border border-stone-300 rounded-md"
-                                >
-                                  <option value="physical">
-                                    Physical Product
-                                  </option>
-                                  <option value="digital">
-                                    Digital Product
-                                  </option>
-                                  <option value="service">
-                                    Professional Service
-                                  </option>
-                                </select>
-                              </div>
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                <select
-                                  value={quickPlatform}
-                                  onChange={(e) =>
-                                    setQuickPlatform(
-                                      e.target.value as AffiliatePlatform
-                                    )
-                                  }
-                                  className="px-3 py-2 text-xs bg-white border border-stone-300 rounded-md"
-                                >
-                                  {ALL_AFFILIATE_PLATFORMS.map((p) => (
-                                    <option key={p} value={p}>
-                                      {p}
-                                    </option>
-                                  ))}
-                                </select>
-                                <input
-                                  type="text"
-                                  value={quickPrice}
-                                  onChange={(e) =>
-                                    setQuickPrice(e.target.value)
-                                  }
-                                  placeholder="$149.00 or From $85/hr"
-                                  className="px-3 py-2 text-xs font-mono bg-white border border-stone-300 rounded-md"
-                                />
-                              </div>
-                              <ImageUploadPicker
-                                value={quickImageKey}
-                                onChange={setQuickImageKey}
-                                label="Product / Service Image"
-                                showPreview={false}
-                                compact={true}
-                              />
-                              <input
-                                type="url"
-                                value={quickUrl}
-                                onChange={(e) => setQuickUrl(e.target.value)}
-                                placeholder="https://www.amazon.com/... or https://www.fiverr.com/..."
-                                className="w-full px-3 py-2 text-xs bg-white border border-stone-300 rounded-md"
-                              />
-                              <textarea
-                                rows={2}
-                                value={quickSummary}
-                                onChange={(e) =>
-                                  setQuickSummary(e.target.value)
-                                }
-                                placeholder="Editorial summary (at least 10 characters)..."
-                                className="w-full px-3 py-2 text-xs bg-white border border-stone-300 rounded-md"
-                              />
-                              <div className="flex justify-end">
-                                <button
-                                  type="button"
-                                  disabled={busy}
-                                  onClick={() =>
-                                    void handleQuickCreateOfferForBlock(
-                                      block.id
-                                    )
-                                  }
-                                  className="px-4 py-2 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-md cursor-pointer"
-                                >
-                                  {user
-                                    ? 'Save & Embed Offer'
-                                    : 'Sign In to Save Offer'}
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <div>
-                              <label className="block text-[11px] text-stone-500 mb-1">
-                                Choose Saved Affiliate Product or Service
-                              </label>
-                              <select
-                                value={block.offerId}
-                                onChange={(e) =>
-                                  updateBlock(block.id, () => ({
-                                    id: block.id,
-                                    type: 'offer',
-                                    offerId: e.target.value,
-                                  }))
-                                }
-                                className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
-                              >
-                                {attachableOffers.map((o) => (
-                                  <option key={o.id} value={o.id}>
-                                    {o.platform} ({o.kind}) — {o.title} ·{' '}
-                                    {o.priceLabel}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          )}
+                          <SavedAffiliateCatalogDropdown
+                            label="Choose, Add, Edit, or Remove Saved Affiliate Product or Service"
+                            placeholderLabel="Select saved affiliate product or service..."
+                            offers={attachableOffers}
+                            selectedOfferId={block.offerId}
+                            onSelectOffer={(picked) =>
+                              updateBlock(block.id, () => ({
+                                id: block.id,
+                                type: 'offer',
+                                offerId: picked.id,
+                              }))
+                            }
+                            onSaveOffer={saveOffer}
+                            onDeleteOffer={deleteOffer}
+                            isAuthenticated={Boolean(user)}
+                            onRequireAuth={() => openAuthModal('signin', false)}
+                          />
 
                           {allAccessibleOffersMap[block.offerId] && (
                             <OfferCard
@@ -2477,20 +3392,99 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                               <span>Pickra Store Product (Buy Direct Block)</span>
                             </span>
 
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                               <button
                                 type="button"
-                                onClick={() =>
+                                onClick={() => {
+                                  setEditingBlockProductId(undefined);
+                                  setQuickProdTitle('');
+                                  setQuickProdKind('physical');
+                                  setQuickProdPriceUsd('79.00');
+                                  setQuickProdSku('PK-ED-01');
+                                  setQuickProdImageKey('edition');
+                                  setQuickProdSummary('');
                                   setQuickCreateProductBlockId((prev) =>
-                                    prev === block.id ? null : block.id
-                                  )
-                                }
+                                    prev === block.id && !editingBlockProductId
+                                      ? null
+                                      : block.id
+                                  );
+                                }}
                                 className="px-2.5 py-1 text-[11px] font-medium text-[#9A3412] bg-[#F5F2EB] hover:bg-stone-200 rounded cursor-pointer"
                               >
-                                {quickCreateProductBlockId === block.id
-                                  ? 'Close New Form'
-                                  : '+ Create Store Product'}
+                                {quickCreateProductBlockId === block.id &&
+                                !editingBlockProductId
+                                  ? 'Close Form'
+                                  : '+ Add Product'}
                               </button>
+                              {allAccessibleDirectProductsMap[block.productId] && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const cur =
+                                        allAccessibleDirectProductsMap[
+                                          block.productId
+                                        ];
+                                      if (!cur) return;
+                                      setEditingBlockProductId(cur.id);
+                                      setQuickProdTitle(cur.title);
+                                      setQuickProdKind(cur.kind);
+                                      setQuickProdPriceUsd(
+                                        (cur.priceCents / 100).toFixed(2)
+                                      );
+                                      setQuickProdSku(cur.sku);
+                                      setQuickProdImageKey(
+                                        cur.imageKey || 'edition'
+                                      );
+                                      setQuickProdSummary(cur.summary);
+                                      setQuickCreateProductBlockId(block.id);
+                                    }}
+                                    className="px-2 py-1 text-[11px] font-medium text-stone-700 bg-[#F5F2EB] hover:bg-stone-200 rounded cursor-pointer inline-flex items-center gap-1"
+                                  >
+                                    <Edit3 className="w-3 h-3" />
+                                    <span>Edit</span>
+                                  </button>
+                                  {confirmRemoveStoreBlockId === block.id ? (
+                                    <span className="inline-flex items-center gap-1 text-[11px]">
+                                      <button
+                                        type="button"
+                                        onClick={async () => {
+                                          const cur =
+                                            allAccessibleDirectProductsMap[
+                                              block.productId
+                                            ];
+                                          if (cur) {
+                                            await deleteDirectProduct(cur.id);
+                                          }
+                                          setConfirmRemoveStoreBlockId(null);
+                                        }}
+                                        className="font-semibold text-red-700 hover:underline cursor-pointer"
+                                      >
+                                        Confirm
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setConfirmRemoveStoreBlockId(null)
+                                        }
+                                        className="text-stone-500 cursor-pointer"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setConfirmRemoveStoreBlockId(block.id)
+                                      }
+                                      className="px-2 py-1 text-[11px] text-stone-600 hover:text-red-700 bg-[#F5F2EB] rounded cursor-pointer"
+                                    >
+                                      Remove Item
+                                    </button>
+                                  )}
+                                </>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => moveBlock(block.id, -1)}
@@ -2519,6 +3513,23 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
 
                           {quickCreateProductBlockId === block.id ? (
                             <div className="p-4 bg-[#FBF9F5] border border-stone-200 rounded-lg space-y-3">
+                              <div className="flex items-center justify-between text-xs font-semibold text-stone-900">
+                                <span>
+                                  {editingBlockProductId
+                                    ? 'Edit Store Product'
+                                    : 'Add New Store Product'}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setQuickCreateProductBlockId(null);
+                                    setEditingBlockProductId(undefined);
+                                  }}
+                                  className="text-stone-400 hover:text-stone-700 cursor-pointer"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                 <input
                                   type="text"
@@ -2600,7 +3611,9 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                                   className="px-4 py-2 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-md cursor-pointer"
                                 >
                                   {user
-                                    ? 'Save & Embed Store Product'
+                                    ? editingBlockProductId
+                                      ? 'Update Store Product'
+                                      : 'Save & Embed Store Product'
                                     : 'Sign In to Save Product'}
                                 </button>
                               </div>

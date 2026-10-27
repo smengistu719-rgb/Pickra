@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import {
   Check,
+  Download,
+  ExternalLink,
   LogIn,
   Minus,
   Package,
@@ -11,8 +13,8 @@ import {
   X,
 } from 'lucide-react';
 import { useFirebaseApp } from '../context/FirebaseContext';
-import { formatPriceCents } from '../firebase';
-import { DirectOrder } from '../types';
+import { formatPriceCents, triggerDigitalAssetDownload } from '../firebase';
+import { DirectOrder, DirectProduct } from '../types';
 import { AuthPanel } from './AuthModal';
 import { ResilientImage } from './ResilientImage';
 
@@ -48,6 +50,7 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
   } = useFirebaseApp();
 
   const [step, setStep] = useState<'bag' | 'checkout' | 'confirmed'>('bag');
+  const [showOptionalSignIn, setShowOptionalSignIn] = useState(false);
   const [promoInput, setPromoInput] = useState('');
   const [promoFeedback, setPromoFeedback] = useState<{
     ok: boolean;
@@ -73,6 +76,12 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
   }, [user, profile, buyerName, buyerEmail]);
 
   useEffect(() => {
+    if (user) {
+      setShowOptionalSignIn(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
     if (appliedPromoCode) {
       setPromoInput(appliedPromoCode);
     }
@@ -86,6 +95,14 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
       return product ? { product, quantity: item.quantity } : null;
     })
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+  const purchasedDigitalProducts: DirectProduct[] = confirmedOrder
+    ? confirmedOrder.productIds
+        .map((pid) => allAccessibleDirectProductsMap[pid])
+        .filter(
+          (p): p is DirectProduct => Boolean(p && p.kind === 'digital')
+        )
+    : [];
 
   function handleClose() {
     setIsCartOpen(false);
@@ -142,7 +159,7 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
               {step === 'confirmed'
                 ? 'Order Confirmed'
                 : step === 'checkout'
-                ? 'Direct Checkout'
+                ? 'Direct Checkout (No Login Required)'
                 : `Shopping Bag (${cartCount})`}
             </h2>
           </div>
@@ -163,7 +180,7 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
               <div className="p-5 bg-white border border-stone-200 rounded-xl">
                 <div className="flex items-center gap-2 text-xs font-semibold text-emerald-800">
                   <Check className="w-4 h-4" />
-                  <span>Direct Purchase Recorded</span>
+                  <span>Direct Purchase Completed</span>
                 </div>
                 <h3 className="mt-2 font-serif text-2xl font-medium text-stone-900">
                   Thank you, {confirmedOrder.buyerName}.
@@ -173,7 +190,7 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                   <span className="font-mono font-semibold text-stone-900">
                     {confirmedOrder.orderNumber}
                   </span>{' '}
-                  has been saved to your Pickra account.
+                  is confirmed and available under My Purchases.
                 </p>
 
                 <div className="mt-5 pt-4 border-t border-stone-200 space-y-2 text-xs text-stone-600">
@@ -206,6 +223,59 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                 </div>
               </div>
 
+              {/* Instant Digital Product Downloads on Confirmation */}
+              {purchasedDigitalProducts.length > 0 && (
+                <div className="p-5 bg-white border border-stone-300 rounded-xl space-y-3">
+                  <div className="text-xs font-semibold text-[#9A3412]">
+                    Instant Digital Deliverables Unlocked
+                  </div>
+                  {purchasedDigitalProducts.map((prod) => (
+                    <div
+                      key={prod.id}
+                      className="flex flex-wrap items-center justify-between gap-3 p-3 bg-[#FBF9F5] border border-stone-200 rounded-lg"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-stone-900 truncate">
+                          {prod.title}
+                        </div>
+                        <div className="text-[11px] text-stone-500">
+                          {prod.digitalFileType || 'Digital Edition'}
+                          {prod.digitalFileName ? ` · ${prod.digitalFileName}` : ''}
+                        </div>
+                      </div>
+                      {prod.digitalFileUrl ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            triggerDigitalAssetDownload(
+                              prod.digitalFileUrl || '',
+                              prod.digitalFileName || `${prod.sku}.download`
+                            )
+                          }
+                          className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                        >
+                          {prod.digitalFileUrl.startsWith('data:') ? (
+                            <>
+                              <Download className="w-3.5 h-3.5" />
+                              <span>Download File</span>
+                            </>
+                          ) : (
+                            <>
+                              <ExternalLink className="w-3.5 h-3.5" />
+                              <span>Access Digital Product</span>
+                            </>
+                          )}
+                        </button>
+                      ) : (
+                        <span className="text-[11px] text-emerald-800 font-medium">
+                          Sent to {confirmedOrder.buyerEmail}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div className="p-4 bg-[#F5F2EB] border border-stone-200/90 rounded-xl text-xs text-stone-700 leading-relaxed">
                 <span className="font-semibold text-stone-900 block mb-1">
                   Fulfillment Status
@@ -232,7 +302,7 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                   onClick={handleClose}
                   className="px-4 py-2.5 text-xs font-medium text-stone-700 bg-white border border-stone-300 hover:bg-stone-100 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
                 >
-                  Continue Browsing
+                  Continue Shopping
                 </button>
               </div>
             </div>
@@ -243,7 +313,7 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                 Your Pickra bag is empty
               </h3>
               <p className="mt-1.5 text-sm text-stone-600 max-w-xs mx-auto leading-relaxed">
-                Explore physical studio editions and instant digital toolkits sold directly on Pickra.
+                Browse creator products and purchase physical or digital items directly — no account required.
               </p>
 
               {publishedCampaigns.length > 0 && (
@@ -314,7 +384,7 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                     <div className="min-w-0 flex-1">
                       <div className="text-[11px] text-stone-500">
                         {product.kind === 'digital'
-                          ? 'Instant Digital'
+                          ? product.digitalFileType || 'Instant Digital'
                           : 'Physical Edition'}{' '}
                         · {product.sku}
                       </div>
@@ -435,18 +505,35 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
               </div>
             </div>
           ) : (
-            /* Step === 'checkout' */
+            /* Step === 'checkout' — Direct Guest Checkout Enabled (No Sign-In Required!) */
             <div className="space-y-5">
-              <button
-                type="button"
-                onClick={() => {
-                  setStep('bag');
-                  setCheckoutError(null);
-                }}
-                className="text-xs font-medium text-stone-600 hover:text-stone-900 underline cursor-pointer"
-              >
-                ← Edit items or promo code
-              </button>
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStep('bag');
+                    setCheckoutError(null);
+                  }}
+                  className="text-xs font-medium text-stone-600 hover:text-stone-900 underline cursor-pointer"
+                >
+                  ← Edit items or promo code
+                </button>
+
+                {!user && (
+                  <button
+                    type="button"
+                    onClick={() => setShowOptionalSignIn((prev) => !prev)}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-[#9A3412] hover:underline cursor-pointer"
+                  >
+                    <LogIn className="w-3.5 h-3.5" />
+                    <span>
+                      {showOptionalSignIn
+                        ? 'Checkout as Guest instead'
+                        : 'Optional: Sign in to account'}
+                    </span>
+                  </button>
+                )}
+              </div>
 
               {checkoutError && (
                 <div className="p-3.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-800">
@@ -454,19 +541,29 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                 </div>
               )}
 
-              {!user ? (
+              {!user && showOptionalSignIn ? (
                 <AuthPanel
-                  defaultMode="signup"
+                  defaultMode="signin"
                   defaultAsSeller={false}
-                  heading="Create account or sign in"
-                  subheading="Link your direct purchase and instant digital downloads to your Pickra account."
+                  heading="Sign in or continue as guest"
+                  subheading="Sign in with Google or Email to sync purchases across devices, or click 'Checkout as Guest instead' above."
+                  onSuccess={() => setShowOptionalSignIn(false)}
                 />
               ) : (
                 <form
                   id="direct-checkout-form"
-                  onSubmit={handleCompleteOrder}
+                  onSubmit={(e) => void handleCompleteOrder(e)}
                   className="p-5 bg-white border border-stone-200 rounded-xl space-y-4"
                 >
+                  {!user && (
+                    <div className="pb-3 border-b border-stone-100 text-xs text-stone-600 leading-relaxed">
+                      <span className="font-semibold text-stone-900">
+                        Guest Express Checkout
+                      </span>{' '}
+                      — purchase directly without creating an account. Digital downloads unlock immediately upon confirmation.
+                    </div>
+                  )}
+
                   <div>
                     <label className="block text-xs font-medium text-stone-700 mb-1.5">
                       Full Name
@@ -516,8 +613,7 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                     </div>
                   ) : (
                     <div className="p-3 bg-[#F5F2EB] rounded-lg text-xs text-stone-700">
-                      Digital-only order — instant download access will unlock
-                      immediately upon confirmation with $0 shipping.
+                      Digital-only order — instant download access unlocks immediately upon confirmation with $0 shipping.
                     </div>
                   )}
                 </form>
@@ -576,11 +672,11 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                   ? `Proceed to Direct Checkout · ${formatPriceCents(cartTotalCents)}`
                   : 'Direct Checkout Temporarily Paused'}
               </button>
-            ) : (
+            ) : !user && showOptionalSignIn ? null : (
               <button
                 type="submit"
                 form="direct-checkout-form"
-                disabled={!user || submitting || !siteConfig.storeCheckoutEnabled}
+                disabled={submitting || !siteConfig.storeCheckoutEnabled}
                 className="w-full py-3 px-4 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] disabled:bg-stone-300 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
               >
                 {!siteConfig.storeCheckoutEnabled

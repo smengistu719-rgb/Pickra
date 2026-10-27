@@ -21,6 +21,8 @@ import {
   ShieldCheck,
   ShoppingBag,
   Trash2,
+  Upload,
+  Video,
   X,
 } from 'lucide-react';
 import {
@@ -34,6 +36,8 @@ import {
 import {
   downloadCsvFile,
   formatPriceCents,
+  readCompactVideoFileToDataUrl,
+  readDigitalProductFileToDataUrl,
   toSafePromoCode,
 } from '../firebase';
 import {
@@ -55,6 +59,7 @@ import {
 } from '../types';
 import { AuthPanel } from './AuthModal';
 import { ImageUploadPicker } from './ImageUploadPicker';
+import { VideoEmbedFigure } from './EditorialRichBlocks';
 
 interface PublisherStudioProps {
   onOpenPublishedPost: (post: BlogPost) => void;
@@ -155,6 +160,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     deleteCampaign,
     updateDirectOrderFulfillment,
     markSellerOrderPaidOut,
+    deleteDirectOrder,
     saveProfileAndAffiliateTags,
     saveSiteConfig,
     grantCoAdmin,
@@ -214,6 +220,10 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
   const [prodBadge, setProdBadge] = useState('First-Party Edition');
   const [prodImageKey, setProdImageKey] = useState('edition');
   const [prodCustomImageUrl, setProdCustomImageUrl] = useState('');
+  const [prodVideoUrl, setProdVideoUrl] = useState('');
+  const [prodDigitalFileUrl, setProdDigitalFileUrl] = useState('');
+  const [prodDigitalFileName, setProdDigitalFileName] = useState('');
+  const [prodDigitalFileType, setProdDigitalFileType] = useState('');
   const [prodDeliveryNote, setProdDeliveryNote] = useState(
     'Ships in 48 hours from Pickra Studio'
   );
@@ -265,6 +275,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
   const [offerUrl, setOfferUrl] = useState('');
   const [offerImageKey, setOfferImageKey] = useState('audio');
   const [offerCustomImageUrl, setOfferCustomImageUrl] = useState('');
+  const [offerVideoUrl, setOfferVideoUrl] = useState('');
   const [offerSummary, setOfferSummary] = useState('');
   const [offerHighlightsText, setOfferHighlightsText] = useState('');
   const [offerStatus, setOfferStatus] = useState<PublishStatus>('published');
@@ -589,6 +600,10 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     setProdBadge('First-Party Edition');
     setProdImageKey('edition');
     setProdCustomImageUrl('');
+    setProdVideoUrl('');
+    setProdDigitalFileUrl('');
+    setProdDigitalFileName('');
+    setProdDigitalFileType('');
     setProdDeliveryNote('Ships in 48 hours from Pickra Studio');
     setProdSummary('');
     setProdHighlightsText('');
@@ -611,6 +626,10 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     setProdBadge(prod.badgeLabel);
     setProdImageKey(prod.imageKey || 'edition');
     setProdCustomImageUrl('');
+    setProdVideoUrl(prod.videoUrl || '');
+    setProdDigitalFileUrl(prod.digitalFileUrl || '');
+    setProdDigitalFileName(prod.digitalFileName || '');
+    setProdDigitalFileType(prod.digitalFileType || '');
     setProdDeliveryNote(prod.deliveryNote);
     setProdSummary(prod.summary);
     setProdHighlightsText(prod.highlights.join('\n'));
@@ -658,6 +677,10 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
         stockCount,
         badgeLabel: prodBadge,
         imageKey: resolvedImage || 'edition',
+        videoUrl: prodVideoUrl,
+        digitalFileUrl: prodKind === 'digital' ? prodDigitalFileUrl : '',
+        digitalFileName: prodKind === 'digital' ? prodDigitalFileName : '',
+        digitalFileType: prodKind === 'digital' ? prodDigitalFileType : '',
         summary: prodSummary,
         highlights,
         deliveryNote: prodDeliveryNote,
@@ -840,6 +863,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     setOfferUrl('');
     setOfferImageKey('audio');
     setOfferCustomImageUrl('');
+    setOfferVideoUrl('');
     setOfferSummary('');
     setOfferHighlightsText('');
     setOfferStatus('published');
@@ -856,6 +880,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     setOfferUrl(offer.affiliateUrl);
     setOfferImageKey(offer.imageKey || 'audio');
     setOfferCustomImageUrl('');
+    setOfferVideoUrl(offer.videoUrl || '');
     setOfferSummary(offer.summary);
     setOfferHighlightsText(offer.highlights.join('\n'));
     setOfferStatus(offer.status);
@@ -926,6 +951,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
         commissionNote: offerCommission,
         affiliateUrl: offerUrl,
         imageKey: resolvedImage || 'audio',
+        videoUrl: offerVideoUrl,
         summary: offerSummary,
         highlights,
         status: offerStatus,
@@ -2406,6 +2432,144 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                   compact
                 />
 
+                {/* Video Attachment */}
+                <div className="p-3 bg-[#FBF9F5] border border-stone-200 rounded-lg space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-stone-700 inline-flex items-center gap-1">
+                      <Video className="w-3.5 h-3.5 text-[#9A3412]" />
+                      <span>Product Video (Optional)</span>
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <label className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-white bg-[#1C1917] hover:bg-[#9A3412] rounded cursor-pointer">
+                        <Upload className="w-3 h-3" />
+                        <span>Upload Video</span>
+                        <input
+                          type="file"
+                          accept="video/mp4,video/webm,video/quicktime"
+                          onChange={async (e) => {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            try {
+                              const url = await readCompactVideoFileToDataUrl(f);
+                              setProdVideoUrl(url);
+                            } catch (err) {
+                              notify(
+                                'err',
+                                err instanceof Error
+                                  ? err.message
+                                  : 'Video upload failed.'
+                              );
+                            } finally {
+                              e.target.value = '';
+                            }
+                          }}
+                          className="hidden"
+                        />
+                      </label>
+                      {prodVideoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setProdVideoUrl('')}
+                          className="text-[11px] text-red-700 hover:underline cursor-pointer"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <input
+                    type="url"
+                    value={
+                      prodVideoUrl.startsWith('data:video/') ? '' : prodVideoUrl
+                    }
+                    onChange={(e) => setProdVideoUrl(e.target.value)}
+                    placeholder="https://www.youtube.com/watch?v=... or .mp4 URL"
+                    className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded"
+                  />
+                  {prodVideoUrl && (
+                    <VideoEmbedFigure url={prodVideoUrl} compact />
+                  )}
+                </div>
+
+                {/* Digital Deliverable Upload / Link */}
+                {prodKind === 'digital' && (
+                  <div className="p-3 bg-[#FBF9F5] border border-stone-200 rounded-lg space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-stone-700">
+                        Digital Product Upload / Download Link
+                      </span>
+                      <label className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded cursor-pointer">
+                        <Upload className="w-3 h-3" />
+                        <span>Upload PDF / ZIP / Excel / HTML / eBook</span>
+                        <input
+                          type="file"
+                          accept=".pdf,.zip,.xlsx,.xls,.csv,.epub,.mobi,.html,.htm,.json,.js,.ts,.py,.txt,.md,.xml,.svg,.docx,.pptx"
+                          onChange={async (e) => {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            try {
+                              const res =
+                                await readDigitalProductFileToDataUrl(f);
+                              setProdDigitalFileUrl(res.dataUrl);
+                              setProdDigitalFileName(res.fileName);
+                              setProdDigitalFileType(res.fileTypeLabel);
+                            } catch (err) {
+                              notify(
+                                'err',
+                                err instanceof Error
+                                  ? err.message
+                                  : 'File upload failed.'
+                              );
+                            } finally {
+                              e.target.value = '';
+                            }
+                          }}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                    <input
+                      type="url"
+                      value={
+                        prodDigitalFileUrl.startsWith('data:')
+                          ? ''
+                          : prodDigitalFileUrl
+                      }
+                      onChange={(e) => {
+                        setProdDigitalFileUrl(e.target.value);
+                        if (!prodDigitalFileType) {
+                          setProdDigitalFileType('External Download Link');
+                        }
+                      }}
+                      placeholder={
+                        prodDigitalFileUrl.startsWith('data:')
+                          ? `Uploaded: ${prodDigitalFileName} (${prodDigitalFileType})`
+                          : 'Or paste HTTPS download link (Google Drive, Dropbox, OneDrive...)'
+                      }
+                      className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded"
+                    />
+                    {prodDigitalFileUrl && (
+                      <div className="flex items-center justify-between text-[11px] text-stone-600">
+                        <span className="truncate">
+                          Active: {prodDigitalFileName || 'Direct Link'} (
+                          {prodDigitalFileType || 'Digital Asset'})
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setProdDigitalFileUrl('');
+                            setProdDigitalFileName('');
+                            setProdDigitalFileType('');
+                          }}
+                          className="text-red-700 hover:underline cursor-pointer shrink-0"
+                        >
+                          Remove File
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div>
                   <label className="block text-xs font-medium text-stone-700 mb-1">
                     Status
@@ -2431,10 +2595,10 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                     rows={3}
                     required
                     minLength={10}
-                    maxLength={500}
+                    maxLength={1500}
                     value={prodSummary}
                     onChange={(e) => setProdSummary(e.target.value)}
-                    placeholder="Materials, dimensions, or included digital templates..."
+                    placeholder="Materials, dimensions, or included digital files..."
                     className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
                   />
                 </div>
@@ -3178,6 +3342,41 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                                 Ship to: {order.shippingAddress}
                               </div>
                             )}
+
+                            <div className="pt-1">
+                              {confirmDeleteId === `ord_${order.id}` ? (
+                                <span className="inline-flex items-center gap-2 text-xs">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      void deleteDirectOrder(order.id);
+                                      setConfirmDeleteId(null);
+                                    }}
+                                    className="font-semibold text-red-700 hover:underline cursor-pointer"
+                                  >
+                                    Confirm Remove Order
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteId(null)}
+                                    className="text-stone-500 cursor-pointer"
+                                  >
+                                    Cancel
+                                  </button>
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setConfirmDeleteId(`ord_${order.id}`)
+                                  }
+                                  className="inline-flex items-center gap-1 text-xs text-stone-400 hover:text-red-700 cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span>Delete Order Record</span>
+                                </button>
+                              )}
+                            </div>
                           </div>
 
                           <div className="lg:col-span-6 space-y-3">
@@ -3475,6 +3674,66 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                   compact
                 />
 
+                <div className="p-3 bg-[#FBF9F5] border border-stone-200 rounded-lg space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-stone-700 inline-flex items-center gap-1">
+                      <Video className="w-3.5 h-3.5 text-[#9A3412]" />
+                      <span>Video Attachment (Optional)</span>
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <label className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-white bg-[#1C1917] hover:bg-[#9A3412] rounded cursor-pointer">
+                        <Upload className="w-3 h-3" />
+                        <span>Upload Video</span>
+                        <input
+                          type="file"
+                          accept="video/mp4,video/webm,video/quicktime"
+                          onChange={async (e) => {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            try {
+                              const url = await readCompactVideoFileToDataUrl(f);
+                              setOfferVideoUrl(url);
+                            } catch (err) {
+                              notify(
+                                'err',
+                                err instanceof Error
+                                  ? err.message
+                                  : 'Video upload failed.'
+                              );
+                            } finally {
+                              e.target.value = '';
+                            }
+                          }}
+                          className="hidden"
+                        />
+                      </label>
+                      {offerVideoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setOfferVideoUrl('')}
+                          className="text-[11px] text-red-700 hover:underline cursor-pointer"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <input
+                    type="url"
+                    value={
+                      offerVideoUrl.startsWith('data:video/')
+                        ? ''
+                        : offerVideoUrl
+                    }
+                    onChange={(e) => setOfferVideoUrl(e.target.value)}
+                    placeholder="https://www.youtube.com/watch?v=... or Vimeo / .mp4"
+                    className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded"
+                  />
+                  {offerVideoUrl && (
+                    <VideoEmbedFigure url={offerVideoUrl} compact />
+                  )}
+                </div>
+
                 <div>
                   <label className="block text-xs font-medium text-stone-700 mb-1">
                     Status
@@ -3494,16 +3753,16 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
 
                 <div>
                   <label className="block text-xs font-medium text-stone-700 mb-1">
-                    Curator Summary
+                    Description &amp; Affiliate Links (supports [Label](https://...) &amp; pasted URLs)
                   </label>
                   <textarea
-                    rows={3}
+                    rows={4}
                     required
                     minLength={10}
-                    maxLength={400}
+                    maxLength={2500}
                     value={offerSummary}
                     onChange={(e) => setOfferSummary(e.target.value)}
-                    placeholder="Why readers should consider this product or specialist..."
+                    placeholder="Write description and paste digital/physical product or service affiliate links..."
                     className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
                   />
                 </div>

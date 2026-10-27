@@ -58,11 +58,15 @@ import {
   DirectOrder,
   DirectProduct,
   DirectProductKind,
+  formatPayoutSummary,
   MarketingCampaign,
   OrderFulfillmentStatus,
+  parsePayoutAccounts,
   PayoutSettlementStatus,
   PublishStatus,
+  SavedPayoutAccount,
   SellerPayoutMethod,
+  serializePayoutAccount,
   SiteConfig,
   UserPrivateInfo,
   UserProfile,
@@ -85,6 +89,7 @@ export interface OfferDraftInput {
   commissionNote: string;
   affiliateUrl: string;
   imageKey: string;
+  videoUrl?: string;
   summary: string;
   highlights: string[];
   status: PublishStatus;
@@ -119,6 +124,10 @@ export interface DirectProductDraftInput {
   stockCount: number;
   badgeLabel: string;
   imageKey: string;
+  videoUrl?: string;
+  digitalFileUrl?: string;
+  digitalFileName?: string;
+  digitalFileType?: string;
   summary: string;
   highlights: string[];
   deliveryNote: string;
@@ -151,9 +160,19 @@ export interface SellerAccountInput {
   bio: string;
   payoutMethod: SellerPayoutMethod;
   payoutAccount: string;
+  payoutAccounts?: SavedPayoutAccount[];
 }
 
 export type AuthModalMode = 'signup' | 'signin';
+
+export interface GoogleSignInSeed {
+  asSeller?: boolean;
+  storeName?: string;
+  payoutMethod?: SellerPayoutMethod;
+  payoutProviderLabel?: string;
+  accountHolder?: string;
+  payoutAccount?: string;
+}
 
 export interface EmailRegistrationInput {
   fullName: string;
@@ -162,6 +181,7 @@ export interface EmailRegistrationInput {
   asSeller?: boolean;
   storeName?: string;
   payoutMethod?: SellerPayoutMethod;
+  payoutProviderLabel?: string;
   payoutAccount?: string;
 }
 
@@ -251,7 +271,7 @@ interface FirebaseContextValue {
   authModalSellerPreset: boolean;
   openAuthModal: (mode?: AuthModalMode, sellerPreset?: boolean) => void;
   closeAuthModal: () => void;
-  signInWithGoogle: () => Promise<boolean>;
+  signInWithGoogle: (seed?: GoogleSignInSeed) => Promise<boolean>;
   registerWithEmailPassword: (input: EmailRegistrationInput) => Promise<boolean>;
   signInWithEmailPassword: (email: string, password: string) => Promise<boolean>;
   sendPasswordReset: (email: string) => Promise<void>;
@@ -259,6 +279,10 @@ interface FirebaseContextValue {
   refreshAuthUser: () => Promise<void>;
   signOutUser: () => Promise<void>;
   registerOrUpdateSellerAccount: (input: SellerAccountInput) => Promise<void>;
+  saveUserPaymentMethods: (
+    accounts: SavedPayoutAccount[],
+    primaryId?: string
+  ) => Promise<void>;
   saveOffer: (input: OfferDraftInput) => Promise<string>;
   updateOfferStatus: (offerId: string, status: PublishStatus) => Promise<void>;
   deleteOffer: (offerId: string) => Promise<void>;
@@ -291,6 +315,8 @@ interface FirebaseContextValue {
     payoutNote: string
   ) => Promise<void>;
   cancelBuyerOrder: (orderId: string) => Promise<void>;
+  removeLocalPurchaseRecord: (orderId: string) => void;
+  deleteDirectOrder: (orderId: string) => Promise<void>;
   saveProfileAndAffiliateTags: (input: {
     displayName: string;
     bio: string;
@@ -316,6 +342,7 @@ const HIDE_SEEDS_KEY = 'pickra_hide_starter_seeds_v1';
 const HIDDEN_SEED_IDS_KEY = 'pickra_hidden_seed_ids_v1';
 const CART_STORAGE_KEY = 'pickra_direct_cart_v1';
 const PROMO_STORAGE_KEY = 'pickra_active_promo_v1';
+const GUEST_ORDERS_STORAGE_KEY = 'pickra_guest_orders_v1';
 export const BOOTSTRAPPED_ADMIN_EMAIL = 'mengistushimelis@gmail.com';
 const DEFAULT_FREE_SHIPPING_THRESHOLD_CENTS = 9500;
 const DEFAULT_FLAT_PHYSICAL_SHIPPING_CENTS = 900;
@@ -333,10 +360,14 @@ const VALID_BLOG_THEMES: BlogColorTheme[] = [
 
 const VALID_PAYOUT_METHODS: SellerPayoutMethod[] = [
   'None',
+  'Telebirr',
+  'CBEBirr',
+  'MobileMoney',
+  'BankTransfer',
   'Stripe',
   'PayPal',
   'Wise',
-  'BankTransfer',
+  'Custom',
 ];
 
 const FirebaseContext = createContext<FirebaseContextValue | undefined>(undefined);
@@ -369,6 +400,7 @@ function parseOfferDoc(id: string, data: Record<string, unknown>): AffiliateOffe
     commissionNote: String(data.commissionNote || ''),
     affiliateUrl: String(data.affiliateUrl || ''),
     imageKey: String(data.imageKey || 'workspace'),
+    videoUrl: typeof data.videoUrl === 'string' ? data.videoUrl : '',
     summary: String(data.summary || ''),
     highlights: Array.isArray(data.highlights)
       ? data.highlights.map((h) => String(h)).slice(0, 4)
@@ -429,6 +461,10 @@ function parseDirectProductDoc(
     stockCount: Number(data.stockCount ?? 10),
     badgeLabel: String(data.badgeLabel || ''),
     imageKey: String(data.imageKey || 'edition'),
+    videoUrl: typeof data.videoUrl === 'string' ? data.videoUrl : '',
+    digitalFileUrl: typeof data.digitalFileUrl === 'string' ? data.digitalFileUrl : '',
+    digitalFileName: typeof data.digitalFileName === 'string' ? data.digitalFileName : '',
+    digitalFileType: typeof data.digitalFileType === 'string' ? data.digitalFileType : '',
     summary: String(data.summary || ''),
     highlights: Array.isArray(data.highlights)
       ? data.highlights.map((h) => String(h)).slice(0, 4)
@@ -619,6 +655,7 @@ interface PendingRegistrationSeed {
   asSeller: boolean;
   storeName: string;
   payoutMethod: SellerPayoutMethod;
+  payoutProviderLabel: string;
   payoutAccount: string;
 }
 
@@ -658,7 +695,17 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   const [adminAllProducts, setAdminAllProducts] = useState<DirectProduct[]>([]);
   const [authorFirestoreCampaigns, setAuthorFirestoreCampaigns] = useState<MarketingCampaign[]>([]);
 
-  const [myPurchases, setMyPurchases] = useState<DirectOrder[]>([]);
+  const [firestorePurchases, setFirestorePurchases] = useState<DirectOrder[]>([]);
+  const [guestPurchases, setGuestPurchases] = useState<DirectOrder[]>(() => {
+    try {
+      const raw = localStorage.getItem(GUEST_ORDERS_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? (parsed as DirectOrder[]).slice(0, 30) : [];
+    } catch {
+      return [];
+    }
+  });
   const [mySellerOrders, setMySellerOrders] = useState<DirectOrder[]>([]);
   const [adminAllOrders, setAdminAllOrders] = useState<DirectOrder[]>([]);
   const [firestoreAnalyticsEvents, setFirestoreAnalyticsEvents] = useState<
@@ -927,16 +974,29 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           resolvedName = initialStoreName || defaultName;
         } else {
           const d = userSnap.data();
+          const shouldPromoteSeller = Boolean(regSeed?.asSeller && !d.isSeller);
+          const nextStoreName = shouldPromoteSeller
+            ? (regSeed?.storeName || String(d.storeName || d.displayName || defaultName))
+                .trim()
+                .slice(0, VALIDATION_LIMITS.STORE_NAME_MAX)
+            : String(d.storeName || '');
+          if (shouldPromoteSeller) {
+            await updateDoc(userRef, {
+              isSeller: true,
+              storeName: nextStoreName,
+              updatedAt: serverTimestamp(),
+            });
+          }
           const nextProfile: UserProfile = {
             uid: currentUser.uid,
             displayName: String(d.displayName || defaultName),
             bio: String(d.bio || ''),
-            isSeller: Boolean(d.isSeller),
-            storeName: String(d.storeName || ''),
+            isSeller: Boolean(d.isSeller || shouldPromoteSeller),
+            storeName: nextStoreName,
           };
           setProfile(nextProfile);
           resolvedName = String(
-            d.storeName || d.displayName || defaultName
+            nextStoreName || d.displayName || defaultName
           ).slice(0, VALIDATION_LIMITS.DISPLAY_NAME_MAX);
         }
       } catch (err) {
@@ -950,19 +1010,42 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           0,
           254
         );
+        const defaultHolder = (
+          regSeed?.fullName ||
+          currentUser.displayName ||
+          ''
+        )
+          .trim()
+          .slice(0, 60);
 
         if (!privSnap.exists()) {
+          const hasInitPayment = Boolean(
+            regSeed?.payoutAccount && regSeed.payoutAccount.trim()
+          );
           const initMethod: SellerPayoutMethod =
-            regSeed?.asSeller &&
-            regSeed.payoutMethod &&
+            (regSeed?.asSeller || hasInitPayment) &&
+            regSeed?.payoutMethod &&
             VALID_PAYOUT_METHODS.includes(regSeed.payoutMethod)
               ? regSeed.payoutMethod
               : 'None';
-          const initAccount = regSeed?.asSeller
-            ? (regSeed.payoutAccount || '')
-                .trim()
-                .slice(0, VALIDATION_LIMITS.PAYOUT_ACCOUNT_MAX)
-            : '';
+          const initAccount =
+            regSeed?.asSeller || hasInitPayment
+              ? (regSeed?.payoutAccount || '')
+                  .trim()
+                  .slice(0, VALIDATION_LIMITS.PAYOUT_ACCOUNT_MAX)
+              : '';
+          const initAccountsList: string[] =
+            initAccount && initMethod !== 'None'
+              ? [
+                  serializePayoutAccount({
+                    id: 'pay_primary',
+                    method: initMethod,
+                    providerLabel: regSeed?.payoutProviderLabel || initMethod,
+                    accountHolder: defaultHolder,
+                    accountNumber: initAccount,
+                  }),
+                ]
+              : [];
 
           await setDoc(privRef, {
             uid: currentUser.uid,
@@ -971,6 +1054,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
             defaultDigistoreId: '',
             payoutMethod: initMethod,
             payoutAccount: initAccount,
+            payoutAccounts: initAccountsList,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
@@ -981,21 +1065,60 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
             defaultDigistoreId: '',
             payoutMethod: initMethod,
             payoutAccount: initAccount,
+            payoutAccounts: initAccountsList,
           });
         } else {
           const pd = privSnap.data();
           const rawMethod = String(
             pd.payoutMethod || 'None'
           ) as SellerPayoutMethod;
+          const existingAccounts = Array.isArray(pd.payoutAccounts)
+            ? pd.payoutAccounts.map(String).slice(0, 6)
+            : [];
+          let finalMethod: SellerPayoutMethod = VALID_PAYOUT_METHODS.includes(
+            rawMethod
+          )
+            ? rawMethod
+            : 'None';
+          let finalAccount = String(pd.payoutAccount || '');
+          let finalAccounts = existingAccounts;
+
+          if (
+            regSeed?.payoutAccount &&
+            regSeed.payoutAccount.trim() &&
+            !finalAccount &&
+            regSeed.payoutMethod &&
+            VALID_PAYOUT_METHODS.includes(regSeed.payoutMethod)
+          ) {
+            finalMethod = regSeed.payoutMethod;
+            finalAccount = regSeed.payoutAccount
+              .trim()
+              .slice(0, VALIDATION_LIMITS.PAYOUT_ACCOUNT_MAX);
+            finalAccounts = [
+              serializePayoutAccount({
+                id: 'pay_primary',
+                method: finalMethod,
+                providerLabel: regSeed.payoutProviderLabel || finalMethod,
+                accountHolder: defaultHolder,
+                accountNumber: finalAccount,
+              }),
+            ];
+            await updateDoc(privRef, {
+              payoutMethod: finalMethod,
+              payoutAccount: finalAccount,
+              payoutAccounts: finalAccounts,
+              updatedAt: serverTimestamp(),
+            });
+          }
+
           setPrivateInfo({
             uid: currentUser.uid,
             email: String(pd.email || safeEmail),
             defaultAmazonTag: String(pd.defaultAmazonTag || ''),
             defaultDigistoreId: String(pd.defaultDigistoreId || ''),
-            payoutMethod: VALID_PAYOUT_METHODS.includes(rawMethod)
-              ? rawMethod
-              : 'None',
-            payoutAccount: String(pd.payoutAccount || ''),
+            payoutMethod: finalMethod,
+            payoutAccount: finalAccount,
+            payoutAccounts: finalAccounts,
           });
         }
       } catch (err) {
@@ -1189,7 +1312,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       setOwnSellerProducts([]);
       setAdminAllProducts([]);
       setAuthorFirestoreCampaigns([]);
-      setMyPurchases([]);
+      setFirestorePurchases([]);
       setMySellerOrders([]);
       setAdminAllOrders([]);
       setFirestoreAnalyticsEvents([]);
@@ -1209,7 +1332,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           parseDirectOrderDoc(d.id, d.data() as Record<string, unknown>)
         );
         items.sort((a, b) => b.createdAtMs - a.createdAtMs);
-        setMyPurchases(items);
+        setFirestorePurchases(items);
       },
       (err) => {
         handleFirestoreError(err, OperationType.LIST, 'directOrders');
@@ -1529,6 +1652,19 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     }
     return Array.from(map.values()).sort((a, b) => b.updatedAtMs - a.updatedAtMs);
   }, [adminAllProducts, ownSellerProducts, publicFirestoreProducts]);
+
+  const myPurchases = useMemo(() => {
+    const map = new Map<string, DirectOrder>();
+    for (const ord of firestorePurchases) {
+      map.set(ord.id, ord);
+    }
+    for (const guestOrd of guestPurchases) {
+      if (!map.has(guestOrd.id)) {
+        map.set(guestOrd.id, guestOrd);
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => b.createdAtMs - a.createdAtMs);
+  }, [firestorePurchases, guestPurchases]);
 
   const sellerOrders = useMemo(() => {
     const map = new Map<string, DirectOrder>();
@@ -1905,15 +2041,30 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     setAuthError(null);
   }
 
-  async function signInWithGoogle(): Promise<boolean> {
+  async function signInWithGoogle(seed?: GoogleSignInSeed): Promise<boolean> {
     setAuthBusy(true);
     setAuthError(null);
+    if (seed && (seed.asSeller || (seed.payoutAccount && seed.payoutAccount.trim()))) {
+      pendingRegSeedRef.current = {
+        fullName: seed.accountHolder || '',
+        asSeller: Boolean(seed.asSeller),
+        storeName: (seed.storeName || '').trim().slice(0, VALIDATION_LIMITS.STORE_NAME_MAX),
+        payoutMethod: seed.payoutMethod || 'Telebirr',
+        payoutProviderLabel: (seed.payoutProviderLabel || seed.payoutMethod || 'Telebirr').trim(),
+        payoutAccount: (seed.payoutAccount || '')
+          .trim()
+          .slice(0, VALIDATION_LIMITS.PAYOUT_ACCOUNT_MAX),
+      };
+    } else {
+      pendingRegSeedRef.current = null;
+    }
     try {
       const cred = await signInWithPopup(auth, googleProvider);
       await ensureUserBootstrapped(cred.user);
       setIsAuthModalOpen(false);
       return true;
     } catch (err) {
+      pendingRegSeedRef.current = null;
       const friendly = formatFirebaseAuthError(err);
       setAuthError(friendly);
       setIsAuthModalOpen(true);
@@ -1949,8 +2100,13 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         storeName: (input.storeName || cleanName)
           .trim()
           .slice(0, VALIDATION_LIMITS.STORE_NAME_MAX),
-        payoutMethod: input.payoutMethod || 'Stripe',
-        payoutAccount: (input.payoutAccount || cleanEmail)
+        payoutMethod: input.payoutMethod || 'Telebirr',
+        payoutProviderLabel: (
+          input.payoutProviderLabel ||
+          input.payoutMethod ||
+          'Telebirr'
+        ).trim(),
+        payoutAccount: (input.payoutAccount || '')
           .trim()
           .slice(0, VALIDATION_LIMITS.PAYOUT_ACCOUNT_MAX),
       };
@@ -2126,7 +2282,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       input.payoutMethod
     )
       ? input.payoutMethod
-      : 'Stripe';
+      : 'Telebirr';
     const cleanPayoutAccount = input.payoutAccount
       .trim()
       .slice(0, VALIDATION_LIMITS.PAYOUT_ACCOUNT_MAX);
@@ -2159,6 +2315,31 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`);
     }
 
+    const existingParsed = parsePayoutAccounts(
+      privateInfo?.payoutAccounts,
+      privateInfo?.payoutMethod,
+      privateInfo?.payoutAccount,
+      displayName
+    );
+    const nextAccountsObj: SavedPayoutAccount[] = input.payoutAccounts
+      ? input.payoutAccounts.slice(0, 6)
+      : cleanPayoutAccount
+      ? [
+          {
+            id: existingParsed[0]?.id || 'pay_primary',
+            method: cleanMethod,
+            providerLabel: existingParsed[0]?.providerLabel || cleanMethod,
+            accountHolder: existingParsed[0]?.accountHolder || displayName,
+            accountNumber: cleanPayoutAccount,
+          },
+          ...existingParsed.slice(1, 6),
+        ]
+      : existingParsed;
+    const serializedList = nextAccountsObj
+      .filter((a) => a.accountNumber.trim().length > 0)
+      .slice(0, 6)
+      .map(serializePayoutAccount);
+
     try {
       const privRef = doc(db, 'users', user.uid, 'private', 'info');
       const snap = await getDoc(privRef);
@@ -2170,6 +2351,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           defaultDigistoreId: privateInfo?.defaultDigistoreId || '',
           payoutMethod: cleanMethod,
           payoutAccount: cleanPayoutAccount,
+          payoutAccounts: serializedList,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
@@ -2178,6 +2360,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           email: safeEmail,
           payoutMethod: cleanMethod,
           payoutAccount: cleanPayoutAccount,
+          payoutAccounts: serializedList,
           updatedAt: serverTimestamp(),
         });
       }
@@ -2188,6 +2371,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         defaultDigistoreId: prev?.defaultDigistoreId || '',
         payoutMethod: cleanMethod,
         payoutAccount: cleanPayoutAccount,
+        payoutAccounts: serializedList,
       }));
     } catch (err) {
       handleFirestoreError(
@@ -2196,6 +2380,94 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         `users/${user.uid}/private/info`
       );
     }
+  }
+
+  async function saveUserPaymentMethods(
+    accounts: SavedPayoutAccount[],
+    primaryId?: string
+  ): Promise<void> {
+    assertVerifiedSeller();
+    if (!user) throw new Error('Sign-in required.');
+
+    await ensureParentUserProfileExists(user);
+
+    const validAccounts = accounts
+      .filter((acc) => acc.accountNumber && acc.accountNumber.trim().length >= 2)
+      .slice(0, VALIDATION_LIMITS.PAYOUT_ACCOUNTS_MAX_COUNT);
+
+    if (primaryId) {
+      validAccounts.sort((a, b) =>
+        a.id === primaryId ? -1 : b.id === primaryId ? 1 : 0
+      );
+    }
+
+    const serializedList = validAccounts.map(serializePayoutAccount);
+    const primary = validAccounts[0];
+    const cleanMethod: SellerPayoutMethod = primary
+      ? VALID_PAYOUT_METHODS.includes(primary.method)
+        ? primary.method
+        : 'BankTransfer'
+      : 'None';
+    const cleanPayoutAccount = primary
+      ? formatPayoutSummary(primary).slice(0, VALIDATION_LIMITS.PAYOUT_ACCOUNT_MAX)
+      : '';
+    const safeEmail = (user.email || 'member@example.com').slice(0, 254);
+
+    try {
+      const privRef = doc(db, 'users', user.uid, 'private', 'info');
+      const snap = await getDoc(privRef);
+      if (!snap.exists()) {
+        await setDoc(privRef, {
+          uid: user.uid,
+          email: safeEmail,
+          defaultAmazonTag: privateInfo?.defaultAmazonTag || '',
+          defaultDigistoreId: privateInfo?.defaultDigistoreId || '',
+          payoutMethod: cleanMethod,
+          payoutAccount: cleanPayoutAccount,
+          payoutAccounts: serializedList,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await updateDoc(privRef, {
+          email: safeEmail,
+          payoutMethod: cleanMethod,
+          payoutAccount: cleanPayoutAccount,
+          payoutAccounts: serializedList,
+          updatedAt: serverTimestamp(),
+        });
+      }
+      setPrivateInfo((prev) => ({
+        uid: user.uid,
+        email: safeEmail,
+        defaultAmazonTag: prev?.defaultAmazonTag || '',
+        defaultDigistoreId: prev?.defaultDigistoreId || '',
+        payoutMethod: cleanMethod,
+        payoutAccount: cleanPayoutAccount,
+        payoutAccounts: serializedList,
+      }));
+    } catch (err) {
+      handleFirestoreError(
+        err,
+        OperationType.UPDATE,
+        `users/${user.uid}/private/info`
+      );
+    }
+  }
+
+  function sanitizeOptionalMediaVideoUrl(raw?: string): string {
+    const val = (raw || '').trim();
+    if (!val) return '';
+    if (val.startsWith('data:video/')) {
+      return val.slice(0, VALIDATION_LIMITS.VIDEO_URL_MAX);
+    }
+    let normalized = val;
+    if (!normalized.startsWith('https://') && !normalized.startsWith('http://')) {
+      normalized = `https://${normalized}`;
+    } else if (normalized.startsWith('http://')) {
+      normalized = `https://${normalized.slice(7)}`;
+    }
+    return normalized.slice(0, VALIDATION_LIMITS.VIDEO_URL_MAX);
   }
 
   async function saveOffer(input: OfferDraftInput): Promise<string> {
@@ -2232,9 +2504,10 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       0,
       VALIDATION_LIMITS.IMAGE_KEY_MAX
     );
+    const cleanVideoUrl = sanitizeOptionalMediaVideoUrl(input.videoUrl);
     const cleanSummary = input.summary.trim().slice(0, VALIDATION_LIMITS.SUMMARY_MAX);
     if (cleanSummary.length < VALIDATION_LIMITS.SUMMARY_MIN) {
-      throw new Error('Summary verdict must be at least 10 characters.');
+      throw new Error('Description must be at least 10 characters.');
     }
 
     const cleanHighlights = input.highlights
@@ -2261,6 +2534,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           commissionNote: cleanCommission,
           affiliateUrl: cleanUrl,
           imageKey: cleanImageKey,
+          videoUrl: cleanVideoUrl,
           summary: cleanSummary,
           highlights: cleanHighlights,
           status: input.status,
@@ -2278,6 +2552,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           commissionNote: cleanCommission,
           affiliateUrl: cleanUrl,
           imageKey: cleanImageKey,
+          videoUrl: cleanVideoUrl,
           summary: cleanSummary,
           highlights: cleanHighlights,
           status: input.status,
@@ -2542,6 +2817,41 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       0,
       VALIDATION_LIMITS.IMAGE_KEY_MAX
     );
+    const cleanVideoUrl = sanitizeOptionalMediaVideoUrl(input.videoUrl);
+
+    let cleanDigitalFileUrl = '';
+    if (input.kind === 'digital' && input.digitalFileUrl && input.digitalFileUrl.trim()) {
+      const rawFileUrl = input.digitalFileUrl.trim();
+      if (rawFileUrl.startsWith('data:')) {
+        cleanDigitalFileUrl = rawFileUrl.slice(0, VALIDATION_LIMITS.DIGITAL_FILE_URL_MAX);
+      } else {
+        let normFileUrl = rawFileUrl;
+        if (!normFileUrl.startsWith('https://') && !normFileUrl.startsWith('http://')) {
+          normFileUrl = `https://${normFileUrl}`;
+        } else if (normFileUrl.startsWith('http://')) {
+          normFileUrl = `https://${normFileUrl.slice(7)}`;
+        }
+        cleanDigitalFileUrl = normFileUrl.slice(0, VALIDATION_LIMITS.DIGITAL_FILE_URL_MAX);
+      }
+    }
+    const cleanDigitalFileName =
+      input.kind === 'digital' && cleanDigitalFileUrl
+        ? (input.digitalFileName || '').trim().slice(0, VALIDATION_LIMITS.DIGITAL_FILE_NAME_MAX)
+        : '';
+    const cleanDigitalFileType =
+      input.kind === 'digital' && cleanDigitalFileUrl
+        ? (input.digitalFileType || '').trim().slice(0, VALIDATION_LIMITS.DIGITAL_FILE_TYPE_MAX)
+        : '';
+
+    if (
+      cleanImageKey.length + cleanVideoUrl.length + cleanDigitalFileUrl.length >
+      890000
+    ) {
+      throw new Error(
+        'Combined image, video, and digital deliverable exceeds cloud document limits. Paste a Google Drive / Dropbox / YouTube HTTPS link for one of the large media attachments.'
+      );
+    }
+
     const cleanSummary = input.summary
       .trim()
       .slice(0, VALIDATION_LIMITS.PRODUCT_SUMMARY_MAX);
@@ -2586,6 +2896,10 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           stockCount: cleanStock,
           badgeLabel: cleanBadge,
           imageKey: cleanImageKey,
+          videoUrl: cleanVideoUrl,
+          digitalFileUrl: cleanDigitalFileUrl,
+          digitalFileName: cleanDigitalFileName,
+          digitalFileType: cleanDigitalFileType,
           summary: cleanSummary,
           highlights: cleanHighlights,
           deliveryNote: cleanDeliveryNote,
@@ -2607,6 +2921,10 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           stockCount: cleanStock,
           badgeLabel: cleanBadge,
           imageKey: cleanImageKey,
+          videoUrl: cleanVideoUrl,
+          digitalFileUrl: cleanDigitalFileUrl,
+          digitalFileName: cleanDigitalFileName,
+          digitalFileType: cleanDigitalFileType,
           summary: cleanSummary,
           highlights: cleanHighlights,
           deliveryNote: cleanDeliveryNote,
@@ -2807,9 +3125,6 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   async function placeDirectOrder(input: DirectCheckoutInput): Promise<DirectOrder> {
-    if (!isNonAnonymousUser(user)) {
-      throw new Error('Please create an account or sign in to place your direct order.');
-    }
     if (!siteConfig.storeCheckoutEnabled) {
       throw new Error(
         'Direct Store checkout is temporarily paused by the website owner. Please check back shortly.'
@@ -2839,10 +3154,11 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       throw new Error('Enter your full name (at least 2 characters).');
     }
 
-    const cleanBuyerEmail = (input.buyerEmail.trim() || user.email || '').slice(
-      0,
-      254
-    );
+    const isSignedInBuyer = isNonAnonymousUser(user);
+    const cleanBuyerEmail = (
+      input.buyerEmail.trim() ||
+      (isSignedInBuyer ? user.email || '' : '')
+    ).slice(0, 254);
     if (cleanBuyerEmail.length < 3 || !cleanBuyerEmail.includes('@')) {
       throw new Error('Enter a valid receipt email address.');
     }
@@ -2855,7 +3171,13 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       throw new Error('Enter a complete shipping address for physical items.');
     }
 
-    await ensureParentUserProfileExists(user);
+    if (isSignedInBuyer) {
+      await ensureParentUserProfileExists(user);
+    }
+
+    const effectiveBuyerId = isSignedInBuyer
+      ? user.uid
+      : generateSafeDocId('guest');
 
     // Group cart items per Creator Seller so each creator receives an isolated order & net payout ledger!
     const groupedBySeller = new Map<
@@ -2915,6 +3237,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         : 'pending';
 
       const ownPayoutDetails =
+        isSignedInBuyer &&
         sellerId === user.uid &&
         privateInfo?.payoutMethod &&
         privateInfo.payoutMethod !== 'None'
@@ -2938,13 +3261,13 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       const orderId = generateSafeDocId('ord');
       const initialFulfillmentNote =
         fulfillmentType === 'digital'
-          ? 'Instant digital edition unlocked. Access your files anytime in My Purchases.'
+          ? 'Instant digital product unlocked. Download your files immediately below or in My Purchases.'
           : `Order received by ${group.sellerName}. Preparing tracked dispatch.`;
 
       const path = `directOrders/${orderId}`;
       try {
         await setDoc(doc(db, 'directOrders', orderId), {
-          buyerId: user.uid,
+          buyerId: effectiveBuyerId,
           sellerId,
           sellerName: group.sellerName.slice(0, 80),
           orderNumber,
@@ -2986,7 +3309,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
 
       createdOrders.push({
         id: orderId,
-        buyerId: user.uid,
+        buyerId: effectiveBuyerId,
         sellerId,
         sellerName: group.sellerName.slice(0, 80),
         orderNumber,
@@ -3011,6 +3334,18 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         status: 'paid',
         createdAtMs: nowMs,
         updatedAtMs: nowMs,
+      });
+    }
+
+    if (!isSignedInBuyer && createdOrders.length > 0) {
+      setGuestPurchases((prev) => {
+        const next = [...createdOrders, ...prev].slice(0, 30);
+        try {
+          localStorage.setItem(GUEST_ORDERS_STORAGE_KEY, JSON.stringify(next));
+        } catch {
+          // ignore storage quota errors
+        }
+        return next;
       });
     }
 
@@ -3083,7 +3418,44 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }
 
+  function removeLocalPurchaseRecord(orderId: string) {
+    setGuestPurchases((prev) => {
+      const next = prev.filter((o) => o.id !== orderId);
+      try {
+        localStorage.setItem(GUEST_ORDERS_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+  }
+
+  async function deleteDirectOrder(orderId: string) {
+    assertCreatorAccess();
+    const path = `directOrders/${orderId}`;
+    try {
+      await deleteDoc(doc(db, 'directOrders', orderId));
+      removeLocalPurchaseRecord(orderId);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, path);
+    }
+  }
+
   async function cancelBuyerOrder(orderId: string) {
+    if (orderId && guestPurchases.some((o) => o.id === orderId) && !user) {
+      setGuestPurchases((prev) => {
+        const next = prev.map((o) =>
+          o.id === orderId ? { ...o, status: 'cancelled' as const } : o
+        );
+        try {
+          localStorage.setItem(GUEST_ORDERS_STORAGE_KEY, JSON.stringify(next));
+        } catch {
+          // ignore
+        }
+        return next;
+      });
+      return;
+    }
     if (!user) throw new Error('Please sign in first.');
     const path = `directOrders/${orderId}`;
     try {
@@ -3160,6 +3532,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         defaultDigistoreId: cleanDigistore,
         payoutMethod: prev?.payoutMethod || 'None',
         payoutAccount: prev?.payoutAccount || '',
+        payoutAccounts: prev?.payoutAccounts || [],
       }));
     } catch (err) {
       handleFirestoreError(
@@ -3555,6 +3928,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         refreshAuthUser,
         signOutUser,
         registerOrUpdateSellerAccount,
+        saveUserPaymentMethods,
         saveOffer,
         updateOfferStatus,
         deleteOffer,
@@ -3572,6 +3946,8 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         updateOrderPayoutDetails,
         markSellerOrderPaidOut,
         cancelBuyerOrder,
+        removeLocalPurchaseRecord,
+        deleteDirectOrder,
         saveProfileAndAffiliateTags,
         saveSiteConfig,
         hideSeedItem,

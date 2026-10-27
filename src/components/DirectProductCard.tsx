@@ -13,8 +13,13 @@ interface DirectProductCardProps {
   onDelete?: (product: DirectProduct) => Promise<void> | void;
 }
 
-function getDirectKindLabel(kind: DirectProduct['kind']): string {
-  return kind === 'digital' ? 'Instant Digital' : 'Physical Product';
+function getDirectKindLabel(product: DirectProduct): string {
+  if (product.kind === 'digital') {
+    return product.digitalFileType?.trim()
+      ? `Digital · ${product.digitalFileType.trim()}`
+      : 'Instant Digital';
+  }
+  return 'Physical Product';
 }
 
 export const DirectProductCard: React.FC<DirectProductCardProps> = ({
@@ -64,7 +69,7 @@ export const DirectProductCard: React.FC<DirectProductCardProps> = ({
                 {product.sellerName || 'Pickra Store'}
               </span>
               <span aria-hidden="true">·</span>
-              <span>{getDirectKindLabel(product.kind)}</span>
+              <span>{getDirectKindLabel(product)}</span>
             </div>
             <h4 className="mt-0.5 text-sm font-semibold text-stone-900 leading-snug line-clamp-2">
               {product.title}
@@ -117,7 +122,7 @@ export const DirectProductCard: React.FC<DirectProductCardProps> = ({
                 By {product.sellerName || 'Pickra Studio'}
               </span>
               <span aria-hidden="true">·</span>
-              <span>{getDirectKindLabel(product.kind)}</span>
+              <span>{getDirectKindLabel(product)}</span>
               {product.badgeLabel && (
                 <>
                   <span aria-hidden="true">·</span>
@@ -223,10 +228,16 @@ export const DirectProductCard: React.FC<DirectProductCardProps> = ({
           {/* Clean unboxed editorial metadata — zero pills */}
           <div className="flex flex-wrap items-center gap-1.5 text-xs text-stone-500">
             <span className="font-medium text-[#9A3412]">
-              {getDirectKindLabel(product.kind)}
+              {getDirectKindLabel(product)}
             </span>
             <span aria-hidden="true">·</span>
             <span>By {product.sellerName || 'Pickra Studio'}</span>
+            {product.videoUrl?.trim() && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>Video</span>
+              </>
+            )}
           </div>
 
           {(onEdit || onDelete) && (

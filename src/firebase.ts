@@ -142,6 +142,8 @@ export const VALIDATION_LIMITS = {
   STORE_NAME_MAX: 80,
   BIO_MAX: 300,
   PAYOUT_ACCOUNT_MAX: 160,
+  PAYOUT_ACCOUNT_ITEM_MAX: 240,
+  PAYOUT_ACCOUNTS_MAX_COUNT: 6,
   OFFER_TITLE_MIN: 2,
   OFFER_TITLE_MAX: 140,
   OFFER_CATEGORY_MIN: 2,
@@ -151,9 +153,13 @@ export const VALIDATION_LIMITS = {
   URL_MIN: 8,
   URL_MAX: 500,
   IMAGE_KEY_MAX: 175000,
+  VIDEO_URL_MAX: 250000,
+  DIGITAL_FILE_URL_MAX: 560000,
+  DIGITAL_FILE_NAME_MAX: 140,
+  DIGITAL_FILE_TYPE_MAX: 60,
   SUMMARY_MIN: 10,
-  SUMMARY_MAX: 400,
-  PRODUCT_SUMMARY_MAX: 500,
+  SUMMARY_MAX: 2500,
+  PRODUCT_SUMMARY_MAX: 1500,
   PRODUCT_SUBTITLE_MIN: 4,
   PRODUCT_SUBTITLE_MAX: 220,
   PRODUCT_BADGE_MAX: 40,
@@ -189,6 +195,129 @@ export const VALIDATION_LIMITS = {
   EVENT_PLATFORM_MAX: 40,
 } as const;
 
+export interface UploadedDigitalAsset {
+  dataUrl: string;
+  fileName: string;
+  fileTypeLabel: string;
+}
+
+const DIGITAL_EXT_LABELS: Record<string, string> = {
+  pdf: 'PDF Document',
+  zip: 'ZIP Archive',
+  xlsx: 'Excel Workbook',
+  xls: 'Excel Spreadsheet',
+  csv: 'CSV Dataset',
+  epub: 'eBook (EPUB)',
+  mobi: 'eBook (MOBI)',
+  html: 'HTML Interactive Tool',
+  htm: 'HTML File',
+  json: 'Digital Tool (JSON)',
+  js: 'JavaScript Tool',
+  ts: 'TypeScript Tool',
+  py: 'Python Script',
+  txt: 'Text Guide',
+  md: 'Markdown Guide',
+  xml: 'XML Template',
+  svg: 'Vector Asset (SVG)',
+  docx: 'Word Document',
+  pptx: 'Presentation Deck',
+};
+
+/**
+ * Reads digital deliverable files (PDF, ZIP, Excel, CSV, EPUB eBooks, HTML files, Digital Tools)
+ * into a safe data URL within Firestore's 1 MiB document ceiling, or guides large files to HTTPS cloud links.
+ */
+export async function readDigitalProductFileToDataUrl(
+  file: File
+): Promise<UploadedDigitalAsset> {
+  const cleanName = file.name.trim().slice(0, VALIDATION_LIMITS.DIGITAL_FILE_NAME_MAX) || 'digital-product';
+  const ext = (cleanName.split('.').pop() || '').toLowerCase();
+  const fileTypeLabel = DIGITAL_EXT_LABELS[ext] || (ext ? `${ext.toUpperCase()} Digital File` : 'Digital Download');
+
+  if (!ext || !Object.prototype.hasOwnProperty.call(DIGITAL_EXT_LABELS, ext)) {
+    throw new Error(
+      'Supported digital files: PDF, ZIP, Excel (.xlsx/.xls/.csv), eBooks (.epub/.mobi), HTML (.html/.htm), Word/PPTX, and Digital Tools (.json/.js/.py/.txt/.md/.svg).'
+    );
+  }
+
+  // ~385 KB binary encodes to ~515 KB base64 data URL (safely inside Firestore 1 MiB document limit alongside cover image)
+  if (file.size > 385 * 1024) {
+    throw new Error(
+      `Direct file upload supports compact deliverables up to 385 KB (${Math.round(
+        file.size / 1024
+      )} KB selected). For larger ZIPs, videos, or eBooks, paste a Google Drive, Dropbox, OneDrive, or direct HTTPS download link in the Digital Link box.`
+    );
+  }
+
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Could not read the selected digital product file.'));
+    reader.readAsDataURL(file);
+  });
+
+  if (!dataUrl.startsWith('data:') || dataUrl.length > VALIDATION_LIMITS.DIGITAL_FILE_URL_MAX) {
+    throw new Error(
+      'Encoded digital file exceeds inline storage limit. Please paste a Google Drive, Dropbox, or HTTPS download link instead.'
+    );
+  }
+
+  return {
+    dataUrl,
+    fileName: cleanName,
+    fileTypeLabel: fileTypeLabel.slice(0, VALIDATION_LIMITS.DIGITAL_FILE_TYPE_MAX),
+  };
+}
+
+/**
+ * Reads a compact preview video clip (.mp4, .webm, .mov, .ogg) into a data:video/* URL,
+ * or instructs the user to paste a YouTube, Vimeo, Loom, or HTTPS MP4 URL for full-length videos.
+ */
+export async function readCompactVideoFileToDataUrl(file: File): Promise<string> {
+  if (!file.type.startsWith('video/')) {
+    throw new Error('Please choose a valid video file (MP4, WebM, or MOV) or paste a YouTube / Vimeo / Loom URL.');
+  }
+  if (file.size > 175 * 1024) {
+    throw new Error(
+      `Direct video file upload supports short preview loops up to 175 KB (${Math.round(
+        file.size / 1024
+      )} KB selected). For full-length videos, paste a YouTube, Vimeo, Loom, Google Drive, or HTTPS .mp4 link.`
+    );
+  }
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Could not read the selected video file.'));
+    reader.readAsDataURL(file);
+  });
+  if (!dataUrl.startsWith('data:video/') || dataUrl.length > VALIDATION_LIMITS.VIDEO_URL_MAX) {
+    throw new Error('Video clip is too large for inline storage. Paste a YouTube, Vimeo, Loom, or HTTPS MP4 link instead.');
+  }
+  return dataUrl;
+}
+
+/**
+ * Safely downloads an uploaded data:* digital product file or opens an external HTTPS deliverable link
+ * without using window.open (compliant with iframe sandbox rules).
+ */
+export function triggerDigitalAssetDownload(url: string, fileName?: string): void {
+  const cleanUrl = (url || '').trim();
+  if (!cleanUrl) return;
+
+  const anchor = document.createElement('a');
+  anchor.href = cleanUrl;
+  if (cleanUrl.startsWith('data:')) {
+    anchor.download = (fileName || 'pickra-digital-download').trim();
+  } else {
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+  }
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+}
+
 /**
  * Client-side image compression for instant local photo uploads within Firestore document limits.
  */
@@ -211,15 +340,16 @@ export async function compressImageFileToDataUrl(
     reader.readAsDataURL(file);
   });
 
-  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+  const img = new Promise<HTMLImageElement>((resolve, reject) => {
     const el = new Image();
     el.onload = () => resolve(el);
     el.onerror = () => reject(new Error('Selected file could not be decoded as an image.'));
     el.src = rawDataUrl;
   });
 
-  let width = img.naturalWidth || img.width || 800;
-  let height = img.naturalHeight || img.height || 600;
+  const decodedImg = await img;
+  let width = decodedImg.naturalWidth || decodedImg.width || 800;
+  let height = decodedImg.naturalHeight || decodedImg.height || 600;
   if (width > maxDimension || height > maxDimension) {
     const scale = Math.min(maxDimension / width, maxDimension / height);
     width = Math.max(1, Math.round(width * scale));
@@ -236,7 +366,7 @@ export async function compressImageFileToDataUrl(
 
   ctx.fillStyle = '#FAF8F5';
   ctx.fillRect(0, 0, width, height);
-  ctx.drawImage(img, 0, 0, width, height);
+  ctx.drawImage(decodedImg, 0, 0, width, height);
 
   let quality = initialQuality;
   let output = canvas.toDataURL('image/webp', quality);

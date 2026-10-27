@@ -107,14 +107,18 @@
         },
         "payoutMethod": {
           "type": "string",
-          "enum": ["None", "Stripe", "PayPal", "Wise", "BankTransfer"],
+          "enum": ["None", "Telebirr", "CBEBirr", "MobileMoney", "BankTransfer", "Stripe", "PayPal", "Wise", "Custom"],
           "description": "Preferred payout rail for Creator Store sales."
         },
         "payoutAccount": {
           "type": "string",
           "minLength": 0,
           "maxLength": 160,
-          "description": "Destination payout handle, email, or account reference."
+          "description": "Primary destination payout handle, bank account, Telebirr number, or email."
+        },
+        "payoutAccounts": {
+          "type": "array",
+          "description": "Bounded list (max 6) of saved creator payment/payout accounts."
         },
         "createdAt": {
           "type": "string",
@@ -213,11 +217,17 @@
           "maxLength": 180000,
           "description": "Preset asset key, HTTPS image URL, or compressed data:image upload."
         },
+        "videoUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 250000,
+          "description": "Optional HTTPS video URL (YouTube, Vimeo, Loom, MP4) or compact data:video upload."
+        },
         "summary": {
           "type": "string",
           "minLength": 10,
-          "maxLength": 400,
-          "description": "Editorial verdict and evaluation summary."
+          "maxLength": 2500,
+          "description": "Detailed product or service affiliate description with embedded links."
         },
         "highlights": {
           "type": "array",
@@ -447,10 +457,34 @@
           "maxLength": 180000,
           "description": "Preset studio asset key, HTTPS image URL, or compressed data:image upload."
         },
+        "videoUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 250000,
+          "description": "Optional product showcase video URL or compact data:video upload."
+        },
+        "digitalFileUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 560000,
+          "description": "Optional digital deliverable download link (HTTPS) or uploaded PDF/ZIP/Excel/eBook/HTML/Tool data URL."
+        },
+        "digitalFileName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 140,
+          "description": "Original filename of uploaded digital deliverable."
+        },
+        "digitalFileType": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 60,
+          "description": "Digital deliverable format label (e.g., PDF, ZIP, Excel, HTML, eBook)."
+        },
         "summary": {
           "type": "string",
           "minLength": 10,
-          "maxLength": 500,
+          "maxLength": 1500,
           "description": "Detailed product craft, materials, or digital deliverables overview."
         },
         "highlights": {

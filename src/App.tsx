@@ -3,6 +3,7 @@ import {
   ArrowRight,
   BookOpen,
   Edit3,
+  Link2,
   LogIn,
   PenSquare,
   Plus,
@@ -11,6 +12,8 @@ import {
   Store,
   Tag,
   Trash2,
+  Upload,
+  Video,
   X,
 } from 'lucide-react';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -33,7 +36,10 @@ import {
   PublishStatus,
   SERVICE_AFFILIATE_PLATFORMS,
 } from './types';
-import { formatPriceCents } from './firebase';
+import {
+  formatPriceCents,
+  readCompactVideoFileToDataUrl,
+} from './firebase';
 import { ResilientImage } from './components/ResilientImage';
 import { OfferCard } from './components/OfferCard';
 import { DirectProductCard } from './components/DirectProductCard';
@@ -43,6 +49,7 @@ import { ArticleReader } from './components/ArticleReader';
 import { PublisherStudio } from './components/PublisherStudio';
 import { MediumBlockEditor } from './components/MediumBlockEditor';
 import { ImageUploadPicker } from './components/ImageUploadPicker';
+import { VideoEmbedFigure } from './components/EditorialRichBlocks';
 import { AuthModal, AuthPanel } from './components/AuthModal';
 
 function resolveInitialSection(): ActiveSection {
@@ -154,7 +161,12 @@ function PickraShell() {
   const [offerCommission, setOfferCommission] = useState('');
   const [offerUrl, setOfferUrl] = useState('');
   const [offerImageKey, setOfferImageKey] = useState('audio');
+  const [offerVideoUrl, setOfferVideoUrl] = useState('');
+  const [uploadingOfferVideo, setUploadingOfferVideo] = useState(false);
   const [offerSummary, setOfferSummary] = useState('');
+  const [showDescLinkHelper, setShowDescLinkHelper] = useState(false);
+  const [descLinkLabel, setDescLinkLabel] = useState('');
+  const [descLinkUrl, setDescLinkUrl] = useState('');
   const [offerHighlightsText, setOfferHighlightsText] = useState('');
   const [offerStatus, setOfferStatus] = useState<PublishStatus>('published');
   const [savingOffer, setSavingOffer] = useState(false);
@@ -317,7 +329,11 @@ function PickraShell() {
     setOfferCommission('');
     setOfferUrl('');
     setOfferImageKey(defaultKind === 'service' ? 'freelance' : 'audio');
+    setOfferVideoUrl('');
     setOfferSummary('');
+    setShowDescLinkHelper(false);
+    setDescLinkLabel('');
+    setDescLinkUrl('');
     setOfferHighlightsText('');
     setOfferStatus('published');
     setOfferModalError(null);
@@ -334,11 +350,60 @@ function PickraShell() {
     setOfferCommission(offer.commissionNote);
     setOfferUrl(offer.affiliateUrl);
     setOfferImageKey(offer.imageKey || 'audio');
+    setOfferVideoUrl(offer.videoUrl || '');
     setOfferSummary(offer.summary);
+    setShowDescLinkHelper(false);
+    setDescLinkLabel('');
+    setDescLinkUrl('');
     setOfferHighlightsText(offer.highlights.join('\n'));
     setOfferStatus(offer.status);
     setOfferModalError(null);
     setIsOfferModalOpen(true);
+  }
+
+  async function handleOfferVideoFileChange(
+    e: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingOfferVideo(true);
+    setOfferModalError(null);
+    try {
+      const dataUrl = await readCompactVideoFileToDataUrl(file);
+      setOfferVideoUrl(dataUrl);
+    } catch (err) {
+      setOfferModalError(
+        err instanceof Error ? err.message : 'Unable to upload video.'
+      );
+    } finally {
+      setUploadingOfferVideo(false);
+      e.target.value = '';
+    }
+  }
+
+  function handleInsertHyperlinkIntoSummary() {
+    let cleanUrl = descLinkUrl.trim();
+    if (!cleanUrl) return;
+    if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+      cleanUrl = `https://${cleanUrl}`;
+    }
+    if (cleanUrl.startsWith('http://')) {
+      cleanUrl = `https://${cleanUrl.slice(7)}`;
+    }
+    const cleanLabel = (descLinkLabel.trim() || 'View Product').replace(
+      /[\[\]]/g,
+      ''
+    );
+    const mdLink = `[${cleanLabel}](${cleanUrl})`;
+    setOfferSummary((prev) =>
+      prev.trim().length > 0 ? `${prev.trim()} ${mdLink}` : mdLink
+    );
+    if (!offerUrl.trim()) {
+      setOfferUrl(cleanUrl);
+    }
+    setDescLinkLabel('');
+    setDescLinkUrl('');
+    setShowDescLinkHelper(false);
   }
 
   function handleAppendSavedTrackingTag() {
@@ -395,6 +460,7 @@ function PickraShell() {
         commissionNote: offerCommission,
         affiliateUrl: offerUrl,
         imageKey: offerImageKey || 'audio',
+        videoUrl: offerVideoUrl,
         summary: offerSummary,
         highlights,
         status: offerStatus,
@@ -486,7 +552,7 @@ function PickraShell() {
                   : 'border-transparent hover:text-stone-900'
               }`}
             >
-              Products
+              Product Affiliate
             </button>
             <button
               type="button"
@@ -497,7 +563,7 @@ function PickraShell() {
                   : 'border-transparent hover:text-stone-900'
               }`}
             >
-              Services
+              Service Affiliate
             </button>
             {canAccessCreatorAdmin && (
               <button
@@ -528,7 +594,7 @@ function PickraShell() {
         </div>
 
         {/* Mobile Secondary Row */}
-        <div className="flex md:hidden items-center justify-around border-t border-stone-200/70 px-4 py-2.5 text-xs font-medium text-stone-600">
+        <div className="flex md:hidden items-center justify-around gap-2 overflow-x-auto border-t border-stone-200/70 px-4 py-2.5 text-xs font-medium text-stone-600">
           <button
             type="button"
             onClick={() => navigateToSection('blog')}
@@ -554,7 +620,7 @@ function PickraShell() {
               activeSection === 'products' ? 'text-[#9A3412] font-semibold' : ''
             }`}
           >
-            Products
+            Product Affiliate
           </button>
           <button
             type="button"
@@ -563,7 +629,7 @@ function PickraShell() {
               activeSection === 'services' ? 'text-[#9A3412] font-semibold' : ''
             }`}
           >
-            Services
+            Service Affiliate
           </button>
           <button
             type="button"
@@ -624,23 +690,23 @@ function PickraShell() {
           />
         ) : activeSection === 'products' ? (
           /* ===============================================================
-             PRODUCTS PAGE: MULTI-PLATFORM AFFILIATE PHYSICAL & DIGITAL GOODS
+             PRODUCT AFFILIATE PAGE: PHYSICAL & DIGITAL AFFILIATE LINKS
              =============================================================== */
           <section className="max-w-[1200px] mx-auto px-5 sm:px-8 py-10 sm:py-14">
             <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
               <div className="max-w-3xl">
                 <div className="text-xs text-stone-500">
-                  Affiliate Product Directory · Amazon · Digistore24 · ClickBank
-                  · Gumroad · CJ · ShareASale · Impact
+                  Product Affiliate · Amazon · Digistore24 · ClickBank · Gumroad
+                  · CJ · ShareASale · Impact
                 </div>
                 <h1 className="mt-2 font-serif text-3xl sm:text-4xl font-medium text-stone-900">
-                  Affiliate Physical &amp; Digital Products
+                  Product Affiliate — Physical &amp; Digital Products
                 </h1>
                 <p className="mt-3 text-base text-stone-600 leading-relaxed">
-                  Curated physical hardware and digital products across Amazon,
-                  Digistore24, ClickBank, Gumroad, eBay, Etsy, and global
-                  partner platforms. Clicking any product guides you directly to
-                  its official marketplace listing.
+                  Curated physical hardware and digital product affiliate
+                  listings with rich descriptions, images, videos, and direct
+                  destination links. Click any product link to land directly on
+                  the target product platform.
                 </p>
               </div>
 
@@ -651,7 +717,7 @@ function PickraShell() {
                   className="inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>Add Affiliate Product</span>
+                  <span>Add Product Affiliate</span>
                 </button>
 
                 <button
@@ -798,23 +864,23 @@ function PickraShell() {
           </section>
         ) : activeSection === 'services' ? (
           /* ===============================================================
-             SERVICES PAGE: MULTI-PLATFORM AFFILIATE PROFESSIONAL SERVICES
+             SERVICE AFFILIATE PAGE: PROFESSIONAL SERVICE SELLER LINKS
              =============================================================== */
           <section className="max-w-[1200px] mx-auto px-5 sm:px-8 py-10 sm:py-14">
             <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
               <div className="max-w-3xl">
                 <div className="text-xs text-stone-500">
-                  Professional Services Affiliate Directory · Fiverr · Upwork ·
-                  Toptal · 99designs · Contra · PeoplePerHour
+                  Service Affiliate · Fiverr · Upwork · Toptal · 99designs ·
+                  Contra · PeoplePerHour
                 </div>
                 <h1 className="mt-2 font-serif text-3xl sm:text-4xl font-medium text-stone-900">
-                  Vetted Professional Services &amp; Freelance Specialists
+                  Service Affiliate — Vetted Professional Services
                 </h1>
                 <p className="mt-3 text-base text-stone-600 leading-relaxed">
-                  Recommended engineering, design, video production, and growth
-                  services from Fiverr, Upwork, Toptal, 99designs, and partner
-                  service networks—guiding you directly to each provider&apos;s
-                  booking page.
+                  Promoted engineering, design, video production, and specialist
+                  service sellers with descriptions, images, video showcases,
+                  and direct booking links—guiding demanders directly to each
+                  service seller&apos;s platform.
                 </p>
               </div>
 
@@ -824,7 +890,7 @@ function PickraShell() {
                 className="inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0 self-start lg:self-auto"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>Add Affiliate Service</span>
+                <span>Add Service Affiliate</span>
               </button>
             </div>
 
@@ -1525,14 +1591,14 @@ function PickraShell() {
                     onClick={() => navigateToSection('products')}
                     className="text-stone-900 hover:text-[#9A3412] cursor-pointer whitespace-nowrap shrink-0"
                   >
-                    Affiliate Products →
+                    Product Affiliate →
                   </button>
                   <button
                     type="button"
                     onClick={() => navigateToSection('services')}
                     className="text-stone-900 hover:text-[#9A3412] cursor-pointer whitespace-nowrap shrink-0"
                   >
-                    Affiliate Services →
+                    Service Affiliate →
                   </button>
                   {canAccessCreatorAdmin && (
                     <button
@@ -1742,8 +1808,9 @@ function PickraShell() {
                 <div>
                   <div className="flex items-center justify-between gap-2 mb-1">
                     <label className="text-xs font-medium text-stone-700">
-                      Direct Affiliate Link (HTTPS — guides audience to platform
-                      page)
+                      {offerKind === 'service'
+                        ? 'Service Seller Affiliate Link (HTTPS — guides demanders to service page)'
+                        : 'Primary Product Affiliate Link (HTTPS — guides buyers to target platform)'}
                     </label>
                     {(offerPlatform === 'Amazon' ||
                       offerPlatform === 'Digistore24') && (
@@ -1763,33 +1830,126 @@ function PickraShell() {
                     onChange={(e) => setOfferUrl(e.target.value)}
                     placeholder={
                       offerKind === 'service'
-                        ? 'https://www.fiverr.com/...'
-                        : 'https://www.amazon.com/dp/...'
+                        ? 'https://www.fiverr.com/... or https://www.upwork.com/...'
+                        : 'https://www.amazon.com/dp/... or https://www.digistore24.com/...'
                     }
                     className="w-full px-3 py-2 text-xs font-mono bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
                   />
                 </div>
 
                 <ImageUploadPicker
-                  label="Product / Service Image (Upload Photo, Paste URL, or Studio Preset)"
+                  label="Image Attachment (Upload Photo, Paste URL, or Studio Preset)"
                   value={offerImageKey}
                   onChange={setOfferImageKey}
                   previewAspectClass="aspect-[16/9]"
                   compact
                 />
 
-                <div>
-                  <label className="block text-xs font-medium text-stone-700 mb-1">
-                    Curator Summary
-                  </label>
+                {/* Video Attachment (URL or Upload) */}
+                <div className="p-3.5 bg-[#FBF9F5] border border-stone-200 rounded-xl space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-stone-700 inline-flex items-center gap-1.5">
+                      <Video className="w-3.5 h-3.5 text-[#9A3412]" />
+                      <span>Video Attachment (Optional — Upload Clip or Paste URL)</span>
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <label className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-white bg-[#1C1917] hover:bg-[#9A3412] rounded cursor-pointer whitespace-nowrap">
+                        <Upload className="w-3 h-3" />
+                        <span>
+                          {uploadingOfferVideo ? 'Uploading...' : 'Upload Video'}
+                        </span>
+                        <input
+                          type="file"
+                          accept="video/mp4,video/webm,video/quicktime"
+                          onChange={(e) => void handleOfferVideoFileChange(e)}
+                          className="hidden"
+                        />
+                      </label>
+                      {offerVideoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setOfferVideoUrl('')}
+                          className="text-[11px] text-red-700 hover:underline cursor-pointer"
+                        >
+                          Remove Video
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <input
+                    type="url"
+                    value={
+                      offerVideoUrl.startsWith('data:video/')
+                        ? ''
+                        : offerVideoUrl
+                    }
+                    onChange={(e) => setOfferVideoUrl(e.target.value)}
+                    placeholder={
+                      offerVideoUrl.startsWith('data:video/')
+                        ? 'Uploaded video file attached — paste a URL to replace'
+                        : 'https://www.youtube.com/watch?v=... or Vimeo / Loom / .mp4 link'
+                    }
+                    className="w-full px-3 py-2 text-xs bg-white border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                  />
+                  {offerVideoUrl && (
+                    <VideoEmbedFigure url={offerVideoUrl} compact />
+                  )}
+                </div>
+
+                {/* Rich Text Description & Affiliate Links Box */}
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label className="block text-xs font-medium text-stone-700">
+                      Description &amp; Affiliate Links Box (Paste links or insert clickable hyperlinks)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setShowDescLinkHelper((v) => !v)}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#9A3412] hover:underline cursor-pointer"
+                    >
+                      <Link2 className="w-3 h-3" />
+                      <span>
+                        {showDescLinkHelper
+                          ? 'Close Link Helper'
+                          : '+ Insert Hyperlink'}
+                      </span>
+                    </button>
+                  </div>
+
+                  {showDescLinkHelper && (
+                    <div className="p-3 bg-[#FBF9F5] border border-stone-300 rounded-lg grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+                      <input
+                        type="text"
+                        value={descLinkLabel}
+                        onChange={(e) => setDescLinkLabel(e.target.value)}
+                        placeholder="Link text (e.g. Buy on Amazon)"
+                        className="sm:col-span-4 px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded"
+                      />
+                      <input
+                        type="url"
+                        value={descLinkUrl}
+                        onChange={(e) => setDescLinkUrl(e.target.value)}
+                        placeholder="https://www.amazon.com/... or https://www.fiverr.com/..."
+                        className="sm:col-span-6 px-2.5 py-1.5 text-xs font-mono bg-white border border-stone-300 rounded"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleInsertHyperlinkIntoSummary}
+                        className="sm:col-span-2 px-3 py-1.5 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded cursor-pointer whitespace-nowrap"
+                      >
+                        Insert
+                      </button>
+                    </div>
+                  )}
+
                   <textarea
-                    rows={3}
+                    rows={4}
                     required
                     minLength={10}
-                    maxLength={400}
+                    maxLength={2500}
                     value={offerSummary}
                     onChange={(e) => setOfferSummary(e.target.value)}
-                    placeholder="Why your audience should check out this product or specialist..."
+                    placeholder="Write description and paste digital/physical product or service affiliate links directly (e.g. https://... or use + Insert Hyperlink so buyers click straight through to the platform)..."
                     className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
                   />
                 </div>
@@ -1887,14 +2047,14 @@ function PickraShell() {
               onClick={() => navigateToSection('products')}
               className="hover:text-stone-900 cursor-pointer whitespace-nowrap shrink-0"
             >
-              Products
+              Product Affiliate
             </button>
             <button
               type="button"
               onClick={() => navigateToSection('services')}
               className="hover:text-stone-900 cursor-pointer whitespace-nowrap shrink-0"
             >
-              Services
+              Service Affiliate
             </button>
             {canAccessCreatorAdmin && (
               <button
