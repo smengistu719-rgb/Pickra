@@ -164,26 +164,9 @@
         },
         "platform": {
           "type": "string",
-          "enum": [
-            "Amazon",
-            "Digistore24",
-            "Upwork",
-            "Fiverr",
-            "Gumroad",
-            "ClickBank",
-            "CJ Affiliate",
-            "ShareASale",
-            "Impact",
-            "eBay",
-            "Etsy",
-            "AliExpress",
-            "Toptal",
-            "99designs",
-            "Contra",
-            "PeoplePerHour",
-            "Custom"
-          ],
-          "description": "Partner marketplace or affiliate network."
+          "minLength": 2,
+          "maxLength": 60,
+          "description": "Partner marketplace or custom affiliate network."
         },
         "category": {
           "type": "string",
@@ -306,7 +289,8 @@
         },
         "category": {
           "type": "string",
-          "enum": ["Hardware & Gear", "Digital Systems", "Freelance Talent", "Field Guides"],
+          "minLength": 2,
+          "maxLength": 60,
           "description": "Primary editorial category."
         },
         "readTimeMinutes": {
@@ -580,7 +564,8 @@
         },
         "channel": {
           "type": "string",
-          "enum": ["Storefront Banner", "Blog Callout", "Social & Email", "Flash Bundle"],
+          "minLength": 2,
+          "maxLength": 60,
           "description": "Primary marketing placement channel."
         },
         "featuredProductId": {

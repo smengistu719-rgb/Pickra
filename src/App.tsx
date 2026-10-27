@@ -2,9 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
   BookOpen,
+  Camera,
   Edit3,
   Link2,
-  LogIn,
   PenSquare,
   Plus,
   Search,
@@ -27,16 +27,15 @@ import {
   ActiveSection,
   AffiliateOffer,
   AffiliatePlatform,
-  ALL_AFFILIATE_PLATFORMS,
   BLOG_THEME_PALETTES,
   BlogPost,
+  DirectProduct,
   OfferKind,
   PostCategory,
-  PRODUCT_AFFILIATE_PLATFORMS,
   PublishStatus,
-  SERVICE_AFFILIATE_PLATFORMS,
 } from './types';
 import {
+  compressImageFileToDataUrl,
   formatPriceCents,
   readCompactVideoFileToDataUrl,
 } from './firebase';
@@ -50,7 +49,9 @@ import { PublisherStudio } from './components/PublisherStudio';
 import { MediumBlockEditor } from './components/MediumBlockEditor';
 import { ImageUploadPicker } from './components/ImageUploadPicker';
 import { VideoEmbedFigure } from './components/EditorialRichBlocks';
-import { AuthModal, AuthPanel } from './components/AuthModal';
+import { AuthModal } from './components/AuthModal';
+import { EditableDropdownSelect } from './components/EditableDropdownSelect';
+import { EditableSectionHeader } from './components/EditableSectionHeader';
 
 function resolveInitialSection(): ActiveSection {
   try {
@@ -102,6 +103,16 @@ function PickraShell() {
     deleteOffer,
     deletePost,
     deleteDirectProduct,
+    updateOfferImage,
+    updatePostCoverImage,
+    updateDirectProductImage,
+    dropdownOptions,
+    addDropdownOption,
+    renameDropdownOption,
+    deleteDropdownOption,
+    sectionHeaders,
+    saveSectionHeader,
+    resetSectionHeader,
   } = useFirebaseApp();
 
   const canAccessCreatorAdmin = Boolean(
@@ -115,6 +126,8 @@ function PickraShell() {
     resolveInitialSection
   );
   const [storeSubView, setStoreSubView] = useState<StoreSubView>('catalog');
+  const [pendingStoreEditProduct, setPendingStoreEditProduct] =
+    useState<DirectProduct | null>(null);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [storyBeingEdited, setStoryBeingEdited] = useState<BlogPost | null>(
     null
@@ -122,6 +135,9 @@ function PickraShell() {
   const [confirmDeletePostId, setConfirmDeletePostId] = useState<string | null>(
     null
   );
+  const [uploadingPostPhotoId, setUploadingPostPhotoId] = useState<
+    string | null
+  >(null);
 
   // Blog filters
   const [blogCategory, setBlogCategory] = useState<'All' | PostCategory>('All');
@@ -317,14 +333,47 @@ function PickraShell() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
+  function canManageDirectProduct(product: DirectProduct): boolean {
+    return Boolean(
+      isCreatorAdmin ||
+        product.isSeed ||
+        product.id.startsWith('seed_') ||
+        product.id.startsWith('local_') ||
+        product.sellerId === 'local_workspace' ||
+        (user && product.sellerId === user.uid)
+    );
+  }
+
+  async function handlePostCoverUpload(
+    postId: string,
+    e: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingPostPhotoId(postId);
+    try {
+      const dataUrl = await compressImageFileToDataUrl(file);
+      await updatePostCoverImage(postId, dataUrl);
+    } finally {
+      setUploadingPostPhotoId(null);
+      e.target.value = '';
+    }
+  }
+
   function openNewAffiliateModal(defaultKind: OfferKind) {
+    const defaultPlat =
+      defaultKind === 'service'
+        ? dropdownOptions.servicePlatforms[0] || 'Fiverr'
+        : dropdownOptions.productPlatforms[0] || 'Amazon';
+    const defaultCat =
+      defaultKind === 'service'
+        ? 'Specialist Services'
+        : dropdownOptions.affiliateCategories[0] || 'Studio Hardware';
     setEditingOfferId(undefined);
     setOfferTitle('');
     setOfferKind(defaultKind);
-    setOfferPlatform(defaultKind === 'service' ? 'Fiverr' : 'Amazon');
-    setOfferCategory(
-      defaultKind === 'service' ? 'Specialist Services' : 'Featured Products'
-    );
+    setOfferPlatform(defaultPlat);
+    setOfferCategory(defaultCat);
     setOfferPrice(defaultKind === 'service' ? 'From $120' : '$149.00');
     setOfferCommission('');
     setOfferUrl('');
@@ -668,7 +717,12 @@ function PickraShell() {
             }}
           />
         ) : activeSection === 'store' ? (
-          <DirectStorefront key={storeSubView} initialSubView={storeSubView} />
+          <DirectStorefront
+            key={storeSubView}
+            initialSubView={storeSubView}
+            initialEditProduct={pendingStoreEditProduct}
+            onConsumeInitialEditProduct={() => setPendingStoreEditProduct(null)}
+          />
         ) : selectedPost && isBlogSection ? (
           <ArticleReader
             post={selectedPost}
@@ -676,6 +730,9 @@ function PickraShell() {
             directProductsMap={allAccessibleDirectProductsMap}
             onBack={() => setSelectedPostId(null)}
             onEditInEditor={openBlockEditorForPost}
+            onChangeCoverImage={(p, nextImage) => {
+              void updatePostCoverImage(p.id, nextImage);
+            }}
             onDeletePost={async (p) => {
               await deletePost(p.id);
               setSelectedPostId(null);
@@ -694,21 +751,15 @@ function PickraShell() {
              =============================================================== */
           <section className="max-w-[1200px] mx-auto px-5 sm:px-8 py-10 sm:py-14">
             <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
-              <div className="max-w-3xl">
-                <div className="text-xs text-stone-500">
-                  Product Affiliate · Amazon · Digistore24 · ClickBank · Gumroad
-                  · CJ · ShareASale · Impact
-                </div>
-                <h1 className="mt-2 font-serif text-3xl sm:text-4xl font-medium text-stone-900">
-                  Product Affiliate — Physical &amp; Digital Products
-                </h1>
-                <p className="mt-3 text-base text-stone-600 leading-relaxed">
-                  Curated physical hardware and digital product affiliate
-                  listings with rich descriptions, images, videos, and direct
-                  destination links. Click any product link to land directly on
-                  the target product platform.
-                </p>
-              </div>
+              <EditableSectionHeader
+                copy={sectionHeaders.productAffiliateMasthead}
+                onSave={(nextCopy) =>
+                  saveSectionHeader('productAffiliateMasthead', nextCopy)
+                }
+                onReset={() => resetSectionHeader('productAffiliateMasthead')}
+                level="h1"
+                className="max-w-3xl"
+              />
 
               <div className="flex flex-wrap items-center gap-2.5 shrink-0 self-start lg:self-auto">
                 <button
@@ -732,8 +783,8 @@ function PickraShell() {
             </div>
 
             {/* Filter Toolbar */}
-            <div className="mt-8 flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-6 border-b border-stone-200">
-              <div className="flex flex-wrap items-center gap-3">
+            <div className="mt-8 flex flex-col lg:flex-row lg:items-start justify-between gap-4 pb-6 border-b border-stone-200">
+              <div className="flex flex-wrap items-start gap-3">
                 <div className="inline-flex items-center gap-1 p-1 bg-[#F3EFE8] rounded-lg">
                   {(
                     [
@@ -757,23 +808,32 @@ function PickraShell() {
                   ))}
                 </div>
 
-                <select
-                  aria-label="Filter by affiliate platform"
+                <EditableDropdownSelect
+                  ariaLabel="Filter by affiliate platform"
                   value={productPlatformFilter}
-                  onChange={(e) =>
-                    setProductPlatformFilter(
-                      e.target.value as 'All' | AffiliatePlatform
-                    )
+                  options={dropdownOptions.productPlatforms}
+                  prefixOptions={[
+                    { value: 'All', label: 'All Marketing Platforms' },
+                  ]}
+                  onChange={(val) =>
+                    setProductPlatformFilter(val as 'All' | AffiliatePlatform)
                   }
-                  className="px-3 py-2 text-xs font-medium bg-white border border-stone-200 rounded-lg text-stone-700 focus:outline-none focus:border-[#9A3412]"
-                >
-                  <option value="All">All Marketing Platforms</option>
-                  {PRODUCT_AFFILIATE_PLATFORMS.map((plat) => (
-                    <option key={plat} value={plat}>
-                      {plat}
-                    </option>
-                  ))}
-                </select>
+                  onAddOption={(opt) =>
+                    addDropdownOption('productPlatforms', opt)
+                  }
+                  onRenameOption={(oldOpt, nextOpt) => {
+                    renameDropdownOption('productPlatforms', oldOpt, nextOpt);
+                    if (productPlatformFilter === oldOpt) {
+                      setProductPlatformFilter(nextOpt);
+                    }
+                  }}
+                  onDeleteOption={(opt) =>
+                    deleteDropdownOption('productPlatforms', opt)
+                  }
+                  placeholder="Platform..."
+                  compact
+                  selectClassName="px-3 py-2 text-xs font-medium bg-white border border-stone-200 rounded-lg text-stone-700 focus:outline-none focus:border-[#9A3412]"
+                />
               </div>
 
               <div className="relative w-full lg:w-72">
@@ -833,16 +893,13 @@ function PickraShell() {
                       <OfferCard
                         offer={offer}
                         variant="grid"
-                        onEdit={
-                          isCreatorAdmin ? openEditAffiliateModal : undefined
-                        }
-                        onDelete={
-                          isCreatorAdmin
-                            ? (targetOffer) => {
-                                void deleteOffer(targetOffer.id);
-                              }
-                            : undefined
-                        }
+                        onEdit={openEditAffiliateModal}
+                        onChangeImage={(targetOffer, nextImg) => {
+                          void updateOfferImage(targetOffer.id, nextImg);
+                        }}
+                        onDelete={(targetOffer) => {
+                          void deleteOffer(targetOffer.id);
+                        }}
                       />
                       {relatedPost && (
                         <button
@@ -868,21 +925,15 @@ function PickraShell() {
              =============================================================== */
           <section className="max-w-[1200px] mx-auto px-5 sm:px-8 py-10 sm:py-14">
             <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
-              <div className="max-w-3xl">
-                <div className="text-xs text-stone-500">
-                  Service Affiliate · Fiverr · Upwork · Toptal · 99designs ·
-                  Contra · PeoplePerHour
-                </div>
-                <h1 className="mt-2 font-serif text-3xl sm:text-4xl font-medium text-stone-900">
-                  Service Affiliate — Vetted Professional Services
-                </h1>
-                <p className="mt-3 text-base text-stone-600 leading-relaxed">
-                  Promoted engineering, design, video production, and specialist
-                  service sellers with descriptions, images, video showcases,
-                  and direct booking links—guiding demanders directly to each
-                  service seller&apos;s platform.
-                </p>
-              </div>
+              <EditableSectionHeader
+                copy={sectionHeaders.serviceAffiliateMasthead}
+                onSave={(nextCopy) =>
+                  saveSectionHeader('serviceAffiliateMasthead', nextCopy)
+                }
+                onReset={() => resetSectionHeader('serviceAffiliateMasthead')}
+                level="h1"
+                className="max-w-3xl"
+              />
 
               <button
                 type="button"
@@ -894,44 +945,53 @@ function PickraShell() {
               </button>
             </div>
 
-            <div className="mt-8 flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-6 border-b border-stone-200">
-              <div className="flex flex-wrap items-center gap-3">
+            <div className="mt-8 flex flex-col lg:flex-row lg:items-start justify-between gap-4 pb-6 border-b border-stone-200">
+              <div className="flex flex-wrap items-start gap-3">
                 <div className="inline-flex flex-wrap items-center gap-1 p-1 bg-[#F3EFE8] rounded-lg">
-                  {(
-                    ['All', 'Fiverr', 'Upwork', 'Toptal', '99designs'] as const
-                  ).map((plat) => (
-                    <button
-                      key={plat}
-                      type="button"
-                      onClick={() => setServicePlatformFilter(plat)}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                        servicePlatformFilter === plat
-                          ? 'bg-white text-stone-900 shadow-xs'
-                          : 'text-stone-600 hover:text-stone-900'
-                      }`}
-                    >
-                      {plat === 'All' ? 'All Service Platforms' : plat}
-                    </button>
-                  ))}
+                  {['All', ...dropdownOptions.servicePlatforms.slice(0, 4)].map(
+                    (plat) => (
+                      <button
+                        key={plat}
+                        type="button"
+                        onClick={() => setServicePlatformFilter(plat)}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                          servicePlatformFilter === plat
+                            ? 'bg-white text-stone-900 shadow-xs'
+                            : 'text-stone-600 hover:text-stone-900'
+                        }`}
+                      >
+                        {plat === 'All' ? 'All Service Platforms' : plat}
+                      </button>
+                    )
+                  )}
                 </div>
 
-                <select
-                  aria-label="Filter all service networks"
+                <EditableDropdownSelect
+                  ariaLabel="Filter all service networks"
                   value={servicePlatformFilter}
-                  onChange={(e) =>
-                    setServicePlatformFilter(
-                      e.target.value as 'All' | AffiliatePlatform
-                    )
+                  options={dropdownOptions.servicePlatforms}
+                  prefixOptions={[
+                    { value: 'All', label: 'All Service Networks' },
+                  ]}
+                  onChange={(val) =>
+                    setServicePlatformFilter(val as 'All' | AffiliatePlatform)
                   }
-                  className="px-3 py-2 text-xs font-medium bg-white border border-stone-200 rounded-lg text-stone-700 focus:outline-none focus:border-[#9A3412]"
-                >
-                  <option value="All">All Service Networks</option>
-                  {SERVICE_AFFILIATE_PLATFORMS.map((plat) => (
-                    <option key={plat} value={plat}>
-                      {plat}
-                    </option>
-                  ))}
-                </select>
+                  onAddOption={(opt) =>
+                    addDropdownOption('servicePlatforms', opt)
+                  }
+                  onRenameOption={(oldOpt, nextOpt) => {
+                    renameDropdownOption('servicePlatforms', oldOpt, nextOpt);
+                    if (servicePlatformFilter === oldOpt) {
+                      setServicePlatformFilter(nextOpt);
+                    }
+                  }}
+                  onDeleteOption={(opt) =>
+                    deleteDropdownOption('servicePlatforms', opt)
+                  }
+                  placeholder="Service network..."
+                  compact
+                  selectClassName="px-3 py-2 text-xs font-medium bg-white border border-stone-200 rounded-lg text-stone-700 focus:outline-none focus:border-[#9A3412]"
+                />
               </div>
 
               <div className="relative w-full lg:w-72">
@@ -990,16 +1050,13 @@ function PickraShell() {
                       <OfferCard
                         offer={offer}
                         variant="grid"
-                        onEdit={
-                          isCreatorAdmin ? openEditAffiliateModal : undefined
-                        }
-                        onDelete={
-                          isCreatorAdmin
-                            ? (targetOffer) => {
-                                void deleteOffer(targetOffer.id);
-                              }
-                            : undefined
-                        }
+                        onEdit={openEditAffiliateModal}
+                        onChangeImage={(targetOffer, nextImg) => {
+                          void updateOfferImage(targetOffer.id, nextImg);
+                        }}
+                        onDelete={(targetOffer) => {
+                          void deleteOffer(targetOffer.id);
+                        }}
                       />
                       {relatedPost && (
                         <button
@@ -1060,53 +1117,68 @@ function PickraShell() {
                         {leadPost.subtitle}
                       </p>
 
-                      {isCreatorAdmin && (
-                        <div className="mt-4 flex flex-wrap items-center gap-3 text-xs">
-                          <button
-                            type="button"
-                            onClick={() => openBlockEditorForPost(leadPost)}
-                            className="inline-flex items-center gap-1 font-medium text-stone-700 hover:text-[#9A3412] cursor-pointer"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                            <span>Edit Lead Blog</span>
-                          </button>
-                          <span className="text-stone-300" aria-hidden="true">
-                            ·
+                      <div className="mt-4 flex flex-wrap items-center gap-3 text-xs">
+                        <label className="inline-flex items-center gap-1 font-medium text-stone-700 hover:text-[#9A3412] cursor-pointer whitespace-nowrap">
+                          <Camera className="w-3.5 h-3.5 text-[#9A3412]" />
+                          <span>
+                            {uploadingPostPhotoId === leadPost.id
+                              ? 'Updating...'
+                              : 'Change Photo'}
                           </span>
-                          {confirmDeletePostId === leadPost.id ? (
-                            <span className="inline-flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  void deletePost(leadPost.id);
-                                  setConfirmDeletePostId(null);
-                                }}
-                                className="font-semibold text-red-700 hover:underline cursor-pointer"
-                              >
-                                Confirm Delete
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setConfirmDeletePostId(null)}
-                                className="text-stone-500 cursor-pointer"
-                              >
-                                Cancel
-                              </button>
-                            </span>
-                          ) : (
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp,image/gif"
+                            onChange={(e) =>
+                              void handlePostCoverUpload(leadPost.id, e)
+                            }
+                            className="hidden"
+                          />
+                        </label>
+                        <span className="text-stone-300" aria-hidden="true">
+                          ·
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => openBlockEditorForPost(leadPost)}
+                          className="inline-flex items-center gap-1 font-medium text-stone-700 hover:text-[#9A3412] cursor-pointer whitespace-nowrap"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          <span>Edit Lead Blog</span>
+                        </button>
+                        <span className="text-stone-300" aria-hidden="true">
+                          ·
+                        </span>
+                        {confirmDeletePostId === leadPost.id ? (
+                          <span className="inline-flex items-center gap-2">
                             <button
                               type="button"
-                              onClick={() =>
-                                setConfirmDeletePostId(leadPost.id)
-                              }
-                              className="inline-flex items-center gap-1 text-stone-500 hover:text-red-700 cursor-pointer"
+                              onClick={() => {
+                                void deletePost(leadPost.id);
+                                setConfirmDeletePostId(null);
+                              }}
+                              className="font-semibold text-red-700 hover:underline cursor-pointer"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span>Remove</span>
+                              Confirm Delete
                             </button>
-                          )}
-                        </div>
-                      )}
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeletePostId(null)}
+                              className="text-stone-500 cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeletePostId(leadPost.id)}
+                            className="inline-flex items-center gap-1 text-stone-500 hover:text-red-700 cursor-pointer whitespace-nowrap"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Remove</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     <div className="mt-8 pt-6 border-t border-stone-200/80 flex flex-wrap items-center justify-between gap-4">
@@ -1149,7 +1221,7 @@ function PickraShell() {
 
                   <div
                     onClick={() => openPost(leadPost)}
-                    className="lg:col-span-6 rounded-xl overflow-hidden bg-[#F3EFE8] border border-stone-200/80 cursor-pointer group min-h-[280px]"
+                    className="relative lg:col-span-6 rounded-xl overflow-hidden bg-[#F3EFE8] border border-stone-200/80 cursor-pointer group min-h-[280px]"
                   >
                     <ResilientImage
                       imageKey={leadPost.coverImageKey}
@@ -1157,6 +1229,25 @@ function PickraShell() {
                       fallbackLabel={leadPost.title}
                       className="w-full h-full lg:h-full object-cover transition-transform duration-300 group-hover:scale-[1.015]"
                     />
+                    <label
+                      onClick={(e) => e.stopPropagation()}
+                      className="absolute bottom-3 right-3 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-stone-900/85 hover:bg-[#9A3412] rounded-lg shadow-xs cursor-pointer whitespace-nowrap transition-colors"
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      <span>
+                        {uploadingPostPhotoId === leadPost.id
+                          ? 'Uploading...'
+                          : 'Change Photo'}
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/gif"
+                        onChange={(e) =>
+                          void handlePostCoverUpload(leadPost.id, e)
+                        }
+                        className="hidden"
+                      />
+                    </label>
                   </div>
                 </div>
 
@@ -1200,47 +1291,47 @@ function PickraShell() {
               </section>
             )}
 
-            {/* SECTION 2: Global Blog Feed (with Add, Edit & Delete) */}
+            {/* SECTION 2: Global Blog Feed (with Add, Edit, Photo & Delete) */}
             <section
               id="blog"
               className="max-w-[1200px] mx-auto px-5 sm:px-8 py-12 sm:py-16 border-b border-stone-200/90"
             >
               <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
-                <div>
-                  <span className="text-xs text-stone-500">
-                    Global Audience Blog · Rich Media, Links, Video &amp; Color
-                    Themes
-                  </span>
-                  <h2 className="mt-1 font-serif text-2xl sm:text-3xl font-medium text-stone-900">
-                    Published Blog Stories
-                  </h2>
-                </div>
+                <EditableSectionHeader
+                  copy={sectionHeaders.blogFeed}
+                  onSave={(nextCopy) =>
+                    saveSectionHeader('blogFeed', nextCopy)
+                  }
+                  onReset={() => resetSectionHeader('blogFeed')}
+                  level="h2"
+                  showSubtitle={Boolean(sectionHeaders.blogFeed.subtitle)}
+                />
 
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="inline-flex flex-wrap items-center gap-1 p-1 bg-[#F3EFE8] rounded-lg">
-                    {(
-                      [
-                        'All',
-                        'Hardware & Gear',
-                        'Digital Systems',
-                        'Freelance Talent',
-                        'Field Guides',
-                      ] as const
-                    ).map((cat) => (
-                      <button
-                        key={cat}
-                        type="button"
-                        onClick={() => setBlogCategory(cat)}
-                        className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                          blogCategory === cat
-                            ? 'bg-white text-stone-900 shadow-xs'
-                            : 'text-stone-600 hover:text-stone-900'
-                        }`}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </div>
+                <div className="flex flex-wrap items-start gap-3">
+                  <EditableDropdownSelect
+                    ariaLabel="Filter blog category"
+                    value={blogCategory}
+                    options={dropdownOptions.blogCategories}
+                    prefixOptions={[{ value: 'All', label: 'All Categories' }]}
+                    onChange={(val) =>
+                      setBlogCategory(val as 'All' | PostCategory)
+                    }
+                    onAddOption={(opt) =>
+                      addDropdownOption('blogCategories', opt)
+                    }
+                    onRenameOption={(oldOpt, nextOpt) => {
+                      renameDropdownOption('blogCategories', oldOpt, nextOpt);
+                      if (blogCategory === oldOpt) {
+                        setBlogCategory(nextOpt);
+                      }
+                    }}
+                    onDeleteOption={(opt) =>
+                      deleteDropdownOption('blogCategories', opt)
+                    }
+                    placeholder="Blog category..."
+                    compact
+                    selectClassName="px-3 py-2 text-xs font-medium bg-white border border-stone-200 rounded-lg text-stone-700 focus:outline-none focus:border-[#9A3412]"
+                  />
 
                   <div className="relative w-full sm:w-56">
                     <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -1356,54 +1447,67 @@ function PickraShell() {
                             </span>
                           </div>
 
-                          {isCreatorAdmin && (
-                            <div
-                              onClick={(e) => e.stopPropagation()}
-                              className="mt-3 pt-2.5 border-t border-stone-200/70 flex items-center justify-end gap-3 text-xs"
-                            >
-                              <button
-                                type="button"
-                                onClick={() => openBlockEditorForPost(post)}
-                                className="inline-flex items-center gap-1 font-medium text-stone-600 hover:text-stone-900 cursor-pointer"
-                              >
-                                <Edit3 className="w-3.5 h-3.5" />
-                                <span>Edit</span>
-                              </button>
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            className="mt-3 pt-2.5 border-t border-stone-200/70 flex items-center justify-end gap-3 text-xs"
+                          >
+                            <label className="inline-flex items-center gap-1 font-medium text-stone-600 hover:text-[#9A3412] cursor-pointer whitespace-nowrap">
+                              <Camera className="w-3.5 h-3.5" />
+                              <span>
+                                {uploadingPostPhotoId === post.id
+                                  ? 'Saving...'
+                                  : 'Photo'}
+                              </span>
+                              <input
+                                type="file"
+                                accept="image/jpeg,image/png,image/webp,image/gif"
+                                onChange={(e) =>
+                                  void handlePostCoverUpload(post.id, e)
+                                }
+                                className="hidden"
+                              />
+                            </label>
 
-                              {confirmDeletePostId === post.id ? (
-                                <span className="inline-flex items-center gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      void deletePost(post.id);
-                                      setConfirmDeletePostId(null);
-                                    }}
-                                    className="font-semibold text-red-700 hover:underline cursor-pointer"
-                                  >
-                                    Confirm
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setConfirmDeletePostId(null)}
-                                    className="text-stone-500 cursor-pointer"
-                                  >
-                                    Cancel
-                                  </button>
-                                </span>
-                              ) : (
+                            <button
+                              type="button"
+                              onClick={() => openBlockEditorForPost(post)}
+                              className="inline-flex items-center gap-1 font-medium text-stone-600 hover:text-stone-900 cursor-pointer whitespace-nowrap"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                              <span>Edit</span>
+                            </button>
+
+                            {confirmDeletePostId === post.id ? (
+                              <span className="inline-flex items-center gap-2">
                                 <button
                                   type="button"
-                                  onClick={() =>
-                                    setConfirmDeletePostId(post.id)
-                                  }
-                                  className="inline-flex items-center gap-1 text-stone-500 hover:text-red-700 cursor-pointer"
+                                  onClick={() => {
+                                    void deletePost(post.id);
+                                    setConfirmDeletePostId(null);
+                                  }}
+                                  className="font-semibold text-red-700 hover:underline cursor-pointer"
                                 >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                  <span>Delete</span>
+                                  Confirm
                                 </button>
-                              )}
-                            </div>
-                          )}
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeletePostId(null)}
+                                  className="text-stone-500 cursor-pointer"
+                                >
+                                  Cancel
+                                </button>
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeletePostId(post.id)}
+                                className="inline-flex items-center gap-1 text-stone-500 hover:text-red-700 cursor-pointer whitespace-nowrap"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>Delete</span>
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </article>
                     );
@@ -1416,15 +1520,17 @@ function PickraShell() {
             {homeDirectEditions.length > 0 && (
               <section className="max-w-[1200px] mx-auto px-5 sm:px-8 py-12 sm:py-16 border-b border-stone-200/90">
                 <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
-                  <div>
-                    <span className="text-xs text-stone-500">
-                      Multi-Creator Marketplace · Physical &amp; Digital
-                      Products
-                    </span>
-                    <h2 className="mt-1 font-serif text-2xl sm:text-3xl font-medium text-stone-900">
-                      Creators&apos; Store — Sold Directly on Pickra
-                    </h2>
-                  </div>
+                  <EditableSectionHeader
+                    copy={sectionHeaders.blogStoreShowcase}
+                    onSave={(nextCopy) =>
+                      saveSectionHeader('blogStoreShowcase', nextCopy)
+                    }
+                    onReset={() => resetSectionHeader('blogStoreShowcase')}
+                    level="h2"
+                    showSubtitle={Boolean(
+                      sectionHeaders.blogStoreShowcase.subtitle
+                    )}
+                  />
 
                   <div className="flex flex-wrap items-center gap-2.5">
                     {leadCampaign && (
@@ -1466,18 +1572,29 @@ function PickraShell() {
 
                 <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-7">
                   {homeDirectEditions.map((product) => {
-                    const editable =
-                      isCreatorAdmin ||
-                      (Boolean(user) && product.sellerId === user?.uid);
+                    const editable = canManageDirectProduct(product);
                     return (
                       <DirectProductCard
                         key={product.id}
                         product={product}
                         variant="grid"
                         onInspectProduct={() => navigateToSection('store')}
+                        onChangeImage={
+                          editable
+                            ? (targetProd, nextImg) => {
+                                void updateDirectProductImage(
+                                  targetProd.id,
+                                  nextImg
+                                );
+                              }
+                            : undefined
+                        }
                         onEdit={
                           editable
-                            ? () => navigateToSection('store', 'sell')
+                            ? (targetProd) => {
+                                setPendingStoreEditProduct(targetProd);
+                                navigateToSection('store', 'catalog');
+                              }
                             : undefined
                         }
                         onDelete={
@@ -1497,15 +1614,17 @@ function PickraShell() {
             {/* SECTION 4: Curated Affiliate Products & Services Showcase */}
             <section className="max-w-[1200px] mx-auto px-5 sm:px-8 py-12 sm:py-16">
               <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
-                <div>
-                  <span className="text-xs text-stone-500">
-                    Global Affiliate Directory · Amazon · Digistore24 · Fiverr ·
-                    Upwork &amp; More
-                  </span>
-                  <h2 className="mt-1 font-serif text-2xl sm:text-3xl font-medium text-stone-900">
-                    Affiliate Products &amp; Professional Services
-                  </h2>
-                </div>
+                <EditableSectionHeader
+                  copy={sectionHeaders.blogAffiliateShowcase}
+                  onSave={(nextCopy) =>
+                    saveSectionHeader('blogAffiliateShowcase', nextCopy)
+                  }
+                  onReset={() => resetSectionHeader('blogAffiliateShowcase')}
+                  level="h2"
+                  showSubtitle={Boolean(
+                    sectionHeaders.blogAffiliateShowcase.subtitle
+                  )}
+                />
 
                 <div className="flex flex-wrap items-center gap-2.5">
                   <div className="inline-flex flex-wrap items-center gap-1 p-1 bg-[#F3EFE8] rounded-lg">
@@ -1553,21 +1672,20 @@ function PickraShell() {
                     key={offer.id}
                     offer={offer}
                     variant="grid"
-                    onEdit={isCreatorAdmin ? openEditAffiliateModal : undefined}
-                    onDelete={
-                      isCreatorAdmin
-                        ? (targetOffer) => {
-                            void deleteOffer(targetOffer.id);
-                          }
-                        : undefined
-                    }
+                    onEdit={openEditAffiliateModal}
+                    onChangeImage={(targetOffer, nextImg) => {
+                      void updateOfferImage(targetOffer.id, nextImg);
+                    }}
+                    onDelete={(targetOffer) => {
+                      void deleteOffer(targetOffer.id);
+                    }}
                   />
                 ))}
               </div>
 
               <div className="mt-10 pt-6 border-t border-stone-200/80 flex flex-wrap items-center justify-between gap-4">
                 <p className="text-xs text-stone-500">
-                  {isCreatorAdmin
+                  {canAccessCreatorAdmin
                     ? 'Owner access active — write rich blogs, edit or delete items on any page, or open Backend to monitor orders, payouts, and traffic.'
                     : 'Read global blog dispatches, sell your own creations on the Store, or explore vetted partner products and services.'}
                 </p>
@@ -1651,344 +1769,359 @@ function PickraShell() {
               </button>
             </div>
 
-            {!user ? (
-              <div className="pt-4">
-                <AuthPanel
-                  defaultMode="signin"
-                  defaultAsSeller={false}
-                  heading="Sign in to publish affiliate links"
-                  subheading="Sign in with your Website Owner account to publish, edit, or remove affiliate product and service links."
+            <form
+              onSubmit={(e) => void handleSaveAffiliateModalSubmit(e)}
+              className="mt-4 space-y-4"
+            >
+              {offerModalError && (
+                <div className="px-3.5 py-2.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-900">
+                  {offerModalError}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-medium text-stone-700 mb-1">
+                  Product or Service Title
+                </label>
+                <input
+                  type="text"
+                  required
+                  minLength={2}
+                  maxLength={140}
+                  value={offerTitle}
+                  onChange={(e) => setOfferTitle(e.target.value)}
+                  placeholder="e.g., Keychron Q1 Max or Fiverr Pro Brand Identity Studio"
+                  className="w-full px-3 py-2 text-sm bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
                 />
               </div>
-            ) : !isCreatorAdmin ? (
-              <div className="py-6 space-y-3">
-                <p className="text-sm text-stone-600 leading-relaxed">
-                  Posting affiliate marketing links on the Products and Services
-                  pages is reserved for the website owner. Want to sell your own
-                  physical or digital products and get paid? Open{' '}
-                  <strong>Store &rarr; Sell on Pickra</strong>!
-                </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsOfferModalOpen(false);
-                    navigateToSection('store', 'sell');
-                  }}
-                  className="px-4 py-2 text-xs font-semibold text-white bg-[#9A3412] rounded-lg cursor-pointer"
-                >
-                  Go to Sell on Pickra →
-                </button>
-              </div>
-            ) : (
-              <form
-                onSubmit={(e) => void handleSaveAffiliateModalSubmit(e)}
-                className="mt-4 space-y-4"
-              >
-                {offerModalError && (
-                  <div className="px-3.5 py-2.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-900">
-                    {offerModalError}
-                  </div>
-                )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-start">
+                <div>
+                  <label className="block text-xs font-medium text-stone-700 mb-1">
+                    Listing Type
+                  </label>
+                  <select
+                    value={offerKind}
+                    onChange={(e) => {
+                      const next = e.target.value as OfferKind;
+                      setOfferKind(next);
+                      if (
+                        next === 'service' &&
+                        !dropdownOptions.servicePlatforms.includes(
+                          offerPlatform
+                        )
+                      ) {
+                        setOfferPlatform(
+                          dropdownOptions.servicePlatforms[0] || 'Fiverr'
+                        );
+                      } else if (
+                        next !== 'service' &&
+                        !dropdownOptions.productPlatforms.includes(
+                          offerPlatform
+                        )
+                      ) {
+                        setOfferPlatform(
+                          dropdownOptions.productPlatforms[0] || 'Amazon'
+                        );
+                      }
+                    }}
+                    className="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                  >
+                    <option value="physical">Physical Product</option>
+                    <option value="digital">Digital Product</option>
+                    <option value="service">Professional Service</option>
+                  </select>
+                </div>
 
                 <div>
                   <label className="block text-xs font-medium text-stone-700 mb-1">
-                    Product or Service Title
+                    Marketing Platform
+                  </label>
+                  <EditableDropdownSelect
+                    ariaLabel="Marketing Platform"
+                    value={offerPlatform}
+                    options={
+                      offerKind === 'service'
+                        ? dropdownOptions.servicePlatforms
+                        : dropdownOptions.productPlatforms
+                    }
+                    onChange={(val) =>
+                      setOfferPlatform(val as AffiliatePlatform)
+                    }
+                    onAddOption={(opt) =>
+                      addDropdownOption(
+                        offerKind === 'service'
+                          ? 'servicePlatforms'
+                          : 'productPlatforms',
+                        opt
+                      )
+                    }
+                    onRenameOption={(oldOpt, nextOpt) =>
+                      renameDropdownOption(
+                        offerKind === 'service'
+                          ? 'servicePlatforms'
+                          : 'productPlatforms',
+                        oldOpt,
+                        nextOpt
+                      )
+                    }
+                    onDeleteOption={(opt) =>
+                      deleteDropdownOption(
+                        offerKind === 'service'
+                          ? 'servicePlatforms'
+                          : 'productPlatforms',
+                        opt
+                      )
+                    }
+                    placeholder="Platform..."
+                    compact
+                    selectClassName="px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg text-stone-900 focus:outline-none focus:border-[#9A3412]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-stone-700 mb-1">
+                    Price Label
                   </label>
                   <input
                     type="text"
                     required
-                    minLength={2}
-                    maxLength={140}
-                    value={offerTitle}
-                    onChange={(e) => setOfferTitle(e.target.value)}
-                    placeholder="e.g., Keychron Q1 Max or Fiverr Pro Brand Identity Studio"
-                    className="w-full px-3 py-2 text-sm bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                    maxLength={40}
+                    value={offerPrice}
+                    onChange={(e) => setOfferPrice(e.target.value)}
+                    placeholder="$149.00 or From $95"
+                    className="w-full px-2.5 py-2 text-xs font-mono bg-[#FBF9F5] border border-stone-300 rounded-lg"
                   />
                 </div>
+              </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-stone-700 mb-1">
-                      Listing Type
-                    </label>
-                    <select
-                      value={offerKind}
-                      onChange={(e) => {
-                        const next = e.target.value as OfferKind;
-                        setOfferKind(next);
-                        if (
-                          next === 'service' &&
-                          !SERVICE_AFFILIATE_PLATFORMS.includes(offerPlatform)
-                        ) {
-                          setOfferPlatform('Fiverr');
-                        } else if (
-                          next !== 'service' &&
-                          !PRODUCT_AFFILIATE_PLATFORMS.includes(offerPlatform)
-                        ) {
-                          setOfferPlatform('Amazon');
-                        }
-                      }}
-                      className="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
-                    >
-                      <option value="physical">Physical Product</option>
-                      <option value="digital">Digital Product</option>
-                      <option value="service">Professional Service</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-stone-700 mb-1">
-                      Marketing Platform
-                    </label>
-                    <select
-                      value={offerPlatform}
-                      onChange={(e) =>
-                        setOfferPlatform(e.target.value as AffiliatePlatform)
-                      }
-                      className="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
-                    >
-                      {(offerKind === 'service'
-                        ? SERVICE_AFFILIATE_PLATFORMS
-                        : ALL_AFFILIATE_PLATFORMS
-                      ).map((plat) => (
-                        <option key={plat} value={plat}>
-                          {plat}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-stone-700 mb-1">
-                      Price Label
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      maxLength={40}
-                      value={offerPrice}
-                      onChange={(e) => setOfferPrice(e.target.value)}
-                      placeholder="$149.00 or From $95"
-                      className="w-full px-2.5 py-2 text-xs font-mono bg-[#FBF9F5] border border-stone-300 rounded-lg"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-stone-700 mb-1">
-                      Category / Department
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      minLength={2}
-                      maxLength={60}
-                      value={offerCategory}
-                      onChange={(e) => setOfferCategory(e.target.value)}
-                      className="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-stone-700 mb-1">
-                      Editorial Note (Optional)
-                    </label>
-                    <input
-                      type="text"
-                      maxLength={80}
-                      value={offerCommission}
-                      onChange={(e) => setOfferCommission(e.target.value)}
-                      placeholder="Top Rated · Instant Access"
-                      className="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
-                    />
-                  </div>
-                </div>
-
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
                 <div>
-                  <div className="flex items-center justify-between gap-2 mb-1">
-                    <label className="text-xs font-medium text-stone-700">
-                      {offerKind === 'service'
-                        ? 'Service Seller Affiliate Link (HTTPS — guides demanders to service page)'
-                        : 'Primary Product Affiliate Link (HTTPS — guides buyers to target platform)'}
-                    </label>
-                    {(offerPlatform === 'Amazon' ||
-                      offerPlatform === 'Digistore24') && (
-                      <button
-                        type="button"
-                        onClick={handleAppendSavedTrackingTag}
-                        className="text-[11px] font-semibold text-[#9A3412] hover:underline cursor-pointer"
-                      >
-                        Append Saved {offerPlatform} ID
-                      </button>
-                    )}
-                  </div>
-                  <input
-                    type="url"
-                    required
-                    value={offerUrl}
-                    onChange={(e) => setOfferUrl(e.target.value)}
-                    placeholder={
-                      offerKind === 'service'
-                        ? 'https://www.fiverr.com/... or https://www.upwork.com/...'
-                        : 'https://www.amazon.com/dp/... or https://www.digistore24.com/...'
+                  <label className="block text-xs font-medium text-stone-700 mb-1">
+                    Category / Department
+                  </label>
+                  <EditableDropdownSelect
+                    ariaLabel="Category or Department"
+                    value={offerCategory}
+                    options={dropdownOptions.affiliateCategories}
+                    onChange={setOfferCategory}
+                    onAddOption={(opt) =>
+                      addDropdownOption('affiliateCategories', opt)
                     }
-                    className="w-full px-3 py-2 text-xs font-mono bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
-                  />
-                </div>
-
-                <ImageUploadPicker
-                  label="Image Attachment (Upload Photo, Paste URL, or Studio Preset)"
-                  value={offerImageKey}
-                  onChange={setOfferImageKey}
-                  previewAspectClass="aspect-[16/9]"
-                  compact
-                />
-
-                {/* Video Attachment (URL or Upload) */}
-                <div className="p-3.5 bg-[#FBF9F5] border border-stone-200 rounded-xl space-y-2.5">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-xs font-medium text-stone-700 inline-flex items-center gap-1.5">
-                      <Video className="w-3.5 h-3.5 text-[#9A3412]" />
-                      <span>Video Attachment (Optional — Upload Clip or Paste URL)</span>
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <label className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-white bg-[#1C1917] hover:bg-[#9A3412] rounded cursor-pointer whitespace-nowrap">
-                        <Upload className="w-3 h-3" />
-                        <span>
-                          {uploadingOfferVideo ? 'Uploading...' : 'Upload Video'}
-                        </span>
-                        <input
-                          type="file"
-                          accept="video/mp4,video/webm,video/quicktime"
-                          onChange={(e) => void handleOfferVideoFileChange(e)}
-                          className="hidden"
-                        />
-                      </label>
-                      {offerVideoUrl && (
-                        <button
-                          type="button"
-                          onClick={() => setOfferVideoUrl('')}
-                          className="text-[11px] text-red-700 hover:underline cursor-pointer"
-                        >
-                          Remove Video
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <input
-                    type="url"
-                    value={
-                      offerVideoUrl.startsWith('data:video/')
-                        ? ''
-                        : offerVideoUrl
+                    onRenameOption={(oldOpt, nextOpt) =>
+                      renameDropdownOption(
+                        'affiliateCategories',
+                        oldOpt,
+                        nextOpt
+                      )
                     }
-                    onChange={(e) => setOfferVideoUrl(e.target.value)}
-                    placeholder={
-                      offerVideoUrl.startsWith('data:video/')
-                        ? 'Uploaded video file attached — paste a URL to replace'
-                        : 'https://www.youtube.com/watch?v=... or Vimeo / Loom / .mp4 link'
+                    onDeleteOption={(opt) =>
+                      deleteDropdownOption('affiliateCategories', opt)
                     }
-                    className="w-full px-3 py-2 text-xs bg-white border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
-                  />
-                  {offerVideoUrl && (
-                    <VideoEmbedFigure url={offerVideoUrl} compact />
-                  )}
-                </div>
-
-                {/* Rich Text Description & Affiliate Links Box */}
-                <div className="space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <label className="block text-xs font-medium text-stone-700">
-                      Description &amp; Affiliate Links Box (Paste links or insert clickable hyperlinks)
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setShowDescLinkHelper((v) => !v)}
-                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#9A3412] hover:underline cursor-pointer"
-                    >
-                      <Link2 className="w-3 h-3" />
-                      <span>
-                        {showDescLinkHelper
-                          ? 'Close Link Helper'
-                          : '+ Insert Hyperlink'}
-                      </span>
-                    </button>
-                  </div>
-
-                  {showDescLinkHelper && (
-                    <div className="p-3 bg-[#FBF9F5] border border-stone-300 rounded-lg grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
-                      <input
-                        type="text"
-                        value={descLinkLabel}
-                        onChange={(e) => setDescLinkLabel(e.target.value)}
-                        placeholder="Link text (e.g. Buy on Amazon)"
-                        className="sm:col-span-4 px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded"
-                      />
-                      <input
-                        type="url"
-                        value={descLinkUrl}
-                        onChange={(e) => setDescLinkUrl(e.target.value)}
-                        placeholder="https://www.amazon.com/... or https://www.fiverr.com/..."
-                        className="sm:col-span-6 px-2.5 py-1.5 text-xs font-mono bg-white border border-stone-300 rounded"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleInsertHyperlinkIntoSummary}
-                        className="sm:col-span-2 px-3 py-1.5 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded cursor-pointer whitespace-nowrap"
-                      >
-                        Insert
-                      </button>
-                    </div>
-                  )}
-
-                  <textarea
-                    rows={4}
-                    required
-                    minLength={10}
-                    maxLength={2500}
-                    value={offerSummary}
-                    onChange={(e) => setOfferSummary(e.target.value)}
-                    placeholder="Write description and paste digital/physical product or service affiliate links directly (e.g. https://... or use + Insert Hyperlink so buyers click straight through to the platform)..."
-                    className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                    placeholder="Department..."
+                    compact
+                    selectClassName="px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg text-stone-900 focus:outline-none focus:border-[#9A3412]"
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-medium text-stone-700 mb-1">
-                    Key Highlights (up to 4 lines)
+                    Editorial Note (Optional)
                   </label>
-                  <textarea
-                    rows={2}
-                    value={offerHighlightsText}
-                    onChange={(e) => setOfferHighlightsText(e.target.value)}
-                    placeholder={'Verified quality\nFast turnaround'}
-                    className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                  <input
+                    type="text"
+                    maxLength={80}
+                    value={offerCommission}
+                    onChange={(e) => setOfferCommission(e.target.value)}
+                    placeholder="Top Rated · Instant Access"
+                    className="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
                   />
                 </div>
+              </div>
 
-                <div className="pt-2 flex items-center justify-end gap-3 border-t border-stone-200">
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <label className="text-xs font-medium text-stone-700">
+                    {offerKind === 'service'
+                      ? 'Service Seller Affiliate Link (HTTPS — guides demanders to service page)'
+                      : 'Primary Product Affiliate Link (HTTPS — guides buyers to target platform)'}
+                  </label>
+                  {(offerPlatform === 'Amazon' ||
+                    offerPlatform === 'Digistore24') && (
+                    <button
+                      type="button"
+                      onClick={handleAppendSavedTrackingTag}
+                      className="text-[11px] font-semibold text-[#9A3412] hover:underline cursor-pointer"
+                    >
+                      Append Saved {offerPlatform} ID
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="url"
+                  required
+                  value={offerUrl}
+                  onChange={(e) => setOfferUrl(e.target.value)}
+                  placeholder={
+                    offerKind === 'service'
+                      ? 'https://www.fiverr.com/... or https://www.upwork.com/...'
+                      : 'https://www.amazon.com/dp/... or https://www.digistore24.com/...'
+                  }
+                  className="w-full px-3 py-2 text-xs font-mono bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                />
+              </div>
+
+              <ImageUploadPicker
+                label="Image Attachment (Upload Photo, Paste URL, or Studio Preset)"
+                value={offerImageKey}
+                onChange={setOfferImageKey}
+                previewAspectClass="aspect-[16/9]"
+                compact
+              />
+
+              {/* Video Attachment (URL or Upload) */}
+              <div className="p-3.5 bg-[#FBF9F5] border border-stone-200 rounded-xl space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-stone-700 inline-flex items-center gap-1.5">
+                    <Video className="w-3.5 h-3.5 text-[#9A3412]" />
+                    <span>Video Attachment (Optional — Upload Clip or Paste URL)</span>
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <label className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-white bg-[#1C1917] hover:bg-[#9A3412] rounded cursor-pointer whitespace-nowrap">
+                      <Upload className="w-3 h-3" />
+                      <span>
+                        {uploadingOfferVideo ? 'Uploading...' : 'Upload Video'}
+                      </span>
+                      <input
+                        type="file"
+                        accept="video/mp4,video/webm,video/quicktime"
+                        onChange={(e) => void handleOfferVideoFileChange(e)}
+                        className="hidden"
+                      />
+                    </label>
+                    {offerVideoUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setOfferVideoUrl('')}
+                        className="text-[11px] text-red-700 hover:underline cursor-pointer"
+                      >
+                        Remove Video
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <input
+                  type="url"
+                  value={
+                    offerVideoUrl.startsWith('data:video/')
+                      ? ''
+                      : offerVideoUrl
+                  }
+                  onChange={(e) => setOfferVideoUrl(e.target.value)}
+                  placeholder={
+                    offerVideoUrl.startsWith('data:video/')
+                      ? 'Uploaded video file attached — paste a URL to replace'
+                      : 'https://www.youtube.com/watch?v=... or Vimeo / Loom / .mp4 link'
+                  }
+                  className="w-full px-3 py-2 text-xs bg-white border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                />
+                {offerVideoUrl && (
+                  <VideoEmbedFigure url={offerVideoUrl} compact />
+                )}
+              </div>
+
+              {/* Rich Text Description & Affiliate Links Box */}
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="block text-xs font-medium text-stone-700">
+                    Description &amp; Affiliate Links Box (Paste links or insert clickable hyperlinks)
+                  </label>
                   <button
                     type="button"
-                    onClick={() => setIsOfferModalOpen(false)}
-                    className="px-4 py-2 text-xs font-medium text-stone-600 cursor-pointer"
+                    onClick={() => setShowDescLinkHelper((v) => !v)}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#9A3412] hover:underline cursor-pointer"
                   >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={savingOffer}
-                    className="px-5 py-2.5 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] disabled:bg-stone-300 rounded-lg transition-colors cursor-pointer"
-                  >
-                    {savingOffer
-                      ? 'Saving...'
-                      : editingOfferId
-                      ? 'Save Changes'
-                      : 'Publish Affiliate Link'}
+                    <Link2 className="w-3 h-3" />
+                    <span>
+                      {showDescLinkHelper
+                        ? 'Close Link Helper'
+                        : '+ Insert Hyperlink'}
+                    </span>
                   </button>
                 </div>
-              </form>
-            )}
+
+                {showDescLinkHelper && (
+                  <div className="p-3 bg-[#FBF9F5] border border-stone-300 rounded-lg grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+                    <input
+                      type="text"
+                      value={descLinkLabel}
+                      onChange={(e) => setDescLinkLabel(e.target.value)}
+                      placeholder="Link text (e.g. Buy on Amazon)"
+                      className="sm:col-span-4 px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded"
+                    />
+                    <input
+                      type="url"
+                      value={descLinkUrl}
+                      onChange={(e) => setDescLinkUrl(e.target.value)}
+                      placeholder="https://www.amazon.com/... or https://www.fiverr.com/..."
+                      className="sm:col-span-6 px-2.5 py-1.5 text-xs font-mono bg-white border border-stone-300 rounded"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleInsertHyperlinkIntoSummary}
+                      className="sm:col-span-2 px-3 py-1.5 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded cursor-pointer whitespace-nowrap"
+                    >
+                      Insert
+                    </button>
+                  </div>
+                )}
+
+                <textarea
+                  rows={4}
+                  required
+                  minLength={10}
+                  maxLength={2500}
+                  value={offerSummary}
+                  onChange={(e) => setOfferSummary(e.target.value)}
+                  placeholder="Write description and paste digital/physical product or service affiliate links directly (e.g. https://... or use + Insert Hyperlink so buyers click straight through to the platform)..."
+                  className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-stone-700 mb-1">
+                  Key Highlights (up to 4 lines)
+                </label>
+                <textarea
+                  rows={2}
+                  value={offerHighlightsText}
+                  onChange={(e) => setOfferHighlightsText(e.target.value)}
+                  placeholder={'Verified quality\nFast turnaround'}
+                  className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-3 border-t border-stone-200">
+                <button
+                  type="button"
+                  onClick={() => setIsOfferModalOpen(false)}
+                  className="px-4 py-2 text-xs font-medium text-stone-600 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingOffer}
+                  className="px-5 py-2.5 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] disabled:bg-stone-300 rounded-lg transition-colors cursor-pointer"
+                >
+                  {savingOffer
+                    ? 'Saving...'
+                    : editingOfferId
+                    ? 'Save Changes'
+                    : 'Publish Affiliate Link'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

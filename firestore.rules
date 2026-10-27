@@ -159,12 +159,7 @@ service cloud.firestore {
         data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 80 &&
         data.title is string && data.title.size() >= 2 && data.title.size() <= 140 &&
         data.kind is string && data.kind.size() <= 20 && data.kind in ['physical', 'digital', 'service'] &&
-        data.platform is string && data.platform.size() <= 30 &&
-        data.platform in [
-          'Amazon', 'Digistore24', 'Upwork', 'Fiverr', 'Gumroad', 'ClickBank',
-          'CJ Affiliate', 'ShareASale', 'Impact', 'eBay', 'Etsy', 'AliExpress',
-          'Toptal', '99designs', 'Contra', 'PeoplePerHour', 'Custom'
-        ] &&
+        data.platform is string && data.platform.size() >= 2 && data.platform.size() <= 60 &&
         data.category is string && data.category.size() >= 2 && data.category.size() <= 60 &&
         data.priceLabel is string && data.priceLabel.size() >= 1 && data.priceLabel.size() <= 40 &&
         data.commissionNote is string && data.commissionNote.size() <= 80 &&
@@ -212,8 +207,7 @@ service cloud.firestore {
         data.subtitle is string && data.subtitle.size() >= 8 && data.subtitle.size() <= 280 &&
         data.slug is string && data.slug.size() >= 2 && data.slug.size() <= 140 &&
         data.slug.matches('^[a-z0-9\\-]+$') &&
-        data.category is string && data.category.size() <= 40 &&
-        data.category in ['Hardware & Gear', 'Digital Systems', 'Freelance Talent', 'Field Guides'] &&
+        data.category is string && data.category.size() >= 2 && data.category.size() <= 60 &&
         data.readTimeMinutes is int && data.readTimeMinutes >= 1 && data.readTimeMinutes <= 60 &&
         data.coverImageKey is string && data.coverImageKey.size() >= 1 && data.coverImageKey.size() <= 180000 &&
         data.content is string && data.content.size() >= 20 && data.content.size() <= 350000 &&
@@ -291,8 +285,7 @@ service cloud.firestore {
         data.promoCode.matches('^[A-Z0-9_\\-]+$') &&
         data.discountPercent is int && data.discountPercent >= 5 && data.discountPercent <= 90 &&
         data.minOrderCents is int && data.minOrderCents >= 0 && data.minOrderCents <= 5000000 &&
-        data.channel is string && data.channel.size() <= 40 &&
-        data.channel in ['Storefront Banner', 'Blog Callout', 'Social & Email', 'Flash Bundle'] &&
+        data.channel is string && data.channel.size() >= 2 && data.channel.size() <= 60 &&
         data.featuredProductId is string && data.featuredProductId.size() <= 128 &&
         (data.featuredProductId.size() == 0 || isValidId(data.featuredProductId)) &&
         data.ctaLabel is string && data.ctaLabel.size() >= 2 && data.ctaLabel.size() <= 40 &&

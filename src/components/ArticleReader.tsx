@@ -1,5 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Palette, PenLine, ShoppingBag, Trash2 } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ArrowLeft,
+  Camera,
+  Palette,
+  PenLine,
+  ShoppingBag,
+  Trash2,
+} from 'lucide-react';
 import {
   AffiliateOffer,
   BLOG_THEME_PALETTES,
@@ -17,7 +24,7 @@ import {
 } from '../utils/editorialBlocks';
 import { StoryBlocksRenderer } from './EditorialRichBlocks';
 import { useFirebaseApp } from '../context/FirebaseContext';
-import { formatPriceCents } from '../firebase';
+import { compressImageFileToDataUrl, formatPriceCents } from '../firebase';
 
 interface ArticleReaderProps {
   post: BlogPost;
@@ -26,6 +33,10 @@ interface ArticleReaderProps {
   onBack: () => void;
   onEditInEditor?: (post: BlogPost) => void;
   onDeletePost?: (post: BlogPost) => Promise<void> | void;
+  onChangeCoverImage?: (
+    post: BlogPost,
+    nextCoverImageKey: string
+  ) => Promise<void> | void;
   onOpenStore?: () => void;
 }
 
@@ -44,21 +55,23 @@ export const ArticleReader: React.FC<ArticleReaderProps> = ({
   onBack,
   onEditInEditor,
   onDeletePost,
+  onChangeCoverImage,
   onOpenStore,
 }) => {
   const {
     cartCount,
     cartTotalCents,
     setIsCartOpen,
-    isCreatorAdmin,
     siteConfig,
     recordPostView,
   } = useFirebaseApp();
+  const coverInputRef = useRef<HTMLInputElement | null>(null);
   const [scrollProgress, setScrollProgress] = useState(0);
   const [activeTheme, setActiveTheme] = useState<BlogColorTheme>(
     post.theme || 'classic'
   );
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [coverBusy, setCoverBusy] = useState(false);
 
   useEffect(() => {
     setActiveTheme(post.theme || 'classic');
@@ -83,6 +96,23 @@ export const ArticleReader: React.FC<ArticleReaderProps> = ({
     handleScroll();
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
+
+  async function handleCoverUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !onChangeCoverImage) return;
+    setCoverBusy(true);
+    try {
+      const compressed = await compressImageFileToDataUrl(file);
+      await onChangeCoverImage(post, compressed);
+    } catch {
+      // ignore invalid file errors
+    } finally {
+      setCoverBusy(false);
+      if (coverInputRef.current) {
+        coverInputRef.current.value = '';
+      }
+    }
+  }
 
   const palette =
     BLOG_THEME_PALETTES[activeTheme] || BLOG_THEME_PALETTES.classic;
@@ -109,6 +139,16 @@ export const ArticleReader: React.FC<ArticleReaderProps> = ({
 
   return (
     <div className={`relative transition-colors duration-200 ${palette.canvasClass}`}>
+      {onChangeCoverImage && (
+        <input
+          ref={coverInputRef}
+          type="file"
+          accept="image/*"
+          onChange={(e) => void handleCoverUpload(e)}
+          className="hidden"
+        />
+      )}
+
       {/* Subtle compositor-only reading progress line */}
       <div className="fixed top-0 left-0 right-0 h-0.5 bg-transparent z-40 pointer-events-none">
         <div
@@ -172,7 +212,19 @@ export const ArticleReader: React.FC<ArticleReaderProps> = ({
               </button>
             )}
 
-            {onEditInEditor && isCreatorAdmin && (
+            {onChangeCoverImage && (
+              <button
+                type="button"
+                disabled={coverBusy}
+                onClick={() => coverInputRef.current?.click()}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-stone-900 bg-white border border-stone-200 hover:bg-stone-100 rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              >
+                <Camera className="w-3.5 h-3.5 text-[#9A3412]" />
+                <span>{coverBusy ? 'Saving...' : 'Change Cover Photo'}</span>
+              </button>
+            )}
+
+            {onEditInEditor && (
               <button
                 type="button"
                 onClick={() => onEditInEditor(post)}
@@ -183,8 +235,8 @@ export const ArticleReader: React.FC<ArticleReaderProps> = ({
               </button>
             )}
 
-            {onDeletePost && isCreatorAdmin && (
-              confirmDelete ? (
+            {onDeletePost &&
+              (confirmDelete ? (
                 <div className="inline-flex items-center gap-1.5 bg-red-50 border border-red-200 px-2.5 py-1.5 rounded-lg text-xs">
                   <button
                     type="button"
@@ -211,8 +263,7 @@ export const ArticleReader: React.FC<ArticleReaderProps> = ({
                   <Trash2 className="w-3.5 h-3.5" />
                   <span>Delete</span>
                 </button>
-              )
-            )}
+              ))}
           </div>
         </div>
 
@@ -248,7 +299,7 @@ export const ArticleReader: React.FC<ArticleReaderProps> = ({
         {/* Hero Visual */}
         <figure className="mt-8 sm:mt-10">
           <div
-            className={`aspect-[16/9] w-full rounded-xl overflow-hidden bg-[#F3EFE8] border ${palette.borderClass}`}
+            className={`aspect-[16/9] w-full rounded-xl overflow-hidden bg-[#F3EFE8] border ${palette.borderClass} relative`}
           >
             <ResilientImage
               imageKey={post.coverImageKey}
@@ -256,6 +307,17 @@ export const ArticleReader: React.FC<ArticleReaderProps> = ({
               fallbackLabel={post.title}
               className="w-full h-full object-cover"
             />
+            {onChangeCoverImage && (
+              <button
+                type="button"
+                disabled={coverBusy}
+                onClick={() => coverInputRef.current?.click()}
+                className="absolute bottom-3 right-3 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-900 bg-white/95 hover:bg-white border border-stone-300 rounded-lg shadow-sm cursor-pointer whitespace-nowrap"
+              >
+                <Camera className="w-3.5 h-3.5 text-[#9A3412]" />
+                <span>{coverBusy ? 'Saving...' : 'Change Photo'}</span>
+              </button>
+            )}
           </div>
           <figcaption
             className={`mt-2.5 text-xs font-serif italic ${palette.mutedClass}`}

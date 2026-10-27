@@ -1,6 +1,15 @@
-import React, { useState } from 'react';
-import { ArrowUpRight, Check, PenLine, Play, Trash2, Video } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import {
+  ArrowUpRight,
+  Camera,
+  Check,
+  PenLine,
+  Play,
+  Trash2,
+  Video,
+} from 'lucide-react';
 import { AffiliateOffer } from '../types';
+import { compressImageFileToDataUrl } from '../firebase';
 import { ResilientImage } from './ResilientImage';
 import { InlineFormattedText, VideoEmbedFigure } from './EditorialRichBlocks';
 import { useFirebaseApp } from '../context/FirebaseContext';
@@ -10,6 +19,10 @@ interface OfferCardProps {
   variant?: 'grid' | 'inline' | 'rail';
   onEdit?: (offer: AffiliateOffer) => void;
   onDelete?: (offer: AffiliateOffer) => Promise<void> | void;
+  onChangeImage?: (
+    offer: AffiliateOffer,
+    nextImageKey: string
+  ) => Promise<void> | void;
 }
 
 function getKindLabel(kind: AffiliateOffer['kind']): string {
@@ -52,15 +65,47 @@ export const OfferCard: React.FC<OfferCardProps> = ({
   variant = 'grid',
   onEdit,
   onDelete,
+  onChangeImage,
 }) => {
   const { recordOutboundClick } = useFirebaseApp();
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showVideo, setShowVideo] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
   const hasVideo = Boolean(offer.videoUrl && offer.videoUrl.trim());
+
+  async function handlePhotoFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !onChangeImage) return;
+    setPhotoBusy(true);
+    try {
+      const compressed = await compressImageFileToDataUrl(file);
+      await onChangeImage(offer, compressed);
+    } catch {
+      // ignore invalid file errors
+    } finally {
+      setPhotoBusy(false);
+      if (photoInputRef.current) {
+        photoInputRef.current.value = '';
+      }
+    }
+  }
+
+  const sharedPhotoInput = onChangeImage ? (
+    <input
+      ref={photoInputRef}
+      type="file"
+      accept="image/*"
+      onChange={(e) => void handlePhotoFile(e)}
+      onClick={(e) => e.stopPropagation()}
+      className="hidden"
+    />
+  ) : null;
 
   if (variant === 'rail') {
     return (
       <div className="py-4 first:pt-0 last:pb-0 border-b border-stone-200/80 last:border-b-0">
+        {sharedPhotoInput}
         <div className="flex items-start gap-3.5">
           <div className="w-16 h-16 rounded-lg overflow-hidden bg-[#F3EFE8] shrink-0">
             <ResilientImage
@@ -106,22 +151,85 @@ export const OfferCard: React.FC<OfferCardProps> = ({
         aria-label={`Recommended ${getKindLabel(offer.kind)}: ${offer.title}`}
         className="my-8 bg-[#F5F2EB] border border-stone-200/90 rounded-xl p-5 sm:p-6 text-stone-900"
       >
+        {sharedPhotoInput}
         <div className="grid grid-cols-1 sm:grid-cols-12 gap-5 items-center">
-          <div className="sm:col-span-4 aspect-[4/3] rounded-lg overflow-hidden bg-stone-200/60">
+          <div className="sm:col-span-4 aspect-[4/3] rounded-lg overflow-hidden bg-stone-200/60 relative">
             <ResilientImage
               imageKey={offer.imageKey}
               alt={offer.title}
               fallbackLabel={offer.title}
               className="w-full h-full object-cover"
             />
+            {onChangeImage && (
+              <button
+                type="button"
+                disabled={photoBusy}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  photoInputRef.current?.click();
+                }}
+                className="absolute bottom-2 right-2 inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-stone-900 bg-white/95 hover:bg-white border border-stone-300 rounded shadow-sm cursor-pointer whitespace-nowrap"
+              >
+                <Camera className="w-3 h-3 text-[#9A3412]" />
+                <span>{photoBusy ? 'Saving...' : 'Photo'}</span>
+              </button>
+            )}
           </div>
           <div className="sm:col-span-8">
-            <div className="flex flex-wrap items-center gap-1.5 text-xs text-stone-500">
-              <span className="font-medium text-stone-700">{offer.platform}</span>
-              <span aria-hidden="true">·</span>
-              <span>{getKindLabel(offer.kind)}</span>
-              <span aria-hidden="true">·</span>
-              <span>{offer.category}</span>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-1.5 text-xs text-stone-500">
+                <span className="font-medium text-stone-700">{offer.platform}</span>
+                <span aria-hidden="true">·</span>
+                <span>{getKindLabel(offer.kind)}</span>
+                <span aria-hidden="true">·</span>
+                <span>{offer.category}</span>
+              </div>
+
+              {(onEdit || onDelete) && (
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {onEdit && (
+                    <button
+                      type="button"
+                      onClick={() => onEdit(offer)}
+                      className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-stone-700 hover:text-stone-900 bg-white/80 hover:bg-white rounded cursor-pointer whitespace-nowrap"
+                    >
+                      <PenLine className="w-3 h-3" />
+                      <span>Edit</span>
+                    </button>
+                  )}
+                  {onDelete &&
+                    (confirmDelete ? (
+                      <div className="inline-flex items-center gap-1 text-[11px] bg-red-50 border border-red-200 px-2 py-0.5 rounded">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void onDelete(offer);
+                            setConfirmDelete(false);
+                          }}
+                          className="font-semibold text-red-700 hover:underline cursor-pointer"
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDelete(false)}
+                          className="text-stone-500 hover:text-stone-800 cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDelete(true)}
+                        aria-label={`Delete ${offer.title}`}
+                        className="p-1 text-stone-400 hover:text-red-700 rounded cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    ))}
+                </div>
+              )}
             </div>
 
             <h3 className="mt-1.5 font-serif text-lg sm:text-xl font-medium text-stone-900 leading-snug">
@@ -180,25 +288,44 @@ export const OfferCard: React.FC<OfferCardProps> = ({
   // Default: 'grid' storefront/directory card
   return (
     <article className="group flex flex-col bg-white border border-stone-200/90 rounded-xl overflow-hidden transition-transform duration-150 hover:-translate-y-0.5">
+      {sharedPhotoInput}
       {showVideo && hasVideo && offer.videoUrl ? (
         <div className="w-full bg-stone-950 px-3 py-1">
           <VideoEmbedFigure url={offer.videoUrl} compact />
         </div>
       ) : (
-        <a
-          href={offer.affiliateUrl}
-          target="_blank"
-          rel="noopener noreferrer sponsored"
-          onClick={() => recordOutboundClick(offer.id)}
-          className="block aspect-[4/3] w-full bg-[#F3EFE8] overflow-hidden"
-        >
-          <ResilientImage
-            imageKey={offer.imageKey}
-            alt={offer.title}
-            fallbackLabel={offer.title}
-            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
-          />
-        </a>
+        <div className="relative aspect-[4/3] w-full bg-[#F3EFE8] overflow-hidden">
+          <a
+            href={offer.affiliateUrl}
+            target="_blank"
+            rel="noopener noreferrer sponsored"
+            onClick={() => recordOutboundClick(offer.id)}
+            className="block w-full h-full"
+          >
+            <ResilientImage
+              imageKey={offer.imageKey}
+              alt={offer.title}
+              fallbackLabel={offer.title}
+              className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+            />
+          </a>
+          {onChangeImage && (
+            <button
+              type="button"
+              disabled={photoBusy}
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                photoInputRef.current?.click();
+              }}
+              title="Upload a new listing image"
+              className="absolute bottom-2.5 right-2.5 inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-stone-900 bg-white/95 hover:bg-white border border-stone-300/90 rounded-lg shadow-sm transition-colors cursor-pointer whitespace-nowrap"
+            >
+              <Camera className="w-3 h-3 text-[#9A3412]" />
+              <span>{photoBusy ? 'Saving...' : 'Photo'}</span>
+            </button>
+          )}
+        </div>
       )}
 
       <div className="flex flex-col flex-1 p-5 sm:p-6">
@@ -244,8 +371,8 @@ export const OfferCard: React.FC<OfferCardProps> = ({
                   <span>Edit</span>
                 </button>
               )}
-              {onDelete && (
-                confirmDelete ? (
+              {onDelete &&
+                (confirmDelete ? (
                   <div className="inline-flex items-center gap-1 text-[11px] bg-red-50 border border-red-200 px-2 py-0.5 rounded">
                     <button
                       type="button"
@@ -275,8 +402,7 @@ export const OfferCard: React.FC<OfferCardProps> = ({
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
-                )
-              )}
+                ))}
             </div>
           )}
         </div>

@@ -55,18 +55,29 @@ import {
   BlogPost,
   CampaignChannel,
   CartItem,
+  DEFAULT_AFFILIATE_CATEGORIES,
+  DEFAULT_CAMPAIGN_CHANNELS,
+  DEFAULT_DIGITAL_FORMATS,
+  DEFAULT_POST_CATEGORIES,
+  DEFAULT_SECTION_HEADERS,
+  DEFAULT_STORE_CATEGORIES,
   DirectOrder,
   DirectProduct,
   DirectProductKind,
+  DropdownListKey,
   formatPayoutSummary,
   MarketingCampaign,
   OrderFulfillmentStatus,
   parsePayoutAccounts,
   PayoutSettlementStatus,
+  PRODUCT_AFFILIATE_PLATFORMS,
   PublishStatus,
   SavedPayoutAccount,
+  SectionHeaderCopy,
+  SectionHeaderKey,
   SellerPayoutMethod,
   serializePayoutAccount,
+  SERVICE_AFFILIATE_PLATFORMS,
   SiteConfig,
   UserPrivateInfo,
   UserProfile,
@@ -286,9 +297,14 @@ interface FirebaseContextValue {
   saveOffer: (input: OfferDraftInput) => Promise<string>;
   updateOfferStatus: (offerId: string, status: PublishStatus) => Promise<void>;
   deleteOffer: (offerId: string) => Promise<void>;
+  updateOfferImage: (offerId: string, nextImageKey: string) => Promise<void>;
   savePost: (input: PostDraftInput) => Promise<string>;
   updatePostStatus: (postId: string, status: PublishStatus) => Promise<void>;
   deletePost: (postId: string) => Promise<void>;
+  updatePostCoverImage: (
+    postId: string,
+    nextCoverImageKey: string
+  ) => Promise<void>;
   saveDirectProduct: (input: DirectProductDraftInput) => Promise<string>;
   updateDirectProductStatus: (
     productId: string,
@@ -296,9 +312,27 @@ interface FirebaseContextValue {
     stockCount?: number
   ) => Promise<void>;
   deleteDirectProduct: (productId: string) => Promise<void>;
+  updateDirectProductImage: (
+    productId: string,
+    nextImageKey: string
+  ) => Promise<void>;
   saveCampaign: (input: CampaignDraftInput) => Promise<string>;
   updateCampaignStatus: (campaignId: string, status: PublishStatus) => Promise<void>;
   deleteCampaign: (campaignId: string) => Promise<void>;
+  dropdownOptions: Record<DropdownListKey, string[]>;
+  addDropdownOption: (listKey: DropdownListKey, newOption: string) => void;
+  renameDropdownOption: (
+    listKey: DropdownListKey,
+    oldOption: string,
+    nextOption: string
+  ) => void;
+  deleteDropdownOption: (
+    listKey: DropdownListKey,
+    optionToDelete: string
+  ) => void;
+  sectionHeaders: Record<SectionHeaderKey, SectionHeaderCopy>;
+  saveSectionHeader: (key: SectionHeaderKey, copy: SectionHeaderCopy) => void;
+  resetSectionHeader: (key: SectionHeaderKey) => void;
   placeDirectOrder: (input: DirectCheckoutInput) => Promise<DirectOrder>;
   updateDirectOrderFulfillment: (
     orderId: string,
@@ -343,7 +377,114 @@ const HIDDEN_SEED_IDS_KEY = 'pickra_hidden_seed_ids_v1';
 const CART_STORAGE_KEY = 'pickra_direct_cart_v1';
 const PROMO_STORAGE_KEY = 'pickra_active_promo_v1';
 const GUEST_ORDERS_STORAGE_KEY = 'pickra_guest_orders_v1';
+const WORKSPACE_OVERRIDES_STORAGE_KEY = 'pickra_workspace_overrides_v1';
 export const BOOTSTRAPPED_ADMIN_EMAIL = 'mengistushimelis@gmail.com';
+
+interface WorkspaceOverridesState {
+  offers: Record<string, AffiliateOffer>;
+  posts: Record<string, BlogPost>;
+  directProducts: Record<string, DirectProduct>;
+  campaigns: Record<string, MarketingCampaign>;
+  deletedIds: string[];
+  dropdownOptions: Record<DropdownListKey, string[]>;
+  sectionHeaders: Record<SectionHeaderKey, SectionHeaderCopy>;
+}
+
+function buildDefaultDropdownOptions(): Record<DropdownListKey, string[]> {
+  const seedStoreCats = Array.from(
+    new Set([
+      ...SEED_DIRECT_PRODUCTS.map((p) => p.category),
+      ...DEFAULT_STORE_CATEGORIES,
+    ])
+  );
+  const seedAffCats = Array.from(
+    new Set([
+      ...SEED_OFFERS.map((o) => o.category),
+      ...DEFAULT_AFFILIATE_CATEGORIES,
+    ])
+  );
+  return {
+    storeCategories: seedStoreCats,
+    productPlatforms: [...PRODUCT_AFFILIATE_PLATFORMS],
+    servicePlatforms: [...SERVICE_AFFILIATE_PLATFORMS],
+    blogCategories: [...DEFAULT_POST_CATEGORIES],
+    affiliateCategories: seedAffCats,
+    digitalFormats: [...DEFAULT_DIGITAL_FORMATS],
+    campaignChannels: [...DEFAULT_CAMPAIGN_CHANNELS],
+  };
+}
+
+function loadInitialWorkspaceOverrides(): WorkspaceOverridesState {
+  const defaults: WorkspaceOverridesState = {
+    offers: {},
+    posts: {},
+    directProducts: {},
+    campaigns: {},
+    deletedIds: [],
+    dropdownOptions: buildDefaultDropdownOptions(),
+    sectionHeaders: { ...DEFAULT_SECTION_HEADERS },
+  };
+  try {
+    const raw = localStorage.getItem(WORKSPACE_OVERRIDES_STORAGE_KEY);
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw) as Partial<WorkspaceOverridesState>;
+    const defaultDrops = buildDefaultDropdownOptions();
+    const mergedDrops = { ...defaultDrops };
+    if (parsed.dropdownOptions && typeof parsed.dropdownOptions === 'object') {
+      for (const k of Object.keys(defaultDrops) as DropdownListKey[]) {
+        const candidate = parsed.dropdownOptions[k];
+        if (Array.isArray(candidate) && candidate.length > 0) {
+          mergedDrops[k] = candidate
+            .map((s) => String(s).trim())
+            .filter(Boolean);
+        }
+      }
+    }
+    const mergedHeaders: Record<SectionHeaderKey, SectionHeaderCopy> = {
+      ...DEFAULT_SECTION_HEADERS,
+    };
+    if (parsed.sectionHeaders && typeof parsed.sectionHeaders === 'object') {
+      for (const k of Object.keys(DEFAULT_SECTION_HEADERS) as SectionHeaderKey[]) {
+        const c = parsed.sectionHeaders[k];
+        if (c && typeof c === 'object' && typeof c.title === 'string') {
+          mergedHeaders[k] = {
+            kicker: typeof c.kicker === 'string' ? c.kicker : DEFAULT_SECTION_HEADERS[k].kicker,
+            title: c.title,
+            subtitle:
+              typeof c.subtitle === 'string'
+                ? c.subtitle
+                : DEFAULT_SECTION_HEADERS[k].subtitle,
+          };
+        }
+      }
+    }
+    return {
+      offers:
+        parsed.offers && typeof parsed.offers === 'object'
+          ? (parsed.offers as Record<string, AffiliateOffer>)
+          : {},
+      posts:
+        parsed.posts && typeof parsed.posts === 'object'
+          ? (parsed.posts as Record<string, BlogPost>)
+          : {},
+      directProducts:
+        parsed.directProducts && typeof parsed.directProducts === 'object'
+          ? (parsed.directProducts as Record<string, DirectProduct>)
+          : {},
+      campaigns:
+        parsed.campaigns && typeof parsed.campaigns === 'object'
+          ? (parsed.campaigns as Record<string, MarketingCampaign>)
+          : {},
+      deletedIds: Array.isArray(parsed.deletedIds)
+        ? parsed.deletedIds.map(String)
+        : [],
+      dropdownOptions: mergedDrops,
+      sectionHeaders: mergedHeaders,
+    };
+  } catch {
+    return defaults;
+  }
+}
 const DEFAULT_FREE_SHIPPING_THRESHOLD_CENTS = 9500;
 const DEFAULT_FLAT_PHYSICAL_SHIPPING_CENTS = 900;
 
@@ -797,6 +938,26 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       return {};
     }
   });
+
+  const [workspaceOverrides, setWorkspaceOverrides] =
+    useState<WorkspaceOverridesState>(() => loadInitialWorkspaceOverrides());
+
+  function updateWorkspaceOverrides(
+    updater: (prev: WorkspaceOverridesState) => WorkspaceOverridesState
+  ) {
+    setWorkspaceOverrides((prev) => {
+      const next = updater(prev);
+      try {
+        localStorage.setItem(
+          WORKSPACE_OVERRIDES_STORAGE_KEY,
+          JSON.stringify(next)
+        );
+      } catch {
+        // ignore storage quota errors; in-memory state stays authoritative
+      }
+      return next;
+    });
+  }
 
   const isBootstrappedCreator = Boolean(
     user &&
@@ -1545,113 +1706,220 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const includeSeeds = siteConfig.showStarterSeeds;
 
+  const deletedSet = useMemo(
+    () => new Set([...hiddenSeedSet, ...workspaceOverrides.deletedIds]),
+    [hiddenSeedSet, workspaceOverrides.deletedIds]
+  );
+
   const publishedOffers = useMemo(() => {
     const map = new Map<string, AffiliateOffer>();
     for (const offer of publicFirestoreOffers) {
-      map.set(offer.id, offer);
+      if (!deletedSet.has(offer.id)) {
+        map.set(offer.id, offer);
+      }
     }
     if (includeSeeds) {
       for (const seed of SEED_OFFERS) {
-        if (!map.has(seed.id) && !hiddenSeedSet.has(seed.id)) {
+        if (!map.has(seed.id) && !deletedSet.has(seed.id)) {
           map.set(seed.id, seed);
         }
       }
     }
+    for (const localOffer of Object.values(workspaceOverrides.offers)) {
+      if (deletedSet.has(localOffer.id) || localOffer.status !== 'published') {
+        map.delete(localOffer.id);
+      } else {
+        map.set(localOffer.id, localOffer);
+      }
+    }
     return Array.from(map.values()).sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-  }, [publicFirestoreOffers, includeSeeds, hiddenSeedSet]);
+  }, [publicFirestoreOffers, includeSeeds, deletedSet, workspaceOverrides.offers]);
 
   const publishedPosts = useMemo(() => {
     const map = new Map<string, BlogPost>();
     for (const post of publicFirestorePosts) {
-      map.set(post.id, post);
+      if (!deletedSet.has(post.id)) {
+        map.set(post.id, post);
+      }
     }
     if (includeSeeds) {
       for (const seed of SEED_POSTS) {
-        if (!map.has(seed.id) && !hiddenSeedSet.has(seed.id)) {
+        if (!map.has(seed.id) && !deletedSet.has(seed.id)) {
           map.set(seed.id, seed);
         }
+      }
+    }
+    for (const localPost of Object.values(workspaceOverrides.posts)) {
+      if (deletedSet.has(localPost.id) || localPost.status !== 'published') {
+        map.delete(localPost.id);
+      } else {
+        map.set(localPost.id, localPost);
       }
     }
     return Array.from(map.values()).sort((a, b) => {
       if (a.featured !== b.featured) return a.featured ? -1 : 1;
       return b.updatedAtMs - a.updatedAtMs;
     });
-  }, [publicFirestorePosts, includeSeeds, hiddenSeedSet]);
+  }, [publicFirestorePosts, includeSeeds, deletedSet, workspaceOverrides.posts]);
 
   const publishedDirectProducts = useMemo(() => {
     const map = new Map<string, DirectProduct>();
     for (const prod of publicFirestoreProducts) {
-      map.set(prod.id, prod);
+      if (!deletedSet.has(prod.id)) {
+        map.set(prod.id, prod);
+      }
     }
     if (includeSeeds) {
       for (const seed of SEED_DIRECT_PRODUCTS) {
-        if (!map.has(seed.id) && !hiddenSeedSet.has(seed.id)) {
+        if (!map.has(seed.id) && !deletedSet.has(seed.id)) {
           map.set(seed.id, seed);
         }
+      }
+    }
+    for (const localProd of Object.values(workspaceOverrides.directProducts)) {
+      if (deletedSet.has(localProd.id) || localProd.status !== 'published') {
+        map.delete(localProd.id);
+      } else {
+        map.set(localProd.id, localProd);
       }
     }
     return Array.from(map.values()).sort((a, b) => {
       if (a.featured !== b.featured) return a.featured ? -1 : 1;
       return b.updatedAtMs - a.updatedAtMs;
     });
-  }, [publicFirestoreProducts, includeSeeds, hiddenSeedSet]);
+  }, [
+    publicFirestoreProducts,
+    includeSeeds,
+    deletedSet,
+    workspaceOverrides.directProducts,
+  ]);
 
   const publishedCampaigns = useMemo(() => {
     const map = new Map<string, MarketingCampaign>();
     for (const camp of publicFirestoreCampaigns) {
-      map.set(camp.id, camp);
+      if (!deletedSet.has(camp.id)) {
+        map.set(camp.id, camp);
+      }
     }
     if (includeSeeds) {
       for (const seed of SEED_CAMPAIGNS) {
-        if (!map.has(seed.id) && !hiddenSeedSet.has(seed.id)) {
+        if (!map.has(seed.id) && !deletedSet.has(seed.id)) {
           map.set(seed.id, seed);
         }
       }
     }
+    for (const localCamp of Object.values(workspaceOverrides.campaigns)) {
+      if (deletedSet.has(localCamp.id) || localCamp.status !== 'published') {
+        map.delete(localCamp.id);
+      } else {
+        map.set(localCamp.id, localCamp);
+      }
+    }
     return Array.from(map.values()).sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-  }, [publicFirestoreCampaigns, includeSeeds, hiddenSeedSet]);
+  }, [
+    publicFirestoreCampaigns,
+    includeSeeds,
+    deletedSet,
+    workspaceOverrides.campaigns,
+  ]);
 
   const studioOffers = useMemo(() => {
     const map = new Map<string, AffiliateOffer>();
     for (const offer of authorFirestoreOffers) {
-      map.set(offer.id, offer);
-    }
-    for (const offer of publicFirestoreOffers) {
-      if (!map.has(offer.id)) {
+      if (!deletedSet.has(offer.id)) {
         map.set(offer.id, offer);
       }
     }
+    for (const offer of publicFirestoreOffers) {
+      if (!map.has(offer.id) && !deletedSet.has(offer.id)) {
+        map.set(offer.id, offer);
+      }
+    }
+    for (const localOffer of Object.values(workspaceOverrides.offers)) {
+      if (!deletedSet.has(localOffer.id)) {
+        map.set(localOffer.id, localOffer);
+      }
+    }
     return Array.from(map.values()).sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-  }, [authorFirestoreOffers, publicFirestoreOffers]);
+  }, [
+    authorFirestoreOffers,
+    publicFirestoreOffers,
+    deletedSet,
+    workspaceOverrides.offers,
+  ]);
 
   const studioPosts = useMemo(() => {
     const map = new Map<string, BlogPost>();
     for (const post of authorFirestorePosts) {
-      map.set(post.id, post);
-    }
-    for (const post of publicFirestorePosts) {
-      if (!map.has(post.id)) {
+      if (!deletedSet.has(post.id)) {
         map.set(post.id, post);
       }
     }
+    for (const post of publicFirestorePosts) {
+      if (!map.has(post.id) && !deletedSet.has(post.id)) {
+        map.set(post.id, post);
+      }
+    }
+    for (const localPost of Object.values(workspaceOverrides.posts)) {
+      if (!deletedSet.has(localPost.id)) {
+        map.set(localPost.id, localPost);
+      }
+    }
     return Array.from(map.values()).sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-  }, [authorFirestorePosts, publicFirestorePosts]);
+  }, [
+    authorFirestorePosts,
+    publicFirestorePosts,
+    deletedSet,
+    workspaceOverrides.posts,
+  ]);
 
   const studioDirectProducts = useMemo(() => {
     const map = new Map<string, DirectProduct>();
     for (const prod of adminAllProducts) {
-      map.set(prod.id, prod);
-    }
-    for (const prod of ownSellerProducts) {
-      map.set(prod.id, prod);
-    }
-    for (const prod of publicFirestoreProducts) {
-      if (!map.has(prod.id)) {
+      if (!deletedSet.has(prod.id)) {
         map.set(prod.id, prod);
       }
     }
+    for (const prod of ownSellerProducts) {
+      if (!deletedSet.has(prod.id)) {
+        map.set(prod.id, prod);
+      }
+    }
+    for (const prod of publicFirestoreProducts) {
+      if (!map.has(prod.id) && !deletedSet.has(prod.id)) {
+        map.set(prod.id, prod);
+      }
+    }
+    for (const localProd of Object.values(workspaceOverrides.directProducts)) {
+      if (!deletedSet.has(localProd.id)) {
+        map.set(localProd.id, localProd);
+      }
+    }
     return Array.from(map.values()).sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-  }, [adminAllProducts, ownSellerProducts, publicFirestoreProducts]);
+  }, [
+    adminAllProducts,
+    ownSellerProducts,
+    publicFirestoreProducts,
+    deletedSet,
+    workspaceOverrides.directProducts,
+  ]);
+
+  const effectiveMySellerProducts = useMemo(() => {
+    const map = new Map<string, DirectProduct>();
+    for (const prod of ownSellerProducts) {
+      if (!deletedSet.has(prod.id)) {
+        map.set(prod.id, prod);
+      }
+    }
+    for (const localProd of Object.values(workspaceOverrides.directProducts)) {
+      if (!deletedSet.has(localProd.id)) {
+        if (!user || localProd.sellerId === user.uid || localProd.sellerId === 'editorial_desk') {
+          map.set(localProd.id, localProd);
+        }
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+  }, [ownSellerProducts, workspaceOverrides.directProducts, deletedSet, user]);
 
   const myPurchases = useMemo(() => {
     const map = new Map<string, DirectOrder>();
@@ -1680,50 +1948,123 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   const studioCampaigns = useMemo(() => {
     const map = new Map<string, MarketingCampaign>();
     for (const camp of authorFirestoreCampaigns) {
-      map.set(camp.id, camp);
-    }
-    for (const camp of publicFirestoreCampaigns) {
-      if (!map.has(camp.id)) {
+      if (!deletedSet.has(camp.id)) {
         map.set(camp.id, camp);
       }
     }
+    for (const camp of publicFirestoreCampaigns) {
+      if (!map.has(camp.id) && !deletedSet.has(camp.id)) {
+        map.set(camp.id, camp);
+      }
+    }
+    for (const localCamp of Object.values(workspaceOverrides.campaigns)) {
+      if (!deletedSet.has(localCamp.id)) {
+        map.set(localCamp.id, localCamp);
+      }
+    }
     return Array.from(map.values()).sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-  }, [authorFirestoreCampaigns, publicFirestoreCampaigns]);
+  }, [
+    authorFirestoreCampaigns,
+    publicFirestoreCampaigns,
+    deletedSet,
+    workspaceOverrides.campaigns,
+  ]);
 
   const allAccessibleOffersMap = useMemo(() => {
     const record: Record<string, AffiliateOffer> = {};
     for (const seed of SEED_OFFERS) {
-      if (!hiddenSeedSet.has(seed.id)) {
+      if (!deletedSet.has(seed.id)) {
         record[seed.id] = seed;
       }
     }
     for (const pub of publicFirestoreOffers) {
-      record[pub.id] = pub;
+      if (!deletedSet.has(pub.id)) {
+        record[pub.id] = pub;
+      }
     }
     for (const own of authorFirestoreOffers) {
-      record[own.id] = own;
+      if (!deletedSet.has(own.id)) {
+        record[own.id] = own;
+      }
+    }
+    for (const localOffer of Object.values(workspaceOverrides.offers)) {
+      if (!deletedSet.has(localOffer.id)) {
+        record[localOffer.id] = localOffer;
+      }
     }
     return record;
-  }, [publicFirestoreOffers, authorFirestoreOffers, hiddenSeedSet]);
+  }, [
+    publicFirestoreOffers,
+    authorFirestoreOffers,
+    deletedSet,
+    workspaceOverrides.offers,
+  ]);
+
+  const allAccessiblePostsMap = useMemo(() => {
+    const record: Record<string, BlogPost> = {};
+    for (const seed of SEED_POSTS) {
+      if (!deletedSet.has(seed.id)) {
+        record[seed.id] = seed;
+      }
+    }
+    for (const pub of publicFirestorePosts) {
+      if (!deletedSet.has(pub.id)) {
+        record[pub.id] = pub;
+      }
+    }
+    for (const own of authorFirestorePosts) {
+      if (!deletedSet.has(own.id)) {
+        record[own.id] = own;
+      }
+    }
+    for (const localPost of Object.values(workspaceOverrides.posts)) {
+      if (!deletedSet.has(localPost.id)) {
+        record[localPost.id] = localPost;
+      }
+    }
+    return record;
+  }, [
+    publicFirestorePosts,
+    authorFirestorePosts,
+    deletedSet,
+    workspaceOverrides.posts,
+  ]);
 
   const allAccessibleDirectProductsMap = useMemo(() => {
     const record: Record<string, DirectProduct> = {};
     for (const seed of SEED_DIRECT_PRODUCTS) {
-      if (!hiddenSeedSet.has(seed.id)) {
+      if (!deletedSet.has(seed.id)) {
         record[seed.id] = seed;
       }
     }
     for (const pub of publicFirestoreProducts) {
-      record[pub.id] = pub;
+      if (!deletedSet.has(pub.id)) {
+        record[pub.id] = pub;
+      }
     }
     for (const own of ownSellerProducts) {
-      record[own.id] = own;
+      if (!deletedSet.has(own.id)) {
+        record[own.id] = own;
+      }
     }
     for (const adm of adminAllProducts) {
-      record[adm.id] = adm;
+      if (!deletedSet.has(adm.id)) {
+        record[adm.id] = adm;
+      }
+    }
+    for (const localProd of Object.values(workspaceOverrides.directProducts)) {
+      if (!deletedSet.has(localProd.id)) {
+        record[localProd.id] = localProd;
+      }
     }
     return record;
-  }, [publicFirestoreProducts, ownSellerProducts, adminAllProducts, hiddenSeedSet]);
+  }, [
+    publicFirestoreProducts,
+    ownSellerProducts,
+    adminAllProducts,
+    deletedSet,
+    workspaceOverrides.directProducts,
+  ]);
 
   const clickCounts = useMemo(() => {
     const fsCounts: Record<string, number> = {};
@@ -2470,11 +2811,99 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     return normalized.slice(0, VALIDATION_LIMITS.VIDEO_URL_MAX);
   }
 
-  async function saveOffer(input: OfferDraftInput): Promise<string> {
-    assertCreatorAccess();
-    if (!user) throw new Error('Creator sign-in required.');
+  function addDropdownOption(listKey: DropdownListKey, newOption: string) {
+    const cleaned = newOption.trim().slice(0, 60);
+    if (cleaned.length < 2) return;
+    updateWorkspaceOverrides((prev) => {
+      const current = prev.dropdownOptions[listKey] || [];
+      if (current.some((o) => o.toLowerCase() === cleaned.toLowerCase())) {
+        return prev;
+      }
+      return {
+        ...prev,
+        dropdownOptions: {
+          ...prev.dropdownOptions,
+          [listKey]: [...current, cleaned].slice(0, 40),
+        },
+      };
+    });
+  }
 
+  function renameDropdownOption(
+    listKey: DropdownListKey,
+    oldOption: string,
+    nextOption: string
+  ) {
+    const cleaned = nextOption.trim().slice(0, 60);
+    if (cleaned.length < 2) return;
+    updateWorkspaceOverrides((prev) => {
+      const current = prev.dropdownOptions[listKey] || [];
+      const updated = current.map((o) => (o === oldOption ? cleaned : o));
+      const deduped = Array.from(new Set(updated));
+      return {
+        ...prev,
+        dropdownOptions: {
+          ...prev.dropdownOptions,
+          [listKey]: deduped,
+        },
+      };
+    });
+  }
+
+  function deleteDropdownOption(
+    listKey: DropdownListKey,
+    optionToDelete: string
+  ) {
+    updateWorkspaceOverrides((prev) => {
+      const current = prev.dropdownOptions[listKey] || [];
+      if (current.length <= 1) return prev;
+      const filtered = current.filter((o) => o !== optionToDelete);
+      return {
+        ...prev,
+        dropdownOptions: {
+          ...prev.dropdownOptions,
+          [listKey]: filtered.length > 0 ? filtered : current,
+        },
+      };
+    });
+  }
+
+  function saveSectionHeader(key: SectionHeaderKey, copy: SectionHeaderCopy) {
+    updateWorkspaceOverrides((prev) => ({
+      ...prev,
+      sectionHeaders: {
+        ...prev.sectionHeaders,
+        [key]: {
+          kicker: copy.kicker.trim().slice(0, 120),
+          title: (copy.title.trim() || DEFAULT_SECTION_HEADERS[key].title).slice(
+            0,
+            180
+          ),
+          subtitle: (copy.subtitle || '').trim().slice(0, 400),
+        },
+      },
+    }));
+  }
+
+  function resetSectionHeader(key: SectionHeaderKey) {
+    updateWorkspaceOverrides((prev) => ({
+      ...prev,
+      sectionHeaders: {
+        ...prev.sectionHeaders,
+        [key]: { ...DEFAULT_SECTION_HEADERS[key] },
+      },
+    }));
+  }
+
+  async function saveOffer(input: OfferDraftInput): Promise<string> {
     const cleanTitle = input.title.trim().slice(0, VALIDATION_LIMITS.OFFER_TITLE_MAX);
+    if (cleanTitle.length < 2) {
+      throw new Error('Title must be at least 2 characters.');
+    }
+    const cleanPlatform = (String(input.platform || 'Custom').trim() || 'Custom').slice(
+      0,
+      60
+    );
     const cleanCategory = (input.category.trim() || 'General').slice(
       0,
       VALIDATION_LIMITS.OFFER_CATEGORY_MAX
@@ -2505,15 +2934,63 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       VALIDATION_LIMITS.IMAGE_KEY_MAX
     );
     const cleanVideoUrl = sanitizeOptionalMediaVideoUrl(input.videoUrl);
-    const cleanSummary = input.summary.trim().slice(0, VALIDATION_LIMITS.SUMMARY_MAX);
-    if (cleanSummary.length < VALIDATION_LIMITS.SUMMARY_MIN) {
-      throw new Error('Description must be at least 10 characters.');
-    }
+    const rawSummary = input.summary.trim();
+    const cleanSummary = (
+      rawSummary.length >= VALIDATION_LIMITS.SUMMARY_MIN
+        ? rawSummary
+        : `${cleanTitle} — Vetted ${cleanPlatform} listing.`
+    ).slice(0, VALIDATION_LIMITS.SUMMARY_MAX);
 
     const cleanHighlights = input.highlights
       .map((item) => item.trim().slice(0, VALIDATION_LIMITS.HIGHLIGHT_ITEM_MAX))
       .filter((item) => item.length >= 1)
       .slice(0, VALIDATION_LIMITS.HIGHLIGHTS_MAX_COUNT);
+
+    const canWriteCloud = Boolean(
+      isCreatorAdmin &&
+        isNonAnonymousUser(user) &&
+        (!input.id || !input.id.startsWith('local_'))
+    );
+
+    if (!canWriteCloud || !user) {
+      const nowMs = Date.now();
+      const targetId = input.id || generateSafeDocId('local_offer');
+      const existing = allAccessibleOffersMap[targetId];
+      const localAuthorName =
+        profile?.displayName ||
+        user?.displayName ||
+        existing?.authorName ||
+        'Pickra Editorial';
+      const localRecord: AffiliateOffer = {
+        id: targetId,
+        authorId: user?.uid || existing?.authorId || 'editorial_desk',
+        authorName: localAuthorName,
+        title: cleanTitle,
+        kind: input.kind,
+        platform: cleanPlatform,
+        category: cleanCategory,
+        priceLabel: cleanPrice,
+        commissionNote: cleanCommission,
+        affiliateUrl: cleanUrl,
+        imageKey: cleanImageKey,
+        videoUrl: cleanVideoUrl,
+        summary: cleanSummary,
+        highlights: cleanHighlights,
+        status: input.status,
+        isSeed: false,
+        createdAtMs: existing?.createdAtMs || nowMs,
+        updatedAtMs: nowMs,
+      };
+      updateWorkspaceOverrides((prev) => ({
+        ...prev,
+        deletedIds: prev.deletedIds.filter((id) => id !== targetId),
+        offers: {
+          ...prev.offers,
+          [targetId]: localRecord,
+        },
+      }));
+      return targetId;
+    }
 
     const authorName = await ensureParentUserProfileExists(user);
     const replacingSeedId =
@@ -2528,7 +3005,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           authorName,
           title: cleanTitle,
           kind: input.kind,
-          platform: input.platform,
+          platform: cleanPlatform,
           category: cleanCategory,
           priceLabel: cleanPrice,
           commissionNote: cleanCommission,
@@ -2546,7 +3023,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           authorName,
           title: cleanTitle,
           kind: input.kind,
-          platform: input.platform,
+          platform: cleanPlatform,
           category: cleanCategory,
           priceLabel: cleanPrice,
           commissionNote: cleanCommission,
@@ -2561,6 +3038,17 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         });
       }
 
+      updateWorkspaceOverrides((prev) => {
+        const nextOffers = { ...prev.offers };
+        delete nextOffers[offerId];
+        if (replacingSeedId) delete nextOffers[replacingSeedId];
+        return {
+          ...prev,
+          deletedIds: prev.deletedIds.filter((id) => id !== offerId),
+          offers: nextOffers,
+        };
+      });
+
       if (replacingSeedId) {
         await hideSeedItem(replacingSeedId);
       }
@@ -2574,8 +3062,43 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }
 
+  async function updateOfferImage(offerId: string, nextImageKey: string) {
+    const existing = allAccessibleOffersMap[offerId];
+    if (!existing) return;
+    await saveOffer({
+      id: existing.id,
+      title: existing.title,
+      kind: existing.kind,
+      platform: existing.platform,
+      category: existing.category,
+      priceLabel: existing.priceLabel,
+      commissionNote: existing.commissionNote,
+      affiliateUrl: existing.affiliateUrl,
+      imageKey: nextImageKey,
+      videoUrl: existing.videoUrl,
+      summary: existing.summary,
+      highlights: existing.highlights,
+      status: existing.status,
+    });
+  }
+
   async function updateOfferStatus(offerId: string, status: PublishStatus) {
-    assertCreatorAccess();
+    if (
+      !isCreatorAdmin ||
+      !isNonAnonymousUser(user) ||
+      offerId.startsWith('local_')
+    ) {
+      const existing = allAccessibleOffersMap[offerId];
+      if (!existing) return;
+      updateWorkspaceOverrides((prev) => ({
+        ...prev,
+        offers: {
+          ...prev.offers,
+          [offerId]: { ...existing, status, updatedAtMs: Date.now() },
+        },
+      }));
+      return;
+    }
     if (offerId.startsWith('seed_')) {
       if (status !== 'published') {
         await hideSeedItem(offerId);
@@ -2594,34 +3117,49 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   async function deleteOffer(offerId: string) {
-    assertCreatorAccess();
+    updateWorkspaceOverrides((prev) => {
+      const nextOffers = { ...prev.offers };
+      delete nextOffers[offerId];
+      return {
+        ...prev,
+        offers: nextOffers,
+        deletedIds: Array.from(new Set([...prev.deletedIds, offerId])),
+      };
+    });
+
     if (offerId.startsWith('seed_')) {
       await hideSeedItem(offerId);
       return;
     }
-    const path = `offers/${offerId}`;
-    try {
-      await deleteDoc(doc(db, 'offers', offerId));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, path);
+    if (offerId.startsWith('local_')) {
+      return;
+    }
+    if (isCreatorAdmin && isNonAnonymousUser(user)) {
+      const path = `offers/${offerId}`;
+      try {
+        await deleteDoc(doc(db, 'offers', offerId));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, path);
+      }
     }
   }
 
   async function savePost(input: PostDraftInput): Promise<string> {
-    assertCreatorAccess();
-    if (!user) throw new Error('Creator sign-in required.');
-
     const cleanTitle = input.title.trim().slice(0, VALIDATION_LIMITS.POST_TITLE_MAX);
     if (cleanTitle.length < VALIDATION_LIMITS.POST_TITLE_MIN) {
       throw new Error('Headline must be at least 4 characters.');
     }
 
-    const cleanSubtitle = input.subtitle
-      .trim()
-      .slice(0, VALIDATION_LIMITS.POST_SUBTITLE_MAX);
-    if (cleanSubtitle.length < VALIDATION_LIMITS.POST_SUBTITLE_MIN) {
-      throw new Error('Article subtitle must be at least 8 characters.');
-    }
+    const rawSubtitle = input.subtitle.trim();
+    const cleanSubtitle = (
+      rawSubtitle.length >= VALIDATION_LIMITS.POST_SUBTITLE_MIN
+        ? rawSubtitle
+        : `${cleanTitle} — Editorial notes and curated picks.`
+    ).slice(0, VALIDATION_LIMITS.POST_SUBTITLE_MAX);
+
+    const cleanCategory = (
+      String(input.category || 'Field Guides').trim() || 'Field Guides'
+    ).slice(0, 60);
 
     const cleanSlug = toSafeSlug(input.slug || cleanTitle);
     const cleanReadMinutes = Math.max(
@@ -2662,6 +3200,53 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       })
     ).slice(0, 40);
 
+    const canWriteCloud = Boolean(
+      isCreatorAdmin &&
+        isNonAnonymousUser(user) &&
+        (!input.id || !input.id.startsWith('local_'))
+    );
+
+    if (!canWriteCloud || !user) {
+      const nowMs = Date.now();
+      const targetId = input.id || generateSafeDocId('local_post');
+      const existing = allAccessiblePostsMap[targetId];
+      const localAuthorName =
+        profile?.displayName ||
+        user?.displayName ||
+        existing?.authorName ||
+        'Pickra Editorial';
+      const localRecord: BlogPost = {
+        id: targetId,
+        authorId: user?.uid || existing?.authorId || 'editorial_desk',
+        authorName: localAuthorName,
+        title: cleanTitle,
+        subtitle: cleanSubtitle,
+        slug: cleanSlug,
+        category: cleanCategory,
+        readTimeMinutes: cleanReadMinutes,
+        coverImageKey: cleanCover,
+        content: cleanContent,
+        theme: cleanTheme,
+        attachedOfferIds: cleanAttachedIds,
+        disclosureText: cleanDisclosure,
+        featured: Boolean(input.featured),
+        status: input.status,
+        publishedLabel: cleanPublishedLabel,
+        isSeed: false,
+        createdAtMs: existing?.createdAtMs || nowMs,
+        updatedAtMs: nowMs,
+      };
+      updateWorkspaceOverrides((prev) => ({
+        ...prev,
+        deletedIds: prev.deletedIds.filter((id) => id !== targetId),
+        posts: {
+          ...prev.posts,
+          [targetId]: localRecord,
+        },
+      }));
+      return targetId;
+    }
+
     const authorName = await ensureParentUserProfileExists(user);
     const replacingSeedId =
       input.id && input.id.startsWith('seed_') ? input.id : null;
@@ -2676,7 +3261,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           title: cleanTitle,
           subtitle: cleanSubtitle,
           slug: cleanSlug,
-          category: input.category,
+          category: cleanCategory,
           readTimeMinutes: cleanReadMinutes,
           coverImageKey: cleanCover,
           content: cleanContent,
@@ -2695,7 +3280,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           title: cleanTitle,
           subtitle: cleanSubtitle,
           slug: cleanSlug,
-          category: input.category,
+          category: cleanCategory,
           readTimeMinutes: cleanReadMinutes,
           coverImageKey: cleanCover,
           content: cleanContent,
@@ -2710,6 +3295,17 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         });
       }
 
+      updateWorkspaceOverrides((prev) => {
+        const nextPosts = { ...prev.posts };
+        delete nextPosts[postId];
+        if (replacingSeedId) delete nextPosts[replacingSeedId];
+        return {
+          ...prev,
+          deletedIds: prev.deletedIds.filter((id) => id !== postId),
+          posts: nextPosts,
+        };
+      });
+
       if (replacingSeedId) {
         await hideSeedItem(replacingSeedId);
       }
@@ -2723,8 +3319,57 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }
 
+  async function updatePostCoverImage(
+    postId: string,
+    nextCoverImageKey: string
+  ) {
+    const existing = allAccessiblePostsMap[postId];
+    if (!existing) return;
+    await savePost({
+      id: existing.id,
+      title: existing.title,
+      subtitle: existing.subtitle,
+      slug: existing.slug,
+      category: existing.category,
+      readTimeMinutes: existing.readTimeMinutes,
+      coverImageKey: nextCoverImageKey,
+      content: existing.content,
+      theme: existing.theme,
+      attachedOfferIds: existing.attachedOfferIds,
+      disclosureText: existing.disclosureText,
+      featured: existing.featured,
+      status: existing.status,
+      publishedLabel: existing.publishedLabel,
+    });
+  }
+
   async function updatePostStatus(postId: string, status: PublishStatus) {
-    assertCreatorAccess();
+    const publishedLabel = new Date().toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    });
+    if (
+      !isCreatorAdmin ||
+      !isNonAnonymousUser(user) ||
+      postId.startsWith('local_')
+    ) {
+      const existing = allAccessiblePostsMap[postId];
+      if (!existing) return;
+      updateWorkspaceOverrides((prev) => ({
+        ...prev,
+        posts: {
+          ...prev.posts,
+          [postId]: {
+            ...existing,
+            status,
+            publishedLabel,
+            updatedAtMs: Date.now(),
+          },
+        },
+      }));
+      return;
+    }
     if (postId.startsWith('seed_')) {
       if (status !== 'published') {
         await hideSeedItem(postId);
@@ -2732,11 +3377,6 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       return;
     }
     const path = `posts/${postId}`;
-    const publishedLabel = new Date().toLocaleDateString('en-US', {
-      month: 'long',
-      day: 'numeric',
-      year: 'numeric',
-    });
     try {
       await updateDoc(doc(db, 'posts', postId), {
         status,
@@ -2749,50 +3389,47 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   async function deletePost(postId: string) {
-    assertCreatorAccess();
+    updateWorkspaceOverrides((prev) => {
+      const nextPosts = { ...prev.posts };
+      delete nextPosts[postId];
+      return {
+        ...prev,
+        posts: nextPosts,
+        deletedIds: Array.from(new Set([...prev.deletedIds, postId])),
+      };
+    });
+
     if (postId.startsWith('seed_')) {
       await hideSeedItem(postId);
       return;
     }
-    const path = `posts/${postId}`;
-    try {
-      await deleteDoc(doc(db, 'posts', postId));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, path);
+    if (postId.startsWith('local_')) {
+      return;
+    }
+    if (isCreatorAdmin && isNonAnonymousUser(user)) {
+      const path = `posts/${postId}`;
+      try {
+        await deleteDoc(doc(db, 'posts', postId));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, path);
+      }
     }
   }
 
   async function saveDirectProduct(input: DirectProductDraftInput): Promise<string> {
-    assertVerifiedSeller();
-    if (!user) throw new Error('Sign-in required.');
-
-    const replacingSeedId =
-      input.id && input.id.startsWith('seed_') ? input.id : null;
-    if (replacingSeedId && !isCreatorAdmin) {
-      throw new Error('Only the Website Owner can edit house starter editions.');
-    }
-
-    const isUpdate = Boolean(input.id && !input.id.startsWith('seed_'));
-    if (isUpdate && input.id) {
-      const existing = allAccessibleDirectProductsMap[input.id];
-      if (existing && existing.sellerId !== user.uid && !isCreatorAdmin) {
-        throw new Error('You can only edit products published by your own seller account.');
-      }
-    }
-
     const cleanTitle = input.title.trim().slice(0, VALIDATION_LIMITS.OFFER_TITLE_MAX);
     if (cleanTitle.length < VALIDATION_LIMITS.OFFER_TITLE_MIN) {
       throw new Error('Product title must be at least 2 characters.');
     }
 
-    const cleanSubtitle = input.subtitle
-      .trim()
-      .slice(0, VALIDATION_LIMITS.PRODUCT_SUBTITLE_MAX);
-    if (cleanSubtitle.length < VALIDATION_LIMITS.PRODUCT_SUBTITLE_MIN) {
-      throw new Error('Product subtitle must be at least 4 characters.');
-    }
+    const rawSubtitle = input.subtitle.trim();
+    const cleanSubtitle = (
+      rawSubtitle.length >= VALIDATION_LIMITS.PRODUCT_SUBTITLE_MIN
+        ? rawSubtitle
+        : cleanTitle
+    ).slice(0, VALIDATION_LIMITS.PRODUCT_SUBTITLE_MAX);
 
-    const cleanCategory = (input.category.trim() || 'Creator Editions').slice(
+    const cleanCategory = (input.category.trim() || 'Studio Editions').slice(
       0,
       VALIDATION_LIMITS.OFFER_CATEGORY_MAX
     );
@@ -2852,12 +3489,12 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       );
     }
 
-    const cleanSummary = input.summary
-      .trim()
-      .slice(0, VALIDATION_LIMITS.PRODUCT_SUMMARY_MAX);
-    if (cleanSummary.length < VALIDATION_LIMITS.SUMMARY_MIN) {
-      throw new Error('Product summary must be at least 10 characters.');
-    }
+    const rawSummary = input.summary.trim();
+    const cleanSummary = (
+      rawSummary.length >= VALIDATION_LIMITS.SUMMARY_MIN
+        ? rawSummary
+        : `${cleanTitle} — ${cleanSubtitle}`
+    ).slice(0, VALIDATION_LIMITS.PRODUCT_SUMMARY_MAX);
 
     const cleanHighlights = input.highlights
       .map((item) => item.trim().slice(0, VALIDATION_LIMITS.HIGHLIGHT_ITEM_MAX))
@@ -2871,12 +3508,77 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         : 'Ships directly within 48 hours via tracked courier')
     ).slice(0, VALIDATION_LIMITS.PRODUCT_DELIVERY_NOTE_MAX);
 
+    const existing = input.id ? allAccessibleDirectProductsMap[input.id] : undefined;
+    const isSeedId = Boolean(input.id && input.id.startsWith('seed_'));
+    const isLocalId = Boolean(input.id && input.id.startsWith('local_'));
+
+    // Determine whether Firestore cloud write is authorized and applicable
+    const canWriteCloud = Boolean(
+      isNonAnonymousUser(user) &&
+        !isLocalId &&
+        (!input.id ||
+          (isSeedId && isCreatorAdmin) ||
+          (!isSeedId &&
+            (isCreatorAdmin || !existing || existing.sellerId === user.uid)))
+    );
+
+    if (!canWriteCloud || !user) {
+      const nowMs = Date.now();
+      const targetId = input.id || generateSafeDocId('local_prod');
+      const localSellerName =
+        profile?.storeName ||
+        profile?.displayName ||
+        user?.displayName ||
+        existing?.sellerName ||
+        'Pickra Studio';
+      const localSellerId =
+        user && !user.isAnonymous
+          ? user.uid
+          : existing?.sellerId || 'editorial_desk';
+      const localRecord: DirectProduct = {
+        id: targetId,
+        sellerId: localSellerId,
+        sellerName: localSellerName,
+        title: cleanTitle,
+        subtitle: cleanSubtitle,
+        kind: input.kind,
+        category: cleanCategory,
+        sku: cleanSku,
+        priceCents: cleanPriceCents,
+        compareAtCents: cleanCompareAtCents,
+        stockCount: cleanStock,
+        badgeLabel: cleanBadge,
+        imageKey: cleanImageKey,
+        videoUrl: cleanVideoUrl,
+        digitalFileUrl: cleanDigitalFileUrl,
+        digitalFileName: cleanDigitalFileName,
+        digitalFileType: cleanDigitalFileType,
+        summary: cleanSummary,
+        highlights: cleanHighlights,
+        deliveryNote: cleanDeliveryNote,
+        featured: Boolean(input.featured),
+        status: input.status,
+        isSeed: false,
+        createdAtMs: existing?.createdAtMs || nowMs,
+        updatedAtMs: nowMs,
+      };
+      updateWorkspaceOverrides((prev) => ({
+        ...prev,
+        deletedIds: prev.deletedIds.filter((id) => id !== targetId),
+        directProducts: {
+          ...prev.directProducts,
+          [targetId]: localRecord,
+        },
+      }));
+      return targetId;
+    }
+
+    const replacingSeedId = isSeedId && input.id ? input.id : null;
+    const isUpdate = Boolean(input.id && !isSeedId);
     const resolvedSellerName = await ensureParentUserProfileExists(user);
-    const existingProd =
-      isUpdate && input.id ? allAccessibleDirectProductsMap[input.id] : undefined;
     const sellerName =
-      existingProd && existingProd.sellerId !== user.uid
-        ? existingProd.sellerName
+      existing && existing.sellerId !== user.uid && !isSeedId
+        ? existing.sellerName
         : resolvedSellerName;
 
     const productId = isUpdate && input.id ? input.id : generateSafeDocId('prod');
@@ -2935,6 +3637,17 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         });
       }
 
+      updateWorkspaceOverrides((prev) => {
+        const nextProds = { ...prev.directProducts };
+        delete nextProds[productId];
+        if (replacingSeedId) delete nextProds[replacingSeedId];
+        return {
+          ...prev,
+          deletedIds: prev.deletedIds.filter((id) => id !== productId),
+          directProducts: nextProds,
+        };
+      });
+
       if (replacingSeedId) {
         await hideSeedItem(replacingSeedId);
       }
@@ -2948,27 +3661,74 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }
 
+  async function updateDirectProductImage(
+    productId: string,
+    nextImageKey: string
+  ) {
+    const existing = allAccessibleDirectProductsMap[productId];
+    if (!existing) return;
+    await saveDirectProduct({
+      id: existing.id,
+      title: existing.title,
+      subtitle: existing.subtitle,
+      kind: existing.kind,
+      category: existing.category,
+      sku: existing.sku,
+      priceCents: existing.priceCents,
+      compareAtCents: existing.compareAtCents,
+      stockCount: existing.stockCount,
+      badgeLabel: existing.badgeLabel,
+      imageKey: nextImageKey,
+      videoUrl: existing.videoUrl,
+      digitalFileUrl: existing.digitalFileUrl,
+      digitalFileName: existing.digitalFileName,
+      digitalFileType: existing.digitalFileType,
+      summary: existing.summary,
+      highlights: existing.highlights,
+      deliveryNote: existing.deliveryNote,
+      featured: existing.featured,
+      status: existing.status,
+    });
+  }
+
   async function updateDirectProductStatus(
     productId: string,
     status: PublishStatus,
     stockCount?: number
   ) {
-    assertVerifiedSeller();
-    if (productId.startsWith('seed_')) {
-      assertCreatorAccess();
-      if (status !== 'published') {
-        await hideSeedItem(productId);
-      }
-      return;
-    }
     const existingProd = allAccessibleDirectProductsMap[productId];
-    if (existingProd && existingProd.sellerId !== user?.uid && !isCreatorAdmin) {
-      throw new Error('You can only update your own published products.');
-    }
     const nextStock =
       typeof stockCount === 'number'
         ? Math.max(0, Math.min(100000, Math.round(stockCount)))
         : existingProd?.stockCount ?? 10;
+
+    const canWriteCloud = Boolean(
+      isNonAnonymousUser(user) &&
+        !productId.startsWith('local_') &&
+        !productId.startsWith('seed_') &&
+        (isCreatorAdmin || existingProd?.sellerId === user.uid)
+    );
+
+    if (!canWriteCloud) {
+      if (productId.startsWith('seed_') && isCreatorAdmin && status !== 'published') {
+        await hideSeedItem(productId);
+      }
+      if (!existingProd) return;
+      updateWorkspaceOverrides((prev) => ({
+        ...prev,
+        directProducts: {
+          ...prev.directProducts,
+          [productId]: {
+            ...existingProd,
+            status,
+            stockCount: nextStock,
+            updatedAtMs: Date.now(),
+          },
+        },
+      }));
+      return;
+    }
+
     const path = `directProducts/${productId}`;
     try {
       await updateDoc(doc(db, 'directProducts', productId), {
@@ -2982,28 +3742,38 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   async function deleteDirectProduct(productId: string) {
-    assertVerifiedSeller();
+    const existingProd = allAccessibleDirectProductsMap[productId];
+    updateWorkspaceOverrides((prev) => {
+      const nextProds = { ...prev.directProducts };
+      delete nextProds[productId];
+      return {
+        ...prev,
+        directProducts: nextProds,
+        deletedIds: Array.from(new Set([...prev.deletedIds, productId])),
+      };
+    });
+
     if (productId.startsWith('seed_')) {
-      assertCreatorAccess();
       await hideSeedItem(productId);
       return;
     }
-    const existingProd = allAccessibleDirectProductsMap[productId];
-    if (existingProd && existingProd.sellerId !== user?.uid && !isCreatorAdmin) {
-      throw new Error('You can only delete products published by your own seller account.');
+    if (productId.startsWith('local_')) {
+      return;
     }
-    const path = `directProducts/${productId}`;
-    try {
-      await deleteDoc(doc(db, 'directProducts', productId));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, path);
+    if (
+      isNonAnonymousUser(user) &&
+      (isCreatorAdmin || existingProd?.sellerId === user.uid)
+    ) {
+      const path = `directProducts/${productId}`;
+      try {
+        await deleteDoc(doc(db, 'directProducts', productId));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, path);
+      }
     }
   }
 
   async function saveCampaign(input: CampaignDraftInput): Promise<string> {
-    assertCreatorAccess();
-    if (!user) throw new Error('Creator sign-in required.');
-
     const cleanTitle = input.title
       .trim()
       .slice(0, VALIDATION_LIMITS.CAMPAIGN_TITLE_MAX);
@@ -3027,6 +3797,9 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       0,
       Math.min(5000000, Math.round(Number(input.minOrderCents) || 0))
     );
+    const cleanChannel = (
+      String(input.channel || 'Storefront Banner').trim() || 'Storefront Banner'
+    ).slice(0, 60);
     const rawFeaturedId = input.featuredProductId.trim();
     const cleanFeaturedId =
       rawFeaturedId && VALIDATION_LIMITS.ID_REGEX.test(rawFeaturedId)
@@ -3037,6 +3810,43 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       0,
       40
     );
+
+    const canWriteCloud = Boolean(
+      isCreatorAdmin &&
+        isNonAnonymousUser(user) &&
+        (!input.id || !input.id.startsWith('local_'))
+    );
+
+    if (!canWriteCloud || !user) {
+      const nowMs = Date.now();
+      const targetId = input.id || generateSafeDocId('local_camp');
+      const localRecord: MarketingCampaign = {
+        id: targetId,
+        authorId: user?.uid || 'editorial_desk',
+        title: cleanTitle,
+        description: cleanDesc,
+        promoCode: cleanCode,
+        discountPercent: cleanDiscount,
+        minOrderCents: cleanMinOrder,
+        channel: cleanChannel,
+        featuredProductId: cleanFeaturedId,
+        ctaLabel: cleanCta,
+        expiresLabel: cleanExpires,
+        status: input.status,
+        isSeed: false,
+        createdAtMs: nowMs,
+        updatedAtMs: nowMs,
+      };
+      updateWorkspaceOverrides((prev) => ({
+        ...prev,
+        deletedIds: prev.deletedIds.filter((id) => id !== targetId),
+        campaigns: {
+          ...prev.campaigns,
+          [targetId]: localRecord,
+        },
+      }));
+      return targetId;
+    }
 
     await ensureParentUserProfileExists(user);
     const replacingSeedId =
@@ -3053,7 +3863,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           promoCode: cleanCode,
           discountPercent: cleanDiscount,
           minOrderCents: cleanMinOrder,
-          channel: input.channel,
+          channel: cleanChannel,
           featuredProductId: cleanFeaturedId,
           ctaLabel: cleanCta,
           expiresLabel: cleanExpires,
@@ -3068,7 +3878,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           promoCode: cleanCode,
           discountPercent: cleanDiscount,
           minOrderCents: cleanMinOrder,
-          channel: input.channel,
+          channel: cleanChannel,
           featuredProductId: cleanFeaturedId,
           ctaLabel: cleanCta,
           expiresLabel: cleanExpires,
@@ -3077,6 +3887,17 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           updatedAt: serverTimestamp(),
         });
       }
+
+      updateWorkspaceOverrides((prev) => {
+        const nextCamps = { ...prev.campaigns };
+        delete nextCamps[campaignId];
+        if (replacingSeedId) delete nextCamps[replacingSeedId];
+        return {
+          ...prev,
+          deletedIds: prev.deletedIds.filter((id) => id !== campaignId),
+          campaigns: nextCamps,
+        };
+      });
 
       if (replacingSeedId) {
         await hideSeedItem(replacingSeedId);
@@ -3092,7 +3913,24 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   async function updateCampaignStatus(campaignId: string, status: PublishStatus) {
-    assertCreatorAccess();
+    if (
+      !isCreatorAdmin ||
+      !isNonAnonymousUser(user) ||
+      campaignId.startsWith('local_')
+    ) {
+      const existing =
+        publishedCampaigns.find((c) => c.id === campaignId) ||
+        studioCampaigns.find((c) => c.id === campaignId);
+      if (!existing) return;
+      updateWorkspaceOverrides((prev) => ({
+        ...prev,
+        campaigns: {
+          ...prev.campaigns,
+          [campaignId]: { ...existing, status, updatedAtMs: Date.now() },
+        },
+      }));
+      return;
+    }
     if (campaignId.startsWith('seed_')) {
       if (status !== 'published') {
         await hideSeedItem(campaignId);
@@ -3111,16 +3949,30 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   async function deleteCampaign(campaignId: string) {
-    assertCreatorAccess();
+    updateWorkspaceOverrides((prev) => {
+      const nextCamps = { ...prev.campaigns };
+      delete nextCamps[campaignId];
+      return {
+        ...prev,
+        campaigns: nextCamps,
+        deletedIds: Array.from(new Set([...prev.deletedIds, campaignId])),
+      };
+    });
+
     if (campaignId.startsWith('seed_')) {
       await hideSeedItem(campaignId);
       return;
     }
-    const path = `campaigns/${campaignId}`;
-    try {
-      await deleteDoc(doc(db, 'campaigns', campaignId));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, path);
+    if (campaignId.startsWith('local_')) {
+      return;
+    }
+    if (isCreatorAdmin && isNonAnonymousUser(user)) {
+      const path = `campaigns/${campaignId}`;
+      try {
+        await deleteDoc(doc(db, 'campaigns', campaignId));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, path);
+      }
     }
   }
 
@@ -3887,7 +4739,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         analyticsEvents: firestoreAnalyticsEvents,
         hasFirestoreContent,
         publishedDirectProducts,
-        mySellerProducts: ownSellerProducts,
+        mySellerProducts: effectiveMySellerProducts,
         studioDirectProducts,
         allAccessibleDirectProductsMap,
         publishedCampaigns,
@@ -3932,15 +4784,25 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         saveOffer,
         updateOfferStatus,
         deleteOffer,
+        updateOfferImage,
         savePost,
         updatePostStatus,
         deletePost,
+        updatePostCoverImage,
         saveDirectProduct,
         updateDirectProductStatus,
         deleteDirectProduct,
+        updateDirectProductImage,
         saveCampaign,
         updateCampaignStatus,
         deleteCampaign,
+        dropdownOptions: workspaceOverrides.dropdownOptions,
+        addDropdownOption,
+        renameDropdownOption,
+        deleteDropdownOption,
+        sectionHeaders: workspaceOverrides.sectionHeaders,
+        saveSectionHeader,
+        resetSectionHeader,
         placeDirectOrder,
         updateDirectOrderFulfillment,
         updateOrderPayoutDetails,

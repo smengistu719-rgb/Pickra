@@ -3,6 +3,7 @@ import {
   Activity,
   BarChart3,
   BookOpen,
+  Camera,
   Check,
   Copy,
   Download,
@@ -34,6 +35,7 @@ import {
   useFirebaseApp,
 } from '../context/FirebaseContext';
 import {
+  compressImageFileToDataUrl,
   downloadCsvFile,
   formatPriceCents,
   readCompactVideoFileToDataUrl,
@@ -60,6 +62,7 @@ import {
 import { AuthPanel } from './AuthModal';
 import { ImageUploadPicker } from './ImageUploadPicker';
 import { VideoEmbedFigure } from './EditorialRichBlocks';
+import { EditableDropdownSelect } from './EditableDropdownSelect';
 
 interface PublisherStudioProps {
   onOpenPublishedPost: (post: BlogPost) => void;
@@ -149,11 +152,14 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     signOutUser,
     saveOffer,
     updateOfferStatus,
+    updateOfferImage,
     deleteOffer,
     updatePostStatus,
+    updatePostCoverImage,
     deletePost,
     saveDirectProduct,
     updateDirectProductStatus,
+    updateDirectProductImage,
     deleteDirectProduct,
     saveCampaign,
     updateCampaignStatus,
@@ -167,6 +173,10 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     revokeCoAdmin,
     importStarterCatalog,
     deleteAnalyticsEvent,
+    dropdownOptions,
+    addDropdownOption,
+    renameDropdownOption,
+    deleteDropdownOption,
   } = useFirebaseApp();
 
   const [activeView, setActiveView] = useState<BackendView>('overview');
@@ -471,6 +481,14 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
       },
     ];
 
+    const mergedPlatforms = Array.from(
+      new Set<AffiliatePlatform>([
+        ...dropdownOptions.productPlatforms,
+        ...dropdownOptions.servicePlatforms,
+        ...PLATFORMS,
+      ])
+    );
+
     const corePlatforms = new Set<AffiliatePlatform>([
       'Amazon',
       'Digistore24',
@@ -480,7 +498,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
       'Gumroad',
     ]);
 
-    for (const plat of PLATFORMS) {
+    for (const plat of mergedPlatforms) {
       const platOffers = allManageableOffers.filter((o) => o.platform === plat);
       const publishedPlatCount = platOffers.filter(
         (o) => o.status === 'published'
@@ -493,9 +511,12 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
 
       rows.push({
         channel: plat,
-        role: SERVICE_AFFILIATE_PLATFORMS.includes(plat) && plat !== 'Custom'
-          ? 'Service Affiliate Network'
-          : 'Product Affiliate Network',
+        role:
+          (dropdownOptions.servicePlatforms.includes(plat) ||
+            SERVICE_AFFILIATE_PLATFORMS.includes(plat)) &&
+          plat !== 'Custom'
+            ? 'Service Affiliate Network'
+            : 'Product Affiliate Network',
         activeItems: publishedPlatCount,
         interactionsLabel: 'outbound clicks',
         interactionsCount: platClicks,
@@ -510,6 +531,8 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     allManageableDirectProducts,
     allManageableOffers,
     clickCounts,
+    dropdownOptions.productPlatforms,
+    dropdownOptions.servicePlatforms,
     monitorStats.totalBagAdds,
     monitorStats.activeRevenueCents,
     sellerOrders,
@@ -2170,6 +2193,35 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                           </select>
                         )}
 
+                        <label className="inline-flex items-center gap-1 px-2.5 py-2 font-medium text-stone-700 bg-[#FBF9F5] hover:bg-stone-100 border border-stone-200 rounded-lg cursor-pointer whitespace-nowrap shrink-0">
+                          <Camera className="w-3.5 h-3.5 text-[#9A3412]" />
+                          <span>Photo</span>
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp,image/gif"
+                            onChange={async (e) => {
+                              const f = e.target.files?.[0];
+                              if (!f) return;
+                              try {
+                                const dataUrl =
+                                  await compressImageFileToDataUrl(f);
+                                await updatePostCoverImage(post.id, dataUrl);
+                                notify('ok', 'Blog cover photo updated.');
+                              } catch (err) {
+                                notify(
+                                  'err',
+                                  err instanceof Error
+                                    ? err.message
+                                    : 'Failed to update cover photo.'
+                                );
+                              } finally {
+                                e.target.value = '';
+                              }
+                            }}
+                            className="hidden"
+                          />
+                        </label>
+
                         <button
                           type="button"
                           onClick={() => onOpenBlockEditor(post)}
@@ -2324,14 +2376,23 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                     <label className="block text-xs font-medium text-stone-700 mb-1">
                       Category
                     </label>
-                    <input
-                      type="text"
-                      required
-                      minLength={2}
-                      maxLength={60}
+                    <EditableDropdownSelect
+                      ariaLabel="Category"
                       value={prodCategory}
-                      onChange={(e) => setProdCategory(e.target.value)}
-                      className="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                      options={dropdownOptions.storeCategories}
+                      onChange={setProdCategory}
+                      onAddOption={(opt) =>
+                        addDropdownOption('storeCategories', opt)
+                      }
+                      onRenameOption={(oldOpt, newOpt) =>
+                        renameDropdownOption('storeCategories', oldOpt, newOpt)
+                      }
+                      onDeleteOption={(opt) =>
+                        deleteDropdownOption('storeCategories', opt)
+                      }
+                      selectClassName="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                      placeholder="New category..."
+                      compact
                     />
                   </div>
 
@@ -2771,6 +2832,35 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                             </span>
                           )}
 
+                          <label className="inline-flex items-center gap-1 px-2.5 py-1.5 font-medium text-stone-700 bg-[#FBF9F5] hover:bg-stone-100 border border-stone-200 rounded-lg cursor-pointer whitespace-nowrap">
+                            <Camera className="w-3.5 h-3.5 text-[#9A3412]" />
+                            <span>Photo</span>
+                            <input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp,image/gif"
+                              onChange={async (e) => {
+                                const f = e.target.files?.[0];
+                                if (!f) return;
+                                try {
+                                  const dataUrl =
+                                    await compressImageFileToDataUrl(f);
+                                  await updateDirectProductImage(prod.id, dataUrl);
+                                  notify('ok', 'Product photo updated.');
+                                } catch (err) {
+                                  notify(
+                                    'err',
+                                    err instanceof Error
+                                      ? err.message
+                                      : 'Failed to update product photo.'
+                                  );
+                                } finally {
+                                  e.target.value = '';
+                                }
+                              }}
+                              className="hidden"
+                            />
+                          </label>
+
                           <button
                             type="button"
                             onClick={() => loadDirectProductIntoComposer(prod)}
@@ -2924,19 +3014,28 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                     <label className="block text-xs font-medium text-stone-700 mb-1">
                       Placement Channel
                     </label>
-                    <select
+                    <EditableDropdownSelect
+                      ariaLabel="Placement Channel"
                       value={campChannel}
-                      onChange={(e) =>
-                        setCampChannel(e.target.value as CampaignChannel)
+                      options={
+                        dropdownOptions.campaignChannels.length > 0
+                          ? dropdownOptions.campaignChannels
+                          : CAMPAIGN_CHANNELS
                       }
-                      className="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
-                    >
-                      {CAMPAIGN_CHANNELS.map((ch) => (
-                        <option key={ch} value={ch}>
-                          {ch}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(val) => setCampChannel(val as CampaignChannel)}
+                      onAddOption={(opt) =>
+                        addDropdownOption('campaignChannels', opt)
+                      }
+                      onRenameOption={(oldOpt, newOpt) =>
+                        renameDropdownOption('campaignChannels', oldOpt, newOpt)
+                      }
+                      onDeleteOption={(opt) =>
+                        deleteDropdownOption('campaignChannels', opt)
+                      }
+                      selectClassName="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                      placeholder="New channel..."
+                      compact
+                    />
                   </div>
 
                   <div>
@@ -3579,19 +3678,46 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                     <label className="block text-xs font-medium text-stone-700 mb-1">
                       Platform
                     </label>
-                    <select
+                    <EditableDropdownSelect
+                      ariaLabel="Platform"
                       value={offerPlatform}
-                      onChange={(e) =>
-                        setOfferPlatform(e.target.value as AffiliatePlatform)
+                      options={
+                        offerKind === 'service'
+                          ? dropdownOptions.servicePlatforms
+                          : dropdownOptions.productPlatforms
                       }
-                      className="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
-                    >
-                      {PLATFORMS.map((p) => (
-                        <option key={p} value={p}>
-                          {p}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(val) =>
+                        setOfferPlatform(val as AffiliatePlatform)
+                      }
+                      onAddOption={(opt) =>
+                        addDropdownOption(
+                          offerKind === 'service'
+                            ? 'servicePlatforms'
+                            : 'productPlatforms',
+                          opt
+                        )
+                      }
+                      onRenameOption={(oldOpt, newOpt) =>
+                        renameDropdownOption(
+                          offerKind === 'service'
+                            ? 'servicePlatforms'
+                            : 'productPlatforms',
+                          oldOpt,
+                          newOpt
+                        )
+                      }
+                      onDeleteOption={(opt) =>
+                        deleteDropdownOption(
+                          offerKind === 'service'
+                            ? 'servicePlatforms'
+                            : 'productPlatforms',
+                          opt
+                        )
+                      }
+                      selectClassName="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                      placeholder="New platform..."
+                      compact
+                    />
                   </div>
 
                   <div>
@@ -3615,14 +3741,27 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                     <label className="block text-xs font-medium text-stone-700 mb-1">
                       Department / Category
                     </label>
-                    <input
-                      type="text"
-                      required
-                      minLength={2}
-                      maxLength={60}
+                    <EditableDropdownSelect
+                      ariaLabel="Department or Category"
                       value={offerCategory}
-                      onChange={(e) => setOfferCategory(e.target.value)}
-                      className="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                      options={dropdownOptions.affiliateCategories}
+                      onChange={setOfferCategory}
+                      onAddOption={(opt) =>
+                        addDropdownOption('affiliateCategories', opt)
+                      }
+                      onRenameOption={(oldOpt, newOpt) =>
+                        renameDropdownOption(
+                          'affiliateCategories',
+                          oldOpt,
+                          newOpt
+                        )
+                      }
+                      onDeleteOption={(opt) =>
+                        deleteDropdownOption('affiliateCategories', opt)
+                      }
+                      selectClassName="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                      placeholder="New category..."
+                      compact
                     />
                   </div>
                   <div>
@@ -3829,7 +3968,13 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                     className="px-3 py-1.5 text-xs bg-white border border-stone-200 rounded-lg text-stone-700"
                   >
                     <option value="All">All Networks</option>
-                    {PLATFORMS.map((p) => (
+                    {Array.from(
+                      new Set([
+                        ...dropdownOptions.productPlatforms,
+                        ...dropdownOptions.servicePlatforms,
+                        ...PLATFORMS,
+                      ])
+                    ).map((p) => (
                       <option key={p} value={p}>
                         {p}
                       </option>
@@ -3895,6 +4040,35 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                             ))}
                           </select>
                         )}
+
+                        <label className="inline-flex items-center gap-1 px-2.5 py-1.5 font-medium text-stone-700 bg-[#FBF9F5] hover:bg-stone-100 border border-stone-200 rounded-lg cursor-pointer whitespace-nowrap">
+                          <Camera className="w-3.5 h-3.5 text-[#9A3412]" />
+                          <span>Photo</span>
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp,image/gif"
+                            onChange={async (e) => {
+                              const f = e.target.files?.[0];
+                              if (!f) return;
+                              try {
+                                const dataUrl =
+                                  await compressImageFileToDataUrl(f);
+                                await updateOfferImage(offer.id, dataUrl);
+                                notify('ok', 'Affiliate offer photo updated.');
+                              } catch (err) {
+                                notify(
+                                  'err',
+                                  err instanceof Error
+                                    ? err.message
+                                    : 'Failed to update offer photo.'
+                                );
+                              } finally {
+                                e.target.value = '';
+                              }
+                            }}
+                            className="hidden"
+                          />
+                        </label>
 
                         <button
                           type="button"

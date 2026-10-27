@@ -19,7 +19,8 @@ export type AffiliatePlatform =
   | '99designs'
   | 'Contra'
   | 'PeoplePerHour'
-  | 'Custom';
+  | 'Custom'
+  | (string & {});
 
 export const PRODUCT_AFFILIATE_PLATFORMS: AffiliatePlatform[] = [
   'Amazon',
@@ -71,7 +72,15 @@ export type PostCategory =
   | 'Hardware & Gear'
   | 'Digital Systems'
   | 'Freelance Talent'
-  | 'Field Guides';
+  | 'Field Guides'
+  | (string & {});
+
+export const DEFAULT_POST_CATEGORIES: string[] = [
+  'Hardware & Gear',
+  'Digital Systems',
+  'Freelance Talent',
+  'Field Guides',
+];
 
 export type BlogColorTheme =
   | 'classic'
@@ -161,7 +170,102 @@ export type CampaignChannel =
   | 'Storefront Banner'
   | 'Blog Callout'
   | 'Social & Email'
-  | 'Flash Bundle';
+  | 'Flash Bundle'
+  | (string & {});
+
+export const DEFAULT_CAMPAIGN_CHANNELS: string[] = [
+  'Storefront Banner',
+  'Blog Callout',
+  'Social & Email',
+  'Flash Bundle',
+];
+
+export const DEFAULT_STORE_CATEGORIES: string[] = [
+  'Studio Editions',
+  'Desk Hardware',
+  'Digital Kits',
+  'Creator Tools',
+  'Templates & eBooks',
+];
+
+export const DEFAULT_AFFILIATE_CATEGORIES: string[] = [
+  'Studio Hardware',
+  'Audio & Video Gear',
+  'Digital Courses & SaaS',
+  'Design & Brand Identity',
+  'Web & Full-Stack Dev',
+  'Video Editing & Motion',
+  'SEO & Copywriting',
+];
+
+export const DEFAULT_DIGITAL_FORMATS: string[] = [
+  'PDF Guide / eBook',
+  'ZIP Archive / Bundle',
+  'Excel / Spreadsheet (.xlsx)',
+  'HTML Template / Web App',
+  'Digital Tool / Software',
+  'Notion / Figma Kit',
+  'External Download Link',
+];
+
+export type DropdownListKey =
+  | 'storeCategories'
+  | 'productPlatforms'
+  | 'servicePlatforms'
+  | 'blogCategories'
+  | 'affiliateCategories'
+  | 'digitalFormats'
+  | 'campaignChannels';
+
+export type SectionHeaderKey =
+  | 'blogFeed'
+  | 'blogStoreShowcase'
+  | 'blogAffiliateShowcase'
+  | 'storeMasthead'
+  | 'productAffiliateMasthead'
+  | 'serviceAffiliateMasthead';
+
+export interface SectionHeaderCopy {
+  kicker: string;
+  title: string;
+  subtitle?: string;
+}
+
+export const DEFAULT_SECTION_HEADERS: Record<SectionHeaderKey, SectionHeaderCopy> = {
+  blogFeed: {
+    kicker: 'Editorial Blog',
+    title: 'Latest Blog Stories',
+    subtitle: 'Long-form essays, field reviews, and embedded creator & affiliate picks.',
+  },
+  blogStoreShowcase: {
+    kicker: 'Creator Store · Direct Checkout',
+    title: 'Creator Store Releases',
+    subtitle: 'Physical editions and instant digital downloads sold directly by creators.',
+  },
+  blogAffiliateShowcase: {
+    kicker: 'Affiliate Directory · Partner Links',
+    title: 'Product & Service Affiliate Picks',
+    subtitle: 'Vetted physical gear, digital software, and specialist services across global partner networks.',
+  },
+  storeMasthead: {
+    kicker: 'Creator Store · Physical & Digital Products',
+    title: 'Shop Direct from Creators — No Sign-In Needed to Buy',
+    subtitle:
+      'Browse and purchase physical goods or instant digital downloads (PDFs, ZIPs, Excel tools, eBooks, HTML templates) directly without an account. Creators can register payout accounts (Bank, Telebirr, Stripe, PayPal) and publish products anytime.',
+  },
+  productAffiliateMasthead: {
+    kicker: 'Product Affiliate · Physical & Digital Offers',
+    title: 'Curated Physical & Digital Affiliate Picks',
+    subtitle:
+      'Vetted hardware, software, courses, and digital tools across Amazon, Digistore24, ClickBank, Gumroad, and partner marketplaces. Every link takes you directly to the official product page.',
+  },
+  serviceAffiliateMasthead: {
+    kicker: 'Service Affiliate · Vetted Freelance & Studio Partners',
+    title: 'Commission Vetted Creative & Technical Specialists',
+    subtitle:
+      'Handpicked designers, engineers, editors, and consultants across Fiverr, Upwork, Toptal, 99designs, and specialist partner platforms.',
+  },
+};
 
 export type OrderFulfillmentStatus =
   | 'paid'

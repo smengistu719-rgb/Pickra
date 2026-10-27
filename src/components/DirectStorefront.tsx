@@ -48,14 +48,19 @@ import {
 } from '../types';
 import { AuthPanel } from './AuthModal';
 import { DirectProductCard } from './DirectProductCard';
+import { EditableDropdownSelect } from './EditableDropdownSelect';
+import { EditableSectionHeader } from './EditableSectionHeader';
 import { InlineFormattedText, VideoEmbedFigure } from './EditorialRichBlocks';
 import { ImageUploadPicker } from './ImageUploadPicker';
 import { ResilientImage } from './ResilientImage';
+import { compressImageFileToDataUrl } from '../firebase';
 
 export type StoreSubView = 'catalog' | 'sell' | 'purchases';
 
 interface DirectStorefrontProps {
   initialSubView?: StoreSubView;
+  initialEditProduct?: DirectProduct | null;
+  onConsumeInitialEditProduct?: () => void;
 }
 
 const DIGITAL_FORMAT_PRESETS = [
@@ -85,6 +90,8 @@ const CAMPAIGN_CHANNELS: CampaignChannel[] = [
 
 export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
   initialSubView = 'catalog',
+  initialEditProduct = null,
+  onConsumeInitialEditProduct,
 }) => {
   const {
     user,
@@ -110,8 +117,16 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
     saveDirectProduct,
     updateDirectProductStatus,
     deleteDirectProduct,
+    updateDirectProductImage,
     saveCampaign,
     deleteCampaign,
+    dropdownOptions,
+    addDropdownOption,
+    renameDropdownOption,
+    deleteDropdownOption,
+    sectionHeaders,
+    saveSectionHeader,
+    resetSectionHeader,
     updateDirectOrderFulfillment,
     updateOrderPayoutDetails,
     cancelBuyerOrder,
@@ -257,13 +272,13 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
     [privateInfo, profile, user]
   );
 
-  const categories = useMemo(() => {
-    const set = new Set<string>();
+  const storeCategoryOptions = useMemo(() => {
+    const set = new Set<string>(dropdownOptions.storeCategories || []);
     for (const p of publishedDirectProducts) {
       if (p.category) set.add(p.category);
     }
-    return ['All', ...Array.from(set)];
-  }, [publishedDirectProducts]);
+    return Array.from(set);
+  }, [dropdownOptions.storeCategories, publishedDirectProducts]);
 
   const filteredProducts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -319,21 +334,24 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
 
   function canManageProduct(product: DirectProduct): boolean {
     if (isCreatorAdmin) return true;
-    if (!user) return false;
+    if (
+      product.isSeed ||
+      product.id.startsWith('seed_') ||
+      product.id.startsWith('local_') ||
+      product.sellerId === 'editorial_desk'
+    ) {
+      return true;
+    }
+    if (!user) return true;
     return product.sellerId === user.uid;
   }
 
   function openNewProductModal() {
-    if (!user) {
-      setSubView('sell');
-      openAuthModal('signup', true);
-      return;
-    }
     setEditingProductId(undefined);
     setProdTitle('');
     setProdSubtitle('');
     setProdKind('physical');
-    setProdCategory('Creator Editions');
+    setProdCategory(storeCategoryOptions[0] || 'Studio Editions');
     setProdSku(`PK-${Math.floor(100 + Math.random() * 900)}`);
     setProdPriceUsd('68.00');
     setProdCompareUsd('');
@@ -353,6 +371,13 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
     setProdStatus('published');
     setIsProductModalOpen(true);
   }
+
+  useEffect(() => {
+    if (initialEditProduct) {
+      openEditProductModal(initialEditProduct);
+      onConsumeInitialEditProduct?.();
+    }
+  }, [initialEditProduct]);
 
   function openEditProductModal(prod: DirectProduct) {
     setEditingProductId(prod.id);
@@ -803,20 +828,13 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
     <section className="max-w-[1200px] mx-auto px-5 sm:px-8 py-10 sm:py-14">
       {/* Storefront Masthead & Creator Marketplace Sub-Navigation */}
       <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 pb-8 border-b border-stone-200">
-        <div className="max-w-3xl">
-          <div className="text-xs text-stone-500">
-            Pickra Store · Multi-Creator Marketplace · Physical &amp; Digital
-            Products
-          </div>
-          <h1 className="mt-2 font-serif text-3xl sm:text-4xl font-medium text-stone-900">
-            Creators&apos; Store — Physical Editions &amp; Instant Digital Kits
-          </h1>
-          <p className="mt-3 text-base text-stone-600 leading-relaxed">
-            Shop physical goods and instant digital downloads sold directly on
-            Pickra—or open your own Creator Seller Account to publish products
-            and get paid whenever your work sells.
-          </p>
-        </div>
+        <EditableSectionHeader
+          copy={sectionHeaders.storeMasthead}
+          onSave={(nextCopy) => saveSectionHeader('storeMasthead', nextCopy)}
+          onReset={() => resetSectionHeader('storeMasthead')}
+          level="h1"
+          className="max-w-3xl"
+        />
 
         <div className="flex flex-wrap items-center gap-2.5 shrink-0">
           <div className="inline-flex flex-wrap items-center gap-1 p-1 bg-[#F3EFE8] rounded-lg">
@@ -1019,7 +1037,6 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                     )}
                   </button>
 
-                  {isCreatorAdmin && (
                     <div className="inline-flex items-center gap-2 pl-2 border-l border-stone-300 text-xs">
                       <button
                         type="button"
@@ -1070,7 +1087,6 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                         </button>
                       )}
                     </div>
-                  )}
                 </div>
               </div>
 
@@ -1098,18 +1114,16 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
               )}
             </div>
           ) : (
-            isCreatorAdmin && (
-              <div className="mt-6 flex justify-end">
-                <button
-                  type="button"
-                  onClick={openNewCampaignModal}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-stone-800 bg-[#F3EFE8] hover:bg-stone-200 rounded-lg cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5 text-[#9A3412]" />
-                  <span>Add Promotional Campaign</span>
-                </button>
-              </div>
-            )
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={openNewCampaignModal}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-stone-800 bg-[#F3EFE8] hover:bg-stone-200 rounded-lg cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5 text-[#9A3412]" />
+                <span>Add Promotional Campaign</span>
+              </button>
+            </div>
           )}
 
           {/* Creator Marketplace Callout Bar */}
@@ -1158,18 +1172,24 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                 ))}
               </div>
 
-              <select
-                aria-label="Filter direct store by department"
+              <EditableDropdownSelect
+                ariaLabel="Filter direct store by collection"
                 value={categoryFilter}
-                onChange={(e) => setCategoryFilter(e.target.value)}
-                className="px-3 py-2 text-xs font-medium bg-white border border-stone-200 rounded-lg text-stone-700 focus:outline-none focus:border-[#9A3412]"
-              >
-                {categories.map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat === 'All' ? 'All Collections' : cat}
-                  </option>
-                ))}
-              </select>
+                options={storeCategoryOptions}
+                prefixOptions={[{ value: 'All', label: 'All Collections' }]}
+                onChange={setCategoryFilter}
+                onAddOption={(opt) => addDropdownOption('storeCategories', opt)}
+                onRenameOption={(oldOpt, nextOpt) => {
+                  renameDropdownOption('storeCategories', oldOpt, nextOpt);
+                  if (categoryFilter === oldOpt) setCategoryFilter(nextOpt);
+                }}
+                onDeleteOption={(opt) =>
+                  deleteDropdownOption('storeCategories', opt)
+                }
+                placeholder="Collection"
+                compact
+                selectClassName="px-3 py-2 text-xs font-medium bg-white border border-stone-200 rounded-lg text-stone-700 focus:outline-none focus:border-[#9A3412]"
+              />
             </div>
 
             <div className="relative w-full lg:w-72">
@@ -1225,6 +1245,16 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                       setSelectedProduct(p);
                       setDetailQty(1);
                     }}
+                    onChangeImage={
+                      editable
+                        ? async (targetProd, nextImageKey) => {
+                            await updateDirectProductImage(
+                              targetProd.id,
+                              nextImageKey
+                            );
+                          }
+                        : undefined
+                    }
                     onEdit={editable ? openEditProductModal : undefined}
                     onDelete={
                       editable
@@ -2394,17 +2424,57 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
               </div>
               <div className="flex items-center gap-2">
                 {canManageProduct(selectedProduct) && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const target = selectedProduct;
-                      setSelectedProduct(null);
-                      openEditProductModal(target);
-                    }}
-                    className="px-2.5 py-1 text-xs font-medium text-stone-700 hover:text-[#9A3412] bg-[#F3EFE8] rounded-md cursor-pointer"
-                  >
-                    Edit Product
-                  </button>
+                  <>
+                    <label className="px-2.5 py-1 text-xs font-medium text-stone-700 hover:text-stone-900 bg-[#F3EFE8] rounded-md cursor-pointer whitespace-nowrap">
+                      <span>Change Photo</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          try {
+                            const compressed =
+                              await compressImageFileToDataUrl(file);
+                            await updateDirectProductImage(
+                              selectedProduct.id,
+                              compressed
+                            );
+                            setSelectedProduct((prev) =>
+                              prev ? { ...prev, imageKey: compressed } : null
+                            );
+                          } catch {
+                            // ignore
+                          } finally {
+                            e.target.value = '';
+                          }
+                        }}
+                        className="hidden"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const target = selectedProduct;
+                        setSelectedProduct(null);
+                        openEditProductModal(target);
+                      }}
+                      className="px-2.5 py-1 text-xs font-medium text-stone-700 hover:text-[#9A3412] bg-[#F3EFE8] rounded-md cursor-pointer whitespace-nowrap"
+                    >
+                      Edit Product
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const targetId = selectedProduct.id;
+                        setSelectedProduct(null);
+                        void deleteDirectProduct(targetId);
+                      }}
+                      className="px-2.5 py-1 text-xs font-medium text-stone-600 hover:text-red-700 bg-white border border-stone-200 rounded-md cursor-pointer whitespace-nowrap"
+                    >
+                      Delete
+                    </button>
+                  </>
                 )}
                 <button
                   type="button"
@@ -2421,7 +2491,10 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
               <div className="md:col-span-6 space-y-4">
                 <div className="aspect-[4/3] rounded-xl overflow-hidden bg-[#F3EFE8] border border-stone-200/80">
                   <ResilientImage
-                    imageKey={selectedProduct.imageKey}
+                    imageKey={
+                      allAccessibleDirectProductsMap[selectedProduct.id]
+                        ?.imageKey || selectedProduct.imageKey
+                    }
                     alt={selectedProduct.title}
                     fallbackLabel={selectedProduct.title}
                     className="w-full h-full object-cover"
@@ -2654,14 +2727,21 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                 <label className="block text-xs font-medium text-stone-700 mb-1">
                   Category
                 </label>
-                <input
-                  type="text"
-                  required
-                  minLength={2}
-                  maxLength={60}
+                <EditableDropdownSelect
+                  ariaLabel="Product category"
                   value={prodCategory}
-                  onChange={(e) => setProdCategory(e.target.value)}
-                  className="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                  options={storeCategoryOptions}
+                  onChange={setProdCategory}
+                  onAddOption={(opt) => addDropdownOption('storeCategories', opt)}
+                  onRenameOption={(oldOpt, nextOpt) =>
+                    renameDropdownOption('storeCategories', oldOpt, nextOpt)
+                  }
+                  onDeleteOption={(opt) =>
+                    deleteDropdownOption('storeCategories', opt)
+                  }
+                  placeholder="Category"
+                  compact
+                  selectClassName="px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg text-stone-900 focus:outline-none focus:border-[#9A3412]"
                 />
               </div>
 
@@ -2867,26 +2947,27 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                     <label className="block text-[11px] font-medium text-stone-600 mb-1">
                       Asset Format / Type
                     </label>
-                    <select
+                    <EditableDropdownSelect
+                      ariaLabel="Digital asset format"
                       value={prodDigitalFileType}
-                      onChange={(e) => setProdDigitalFileType(e.target.value)}
-                      className="w-full px-2.5 py-2 text-xs bg-white border border-stone-300 rounded-lg"
-                    >
-                      <option value="">Select format (optional)...</option>
-                      {DIGITAL_FORMAT_PRESETS.map((fmt) => (
-                        <option key={fmt} value={fmt}>
-                          {fmt}
-                        </option>
-                      ))}
-                      {prodDigitalFileType &&
-                        !DIGITAL_FORMAT_PRESETS.includes(
-                          prodDigitalFileType
-                        ) && (
-                          <option value={prodDigitalFileType}>
-                            {prodDigitalFileType}
-                          </option>
-                        )}
-                    </select>
+                      options={dropdownOptions.digitalFormats}
+                      prefixOptions={[
+                        { value: '', label: 'Select format (optional)...' },
+                      ]}
+                      onChange={setProdDigitalFileType}
+                      onAddOption={(opt) =>
+                        addDropdownOption('digitalFormats', opt)
+                      }
+                      onRenameOption={(oldOpt, nextOpt) =>
+                        renameDropdownOption('digitalFormats', oldOpt, nextOpt)
+                      }
+                      onDeleteOption={(opt) =>
+                        deleteDropdownOption('digitalFormats', opt)
+                      }
+                      placeholder="Digital format"
+                      compact
+                      selectClassName="px-2.5 py-2 text-xs bg-white border border-stone-300 rounded-lg text-stone-900 focus:outline-none focus:border-[#9A3412]"
+                    />
                   </div>
 
                   <div>
@@ -3009,7 +3090,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
       {/* =================================================================
           MODAL 3: ADD / EDIT PROMO CAMPAIGN (WEBSITE OWNER)
          ================================================================= */}
-      {isCampaignModalOpen && isCreatorAdmin && (
+      {isCampaignModalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-stone-950/50 backdrop-blur-[1px]"
           role="dialog"
@@ -3112,24 +3193,29 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-stone-700 mb-1">
                   Channel
                 </label>
-                <select
+                <EditableDropdownSelect
+                  ariaLabel="Campaign channel"
                   value={campChannel}
-                  onChange={(e) =>
-                    setCampChannel(e.target.value as CampaignChannel)
+                  options={dropdownOptions.campaignChannels}
+                  onChange={(val) => setCampChannel(val as CampaignChannel)}
+                  onAddOption={(opt) =>
+                    addDropdownOption('campaignChannels', opt)
                   }
-                  className="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
-                >
-                  {CAMPAIGN_CHANNELS.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
+                  onRenameOption={(oldOpt, nextOpt) =>
+                    renameDropdownOption('campaignChannels', oldOpt, nextOpt)
+                  }
+                  onDeleteOption={(opt) =>
+                    deleteDropdownOption('campaignChannels', opt)
+                  }
+                  placeholder="Channel"
+                  compact
+                  selectClassName="px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg text-stone-900 focus:outline-none focus:border-[#9A3412]"
+                />
               </div>
               <div>
                 <label className="block text-xs font-medium text-stone-700 mb-1">

@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Compass } from 'lucide-react';
-import { resolveImageSrc } from '../assets/presetImages';
+import { resolveImageSrc, subscribePresetImages } from '../assets/presetImages';
 
 interface ResilientImageProps {
   imageKey: string;
@@ -16,6 +16,19 @@ export const ResilientImage: React.FC<ResilientImageProps> = ({
   fallbackLabel,
 }) => {
   const [failed, setFailed] = useState(false);
+  const [, setPresetVersion] = useState(0);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [imageKey]);
+
+  useEffect(() => {
+    return subscribePresetImages(() => {
+      setFailed(false);
+      setPresetVersion((v) => v + 1);
+    });
+  }, []);
+
   const src = resolveImageSrc(imageKey);
 
   if (failed || !src) {

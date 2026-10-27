@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import { Check, PenLine, ShoppingBag, Trash2 } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { Camera, Check, PenLine, ShoppingBag, Trash2 } from 'lucide-react';
 import { DirectProduct } from '../types';
-import { formatPriceCents } from '../firebase';
+import { compressImageFileToDataUrl, formatPriceCents } from '../firebase';
 import { ResilientImage } from './ResilientImage';
 import { useFirebaseApp } from '../context/FirebaseContext';
 
@@ -11,6 +11,10 @@ interface DirectProductCardProps {
   onInspectProduct?: (product: DirectProduct) => void;
   onEdit?: (product: DirectProduct) => void;
   onDelete?: (product: DirectProduct) => Promise<void> | void;
+  onChangeImage?: (
+    product: DirectProduct,
+    nextImageKey: string
+  ) => Promise<void> | void;
 }
 
 function getDirectKindLabel(product: DirectProduct): string {
@@ -28,10 +32,13 @@ export const DirectProductCard: React.FC<DirectProductCardProps> = ({
   onInspectProduct,
   onEdit,
   onDelete,
+  onChangeImage,
 }) => {
   const { addToCart } = useFirebaseApp();
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
   const [justAdded, setJustAdded] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
 
   const isOutOfStock = product.stockCount <= 0;
   const hasMarkdown =
@@ -51,9 +58,38 @@ export const DirectProductCard: React.FC<DirectProductCardProps> = ({
     window.setTimeout(() => setJustAdded(false), 1400);
   }
 
+  async function handlePhotoFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !onChangeImage) return;
+    setPhotoBusy(true);
+    try {
+      const compressed = await compressImageFileToDataUrl(file);
+      await onChangeImage(product, compressed);
+    } catch {
+      // ignore invalid file errors
+    } finally {
+      setPhotoBusy(false);
+      if (photoInputRef.current) {
+        photoInputRef.current.value = '';
+      }
+    }
+  }
+
+  const sharedPhotoInput = onChangeImage ? (
+    <input
+      ref={photoInputRef}
+      type="file"
+      accept="image/*"
+      onChange={(e) => void handlePhotoFile(e)}
+      onClick={(e) => e.stopPropagation()}
+      className="hidden"
+    />
+  ) : null;
+
   if (variant === 'rail') {
     return (
       <div className="py-4 first:pt-0 last:pb-0 border-b border-stone-200/80 last:border-b-0">
+        {sharedPhotoInput}
         <div className="flex items-start gap-3.5">
           <div className="w-16 h-16 rounded-lg overflow-hidden bg-[#F3EFE8] shrink-0">
             <ResilientImage
@@ -107,29 +143,92 @@ export const DirectProductCard: React.FC<DirectProductCardProps> = ({
         aria-label={`Pickra Store Product: ${product.title}`}
         className="my-8 bg-white border border-stone-300/90 rounded-xl p-5 sm:p-6 text-stone-900"
       >
+        {sharedPhotoInput}
         <div className="grid grid-cols-1 sm:grid-cols-12 gap-5 items-center">
-          <div className="sm:col-span-4 aspect-[4/3] rounded-lg overflow-hidden bg-[#F3EFE8]">
+          <div className="sm:col-span-4 aspect-[4/3] rounded-lg overflow-hidden bg-[#F3EFE8] relative group/inlineimg">
             <ResilientImage
               imageKey={product.imageKey}
               alt={product.title}
               fallbackLabel={product.title}
               className="w-full h-full object-cover"
             />
+            {onChangeImage && (
+              <button
+                type="button"
+                disabled={photoBusy}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  photoInputRef.current?.click();
+                }}
+                className="absolute bottom-2 right-2 inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-stone-900 bg-white/95 hover:bg-white border border-stone-300 rounded shadow-sm cursor-pointer whitespace-nowrap"
+              >
+                <Camera className="w-3 h-3 text-[#9A3412]" />
+                <span>{photoBusy ? 'Saving...' : 'Photo'}</span>
+              </button>
+            )}
           </div>
           <div className="sm:col-span-8">
-            <div className="flex flex-wrap items-center gap-1.5 text-xs text-stone-500">
-              <span className="font-semibold text-[#9A3412]">
-                By {product.sellerName || 'Pickra Studio'}
-              </span>
-              <span aria-hidden="true">·</span>
-              <span>{getDirectKindLabel(product)}</span>
-              {product.badgeLabel && (
-                <>
-                  <span aria-hidden="true">·</span>
-                  <span className="text-stone-700 font-medium">
-                    {product.badgeLabel}
-                  </span>
-                </>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-1.5 text-xs text-stone-500">
+                <span className="font-semibold text-[#9A3412]">
+                  By {product.sellerName || 'Pickra Studio'}
+                </span>
+                <span aria-hidden="true">·</span>
+                <span>{getDirectKindLabel(product)}</span>
+                {product.badgeLabel && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span className="text-stone-700 font-medium">
+                      {product.badgeLabel}
+                    </span>
+                  </>
+                )}
+              </div>
+
+              {(onEdit || onDelete) && (
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {onEdit && (
+                    <button
+                      type="button"
+                      onClick={() => onEdit(product)}
+                      className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-stone-700 hover:text-stone-900 bg-[#F3EFE8] hover:bg-stone-200 rounded cursor-pointer whitespace-nowrap"
+                    >
+                      <PenLine className="w-3 h-3" />
+                      <span>Edit</span>
+                    </button>
+                  )}
+                  {onDelete &&
+                    (confirmDelete ? (
+                      <div className="inline-flex items-center gap-1 text-[11px] bg-red-50 border border-red-200 px-2 py-0.5 rounded">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void onDelete(product);
+                            setConfirmDelete(false);
+                          }}
+                          className="font-semibold text-red-700 hover:underline cursor-pointer"
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDelete(false)}
+                          className="text-stone-500 hover:text-stone-800 cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDelete(true)}
+                        aria-label={`Delete ${product.title}`}
+                        className="p-1 text-stone-400 hover:text-red-700 rounded cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    ))}
+                </div>
               )}
             </div>
 
@@ -214,13 +313,29 @@ export const DirectProductCard: React.FC<DirectProductCardProps> = ({
         onInspectProduct ? 'cursor-pointer' : ''
       }`}
     >
-      <div className="aspect-[4/3] w-full bg-[#F3EFE8] overflow-hidden">
+      {sharedPhotoInput}
+      <div className="aspect-[4/3] w-full bg-[#F3EFE8] overflow-hidden relative">
         <ResilientImage
           imageKey={product.imageKey}
           alt={product.title}
           fallbackLabel={product.title}
           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
         />
+        {onChangeImage && (
+          <button
+            type="button"
+            disabled={photoBusy}
+            onClick={(e) => {
+              e.stopPropagation();
+              photoInputRef.current?.click();
+            }}
+            title="Upload a new product image"
+            className="absolute bottom-2.5 right-2.5 inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-stone-900 bg-white/95 hover:bg-white border border-stone-300/90 rounded-lg shadow-sm transition-colors cursor-pointer whitespace-nowrap"
+          >
+            <Camera className="w-3 h-3 text-[#9A3412]" />
+            <span>{photoBusy ? 'Saving...' : 'Photo'}</span>
+          </button>
+        )}
       </div>
 
       <div className="flex flex-col flex-1 p-5 sm:p-6">
@@ -255,8 +370,8 @@ export const DirectProductCard: React.FC<DirectProductCardProps> = ({
                   <span>Edit</span>
                 </button>
               )}
-              {onDelete && (
-                confirmDelete ? (
+              {onDelete &&
+                (confirmDelete ? (
                   <div className="inline-flex items-center gap-1 text-[11px] bg-red-50 border border-red-200 px-2 py-0.5 rounded">
                     <button
                       type="button"
@@ -281,12 +396,12 @@ export const DirectProductCard: React.FC<DirectProductCardProps> = ({
                     type="button"
                     onClick={() => setConfirmDelete(true)}
                     aria-label={`Delete ${product.title}`}
+                    title="Delete product"
                     className="p-1 text-stone-400 hover:text-red-700 rounded cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
-                )
-              )}
+                ))}
             </div>
           )}
         </div>

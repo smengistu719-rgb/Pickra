@@ -76,6 +76,7 @@ import { OfferCard } from './OfferCard';
 import { DirectProductCard } from './DirectProductCard';
 import { ResilientImage } from './ResilientImage';
 import { ImageUploadPicker } from './ImageUploadPicker';
+import { EditableDropdownSelect } from './EditableDropdownSelect';
 
 interface MediumBlockEditorProps {
   initialPost?: BlogPost | null;
@@ -352,8 +353,6 @@ interface SavedAffiliateCatalogDropdownProps {
   onSelectOffer: (offer: AffiliateOffer) => void;
   onSaveOffer: (input: OfferDraftInput) => Promise<string>;
   onDeleteOffer: (offerId: string) => Promise<void>;
-  isAuthenticated: boolean;
-  onRequireAuth: () => void;
 }
 
 const SavedAffiliateCatalogDropdown: React.FC<
@@ -366,9 +365,14 @@ const SavedAffiliateCatalogDropdown: React.FC<
   onSelectOffer,
   onSaveOffer,
   onDeleteOffer,
-  isAuthenticated,
-  onRequireAuth,
 }) => {
+  const {
+    dropdownOptions,
+    addDropdownOption,
+    renameDropdownOption,
+    deleteDropdownOption,
+  } = useFirebaseApp();
+
   const [internalSelectedId, setInternalSelectedId] = useState<string>(
     selectedOfferId || ''
   );
@@ -401,15 +405,11 @@ const SavedAffiliateCatalogDropdown: React.FC<
   );
 
   function openAddForm() {
-    if (!isAuthenticated) {
-      onRequireAuth();
-      return;
-    }
     setLocalError(null);
     setConfirmRemove(false);
     setDraftTitle('');
     setDraftKind('physical');
-    setDraftPlatform('Amazon');
+    setDraftPlatform(dropdownOptions.productPlatforms[0] || 'Amazon');
     setDraftPrice('$99.00');
     setDraftUrl('');
     setDraftImageKey('audio');
@@ -420,10 +420,6 @@ const SavedAffiliateCatalogDropdown: React.FC<
 
   function openEditForm() {
     if (!activeOffer) return;
-    if (!isAuthenticated) {
-      onRequireAuth();
-      return;
-    }
     setLocalError(null);
     setConfirmRemove(false);
     setDraftTitle(activeOffer.title);
@@ -438,10 +434,6 @@ const SavedAffiliateCatalogDropdown: React.FC<
   }
 
   async function handleSaveItem() {
-    if (!isAuthenticated) {
-      onRequireAuth();
-      return;
-    }
     setSaving(true);
     setLocalError(null);
     try {
@@ -518,10 +510,6 @@ const SavedAffiliateCatalogDropdown: React.FC<
 
   async function handleConfirmRemove() {
     if (!activeOffer) return;
-    if (!isAuthenticated) {
-      onRequireAuth();
-      return;
-    }
     setSaving(true);
     setLocalError(null);
     try {
@@ -676,20 +664,45 @@ const SavedAffiliateCatalogDropdown: React.FC<
             </select>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <select
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-start">
+            <EditableDropdownSelect
+              ariaLabel="Affiliate Platform"
               value={draftPlatform}
-              onChange={(e) =>
-                setDraftPlatform(e.target.value as AffiliatePlatform)
+              options={
+                draftKind === 'service'
+                  ? dropdownOptions.servicePlatforms
+                  : dropdownOptions.productPlatforms
               }
-              className="px-2.5 py-1.5 bg-white border border-stone-300 rounded"
-            >
-              {ALL_AFFILIATE_PLATFORMS.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
+              onChange={(val) => setDraftPlatform(val as AffiliatePlatform)}
+              onAddOption={(opt) =>
+                addDropdownOption(
+                  draftKind === 'service'
+                    ? 'servicePlatforms'
+                    : 'productPlatforms',
+                  opt
+                )
+              }
+              onRenameOption={(oldOpt, nextOpt) =>
+                renameDropdownOption(
+                  draftKind === 'service'
+                    ? 'servicePlatforms'
+                    : 'productPlatforms',
+                  oldOpt,
+                  nextOpt
+                )
+              }
+              onDeleteOption={(opt) =>
+                deleteDropdownOption(
+                  draftKind === 'service'
+                    ? 'servicePlatforms'
+                    : 'productPlatforms',
+                  opt
+                )
+              }
+              placeholder="Platform..."
+              compact
+              selectClassName="px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded text-stone-900"
+            />
             <input
               type="text"
               value={draftPrice}
@@ -705,6 +718,15 @@ const SavedAffiliateCatalogDropdown: React.FC<
             onChange={(e) => setDraftUrl(e.target.value)}
             placeholder="https://www.amazon.com/... or https://drive.google.com/..."
             className="w-full px-2.5 py-1.5 font-mono bg-white border border-stone-300 rounded"
+          />
+
+          <ImageUploadPicker
+            label="Item Image (Upload Photo, Paste URL, or Studio Preset)"
+            value={draftImageKey}
+            onChange={setDraftImageKey}
+            compact
+            showPreview={true}
+            previewAspectClass="aspect-[16/9]"
           />
 
           <input
@@ -801,9 +823,6 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
   onPublished,
 }) => {
   const {
-    user,
-    isCreatorAdmin,
-    adminRoleReady,
     siteConfig,
     studioOffers,
     publishedOffers,
@@ -811,17 +830,20 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
     studioDirectProducts,
     publishedDirectProducts,
     allAccessibleDirectProductsMap,
-    openAuthModal,
-    signOutUser,
     savePost,
     deletePost,
     saveOffer,
     deleteOffer,
     saveDirectProduct,
     deleteDirectProduct,
+    updateOfferImage,
+    updateDirectProductImage,
+    dropdownOptions,
+    addDropdownOption,
+    renameDropdownOption,
+    deleteDropdownOption,
   } = useFirebaseApp();
 
-  const [copiedOwnUid, setCopiedOwnUid] = useState(false);
   const [confirmDeleteStory, setConfirmDeleteStory] = useState(false);
   const [confirmRemoveStoreBlockId, setConfirmRemoveStoreBlockId] = useState<
     string | null
@@ -1546,10 +1568,6 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
   }
 
   async function handleQuickCreateOfferForBlock(targetBlockId: string) {
-    if (!user) {
-      openAuthModal('signin', false);
-      return;
-    }
     setBusy(true);
     setStatusMessage(null);
     try {
@@ -1592,10 +1610,6 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
   }
 
   async function handleQuickCreateProductForBlock(targetBlockId: string) {
-    if (!user) {
-      openAuthModal('signin', false);
-      return;
-    }
     const parsedUsd = Number.parseFloat(quickProdPriceUsd);
     const priceCents = Number.isFinite(parsedUsd)
       ? Math.max(100, Math.round(parsedUsd * 100))
@@ -1669,11 +1683,6 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
   }
 
   async function handleSaveOrPublish(targetStatus: PublishStatus) {
-    if (!user) {
-      openAuthModal('signin', false);
-      return;
-    }
-
     const compiledMarkdown = blocksToMarkdown(blocks);
     if (title.trim().length < 4) {
       setStatusMessage({
@@ -1745,7 +1754,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
         setShowPublishSheet(false);
         setStatusMessage({
           tone: 'ok',
-          text: 'Blog draft saved to your Backend workspace.',
+          text: 'Blog draft saved to your workspace.',
         });
       }
     } catch (err) {
@@ -1756,85 +1765,6 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
     } finally {
       setBusy(false);
     }
-  }
-
-  if (user && adminRoleReady && !isCreatorAdmin) {
-    return (
-      <section className="max-w-[760px] mx-auto px-5 sm:px-8 py-14 sm:py-20">
-        <div className="bg-white border border-stone-200/90 rounded-xl p-8 sm:p-10 space-y-5">
-          <div className="flex items-center gap-2 text-xs font-medium text-[#9A3412]">
-            <Lock className="w-3.5 h-3.5" />
-            <span>Website Owner Blog Publishing Access</span>
-          </div>
-          <h1 className="font-serif text-2xl sm:text-3xl font-medium text-stone-900">
-            Global blog publishing is reserved for the Pickra website owner
-          </h1>
-          <p className="text-sm text-stone-600 leading-relaxed">
-            You are signed in as{' '}
-            <span className="font-mono text-stone-900">{user.email}</span>. As a
-            creator seller, you can publish and sell your own physical or
-            digital products under <strong>Store &rarr; Sell on Pickra</strong>,
-            while global Blog stories are published by the website owner.
-          </p>
-
-          <div className="p-4 bg-[#FBF9F5] border border-stone-200 rounded-lg flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-[11px] text-stone-500">Your Account UID</div>
-              <div className="font-mono text-xs text-stone-900 truncate">
-                {user.uid}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(user.uid);
-                  setCopiedOwnUid(true);
-                  window.setTimeout(() => setCopiedOwnUid(false), 1800);
-                } catch {
-                  // ignore clipboard failure
-                }
-              }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-800 bg-white border border-stone-300 hover:bg-stone-100 rounded-lg cursor-pointer whitespace-nowrap shrink-0"
-            >
-              {copiedOwnUid ? (
-                <>
-                  <Check className="w-3.5 h-3.5 text-emerald-700" />
-                  <span>UID Copied</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3.5 h-3.5" />
-                  <span>Copy UID</span>
-                </>
-              )}
-            </button>
-          </div>
-
-          <div className="pt-2 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={async () => {
-                await signOutUser();
-                openAuthModal('signin', false);
-              }}
-              className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-lg transition-colors cursor-pointer whitespace-nowrap"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>Switch Account / Sign Out</span>
-            </button>
-            <button
-              type="button"
-              onClick={onBack}
-              className="inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium text-stone-700 bg-[#F3EFE8] hover:bg-stone-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              <span>Back to Blog</span>
-            </button>
-          </div>
-        </div>
-      </section>
-    );
   }
 
   return (
@@ -1921,7 +1851,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
               </button>
             </div>
 
-            {editingPostId && isCreatorAdmin && (
+            {editingPostId && (
               confirmDeleteStory ? (
                 <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-red-50 border border-red-200 rounded-lg text-xs">
                   <button
@@ -2016,22 +1946,29 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                 showPreview={true}
               />
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
                 <div>
                   <label className="block text-xs font-medium text-stone-700 mb-1">
                     Blog Category
                   </label>
-                  <select
+                  <EditableDropdownSelect
+                    ariaLabel="Blog Category"
                     value={category}
-                    onChange={(e) => setCategory(e.target.value as PostCategory)}
-                    className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
-                  >
-                    {POST_CATEGORIES.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
+                    options={dropdownOptions.blogCategories}
+                    onChange={(val) => setCategory(val as PostCategory)}
+                    onAddOption={(opt) =>
+                      addDropdownOption('blogCategories', opt)
+                    }
+                    onRenameOption={(oldOpt, nextOpt) =>
+                      renameDropdownOption('blogCategories', oldOpt, nextOpt)
+                    }
+                    onDeleteOption={(opt) =>
+                      deleteDropdownOption('blogCategories', opt)
+                    }
+                    placeholder="Category..."
+                    compact
+                    selectClassName="px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg text-stone-900"
+                  />
                 </div>
 
                 <div>
@@ -2080,16 +2017,15 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      if (!user) {
-                        openAuthModal('signin', false);
-                        return;
-                      }
                       setEditingSidebarOfferId(undefined);
                       setQuickTitle('');
                       setQuickKind('physical');
-                      setQuickPlatform('Amazon');
+                      setQuickPlatform(
+                        dropdownOptions.productPlatforms[0] || 'Amazon'
+                      );
                       setQuickPrice('$99.00');
                       setQuickUrl('');
+                      setQuickImageKey('audio');
                       setQuickSummary('');
                       setSidebarOfferEditorOpen((v) => !v);
                     }}
@@ -2107,27 +2043,54 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                         ? 'Edit Sidebar Affiliate Pick'
                         : 'Add New Affiliate Pick'}
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-start">
                       <input
                         type="text"
                         value={quickTitle}
                         onChange={(e) => setQuickTitle(e.target.value)}
                         placeholder="Title"
-                        className="sm:col-span-2 px-2.5 py-1.5 bg-white border border-stone-300 rounded"
-                      />
-                      <select
-                        value={quickPlatform}
-                        onChange={(e) =>
-                          setQuickPlatform(e.target.value as AffiliatePlatform)
-                        }
                         className="px-2.5 py-1.5 bg-white border border-stone-300 rounded"
-                      >
-                        {ALL_AFFILIATE_PLATFORMS.map((p) => (
-                          <option key={p} value={p}>
-                            {p}
-                          </option>
-                        ))}
-                      </select>
+                      />
+                      <EditableDropdownSelect
+                        ariaLabel="Affiliate Platform"
+                        value={quickPlatform}
+                        options={
+                          quickKind === 'service'
+                            ? dropdownOptions.servicePlatforms
+                            : dropdownOptions.productPlatforms
+                        }
+                        onChange={(val) =>
+                          setQuickPlatform(val as AffiliatePlatform)
+                        }
+                        onAddOption={(opt) =>
+                          addDropdownOption(
+                            quickKind === 'service'
+                              ? 'servicePlatforms'
+                              : 'productPlatforms',
+                            opt
+                          )
+                        }
+                        onRenameOption={(oldOpt, nextOpt) =>
+                          renameDropdownOption(
+                            quickKind === 'service'
+                              ? 'servicePlatforms'
+                              : 'productPlatforms',
+                            oldOpt,
+                            nextOpt
+                          )
+                        }
+                        onDeleteOption={(opt) =>
+                          deleteDropdownOption(
+                            quickKind === 'service'
+                              ? 'servicePlatforms'
+                              : 'productPlatforms',
+                            opt
+                          )
+                        }
+                        placeholder="Platform..."
+                        compact
+                        selectClassName="px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded text-stone-900"
+                      />
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       <select
@@ -2156,6 +2119,13 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                         className="px-2.5 py-1.5 font-mono bg-white border border-stone-300 rounded"
                       />
                     </div>
+                    <ImageUploadPicker
+                      label="Pick Image"
+                      value={quickImageKey}
+                      onChange={setQuickImageKey}
+                      compact
+                      showPreview={false}
+                    />
                     <input
                       type="text"
                       value={quickSummary}
@@ -2328,52 +2298,32 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
               </div>
 
               <div className="pt-4 border-t border-stone-200 flex flex-wrap items-center justify-between gap-3">
-                {!user ? (
-                  <div className="flex flex-wrap items-center justify-between gap-3 w-full">
-                    <span className="text-xs text-stone-600">
-                      Sign in to your Website Owner account to publish this blog live for global readers.
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => openAuthModal('signin', false)}
-                      className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-lg cursor-pointer"
-                    >
-                      <LogIn className="w-4 h-4" />
-                      <span>Sign In to Publish</span>
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void handleSaveOrPublish('draft')}
-                      className="px-4 py-2.5 text-xs font-medium text-stone-700 bg-[#F3EFE8] hover:bg-stone-200 rounded-lg transition-colors cursor-pointer"
-                    >
-                      Save as Private Draft
-                    </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void handleSaveOrPublish('draft')}
+                  className="px-4 py-2.5 text-xs font-medium text-stone-700 bg-[#F3EFE8] hover:bg-stone-200 rounded-lg transition-colors cursor-pointer"
+                >
+                  Save as Draft
+                </button>
 
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() =>
-                        void handleSaveOrPublish(
-                          publishStatus === 'archived'
-                            ? 'archived'
-                            : 'published'
-                        )
-                      }
-                      className="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-                    >
-                      <Check className="w-4 h-4" />
-                      <span>
-                        {editingPostId
-                          ? 'Update & Publish Blog'
-                          : 'Publish Blog to Global Audience'}
-                      </span>
-                    </button>
-                  </>
-                )}
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    void handleSaveOrPublish(
+                      publishStatus === 'archived' ? 'archived' : 'published'
+                    )
+                  }
+                  className="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>
+                    {editingPostId
+                      ? 'Update & Publish Blog'
+                      : 'Publish Blog to Global Audience'}
+                  </span>
+                </button>
               </div>
             </div>
           </div>
@@ -2637,8 +2587,6 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                               }}
                               onSaveOffer={saveOffer}
                               onDeleteOffer={deleteOffer}
-                              isAuthenticated={Boolean(user)}
-                              onRequireAuth={() => openAuthModal('signin', false)}
                             />
                           </div>
 
@@ -2988,62 +2936,18 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div>
-                              <label className="block text-[11px] text-stone-500 mb-1">
-                                Paste Image URL (https://)
-                              </label>
-                              <input
-                                type="url"
-                                value={
-                                  block.src.startsWith('https://')
-                                    ? block.src
-                                    : ''
-                                }
-                                onChange={(e) =>
-                                  updateBlock(block.id, (prev) => ({
-                                    ...(prev as typeof block),
-                                    src: e.target.value || 'workspace',
-                                  }))
-                                }
-                                placeholder="https://example.com/photo.jpg"
-                                className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
-                              />
-                            </div>
-
-                            <div>
-                              <label className="block text-[11px] text-stone-500 mb-1">
-                                Or Pick Studio Photography
-                              </label>
-                              <select
-                                value={
-                                  PRESET_IMAGES.some((p) => p.key === block.src)
-                                    ? block.src
-                                    : ''
-                                }
-                                onChange={(e) => {
-                                  if (e.target.value) {
-                                    updateBlock(block.id, (prev) => ({
-                                      ...(prev as typeof block),
-                                      src: e.target.value,
-                                    }));
-                                  }
-                                }}
-                                className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
-                              >
-                                <option value="">
-                                  {block.src.startsWith('data:image/')
-                                    ? 'Uploaded device photo active'
-                                    : 'Custom URL active'}
-                                </option>
-                                {PRESET_IMAGES.map((img) => (
-                                  <option key={img.key} value={img.key}>
-                                    {img.label}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          </div>
+                          <ImageUploadPicker
+                            label="Change Block Photo (Upload from Device, Paste URL, or Edit Studio Presets)"
+                            value={block.src}
+                            onChange={(nextSrc) =>
+                              updateBlock(block.id, (prev) => ({
+                                ...(prev as typeof block),
+                                src: nextSrc || 'workspace',
+                              }))
+                            }
+                            showPreview={false}
+                            compact
+                          />
 
                           <div className="rounded-lg overflow-hidden bg-[#F3EFE8] border border-stone-200/80">
                             <ResilientImage
@@ -3258,8 +3162,6 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                               }}
                               onSaveOffer={saveOffer}
                               onDeleteOffer={deleteOffer}
-                              isAuthenticated={Boolean(user)}
-                              onRequireAuth={() => openAuthModal('signin', false)}
                             />
                           </div>
 
@@ -3370,14 +3272,18 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                             }
                             onSaveOffer={saveOffer}
                             onDeleteOffer={deleteOffer}
-                            isAuthenticated={Boolean(user)}
-                            onRequireAuth={() => openAuthModal('signin', false)}
                           />
 
                           {allAccessibleOffersMap[block.offerId] && (
                             <OfferCard
                               offer={allAccessibleOffersMap[block.offerId]}
                               variant="inline"
+                              onChangeImage={(targetOffer, nextImg) => {
+                                void updateOfferImage(targetOffer.id, nextImg);
+                              }}
+                              onDelete={(targetOffer) => {
+                                void deleteOffer(targetOffer.id);
+                              }}
                             />
                           )}
                         </div>
@@ -3610,11 +3516,9 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                                   }
                                   className="px-4 py-2 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-md cursor-pointer"
                                 >
-                                  {user
-                                    ? editingBlockProductId
-                                      ? 'Update Store Product'
-                                      : 'Save & Embed Store Product'
-                                    : 'Sign In to Save Product'}
+                                  {editingBlockProductId
+                                    ? 'Update Store Product'
+                                    : 'Save & Embed Store Product'}
                                 </button>
                               </div>
                             </div>
@@ -3650,6 +3554,29 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
                                 allAccessibleDirectProductsMap[block.productId]
                               }
                               variant="inline"
+                              onChangeImage={(targetProd, nextImg) => {
+                                void updateDirectProductImage(
+                                  targetProd.id,
+                                  nextImg
+                                );
+                              }}
+                              onEdit={(targetProd) => {
+                                setEditingBlockProductId(targetProd.id);
+                                setQuickProdTitle(targetProd.title);
+                                setQuickProdKind(targetProd.kind);
+                                setQuickProdPriceUsd(
+                                  (targetProd.priceCents / 100).toFixed(2)
+                                );
+                                setQuickProdSku(targetProd.sku);
+                                setQuickProdImageKey(
+                                  targetProd.imageKey || 'edition'
+                                );
+                                setQuickProdSummary(targetProd.summary);
+                                setQuickCreateProductBlockId(block.id);
+                              }}
+                              onDelete={(targetProd) => {
+                                void deleteDirectProduct(targetProd.id);
+                              }}
                             />
                           )}
                         </div>
