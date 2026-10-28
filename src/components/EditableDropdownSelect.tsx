@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Check, PenLine, Plus, Trash2, X } from 'lucide-react';
 
 export interface PinnedDropdownOption {
@@ -19,6 +19,7 @@ interface EditableDropdownSelectProps {
   containerClassName?: string;
   placeholder?: string;
   compact?: boolean;
+  canEdit?: boolean;
 }
 
 export const EditableDropdownSelect: React.FC<EditableDropdownSelectProps> = ({
@@ -34,16 +35,22 @@ export const EditableDropdownSelect: React.FC<EditableDropdownSelectProps> = ({
   containerClassName = '',
   placeholder = 'Option name...',
   compact = false,
+  canEdit = false,
 }) => {
   const [mode, setMode] = useState<'idle' | 'add' | 'edit' | 'confirm-delete'>('idle');
   const [draftText, setDraftText] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!canEdit && mode !== 'idle') {
+      setMode('idle');
+    }
+  }, [canEdit, mode]);
+
   const isPinnedSelected = prefixOptions.some((p) => p.value === value);
   const canModifySelected =
-    Boolean(value) && !isPinnedSelected && options.includes(value);
+    canEdit && Boolean(value) && !isPinnedSelected && options.includes(value);
 
-  // Ensure current value is always visible in <select> even if custom
   const mergedOptions = React.useMemo(() => {
     const seen = new Set<string>(prefixOptions.map((p) => p.value));
     const list: string[] = [];
@@ -61,6 +68,7 @@ export const EditableDropdownSelect: React.FC<EditableDropdownSelectProps> = ({
   }, [options, prefixOptions, value]);
 
   function startAdd() {
+    if (!canEdit) return;
     setDraftText('');
     setErrorMsg(null);
     setMode('add');
@@ -74,7 +82,8 @@ export const EditableDropdownSelect: React.FC<EditableDropdownSelectProps> = ({
   }
 
   function handleSave() {
-    const cleaned = draftText.trim().slice(0, 60);
+    if (!canEdit) return;
+    const cleaned = draftText.trim().slice(0, 140);
     if (cleaned.length < 2) {
       setErrorMsg('Enter at least 2 characters.');
       return;
@@ -136,56 +145,58 @@ export const EditableDropdownSelect: React.FC<EditableDropdownSelectProps> = ({
           ))}
         </select>
 
-        <div className="inline-flex items-center gap-1 shrink-0">
-          <button
-            type="button"
-            onClick={startAdd}
-            title="Add option to dropdown"
-            aria-label={`Add option to ${ariaLabel}`}
-            className={`inline-flex items-center justify-center gap-1 ${
-              compact ? 'px-2 py-1.5 text-[11px]' : 'px-2.5 py-2 text-xs'
-            } font-medium text-stone-700 hover:text-stone-900 bg-[#F3EFE8] hover:bg-stone-200 border border-stone-300/80 rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0`}
-          >
-            <Plus className="w-3.5 h-3.5 text-[#9A3412]" />
-            {!compact && <span className="hidden sm:inline">Add</span>}
-          </button>
+        {canEdit && (
+          <div className="inline-flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={startAdd}
+              title="Add option to dropdown"
+              aria-label={`Add option to ${ariaLabel}`}
+              className={`inline-flex items-center justify-center gap-1 ${
+                compact ? 'px-2 py-1.5 text-[11px]' : 'px-2.5 py-2 text-xs'
+              } font-medium text-stone-700 hover:text-stone-900 bg-[#F3EFE8] hover:bg-stone-200 border border-stone-300/80 rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0`}
+            >
+              <Plus className="w-3.5 h-3.5 text-[#9A3412]" />
+              {!compact && <span className="hidden sm:inline">Add</span>}
+            </button>
 
-          {canModifySelected && (
-            <>
-              <button
-                type="button"
-                onClick={startEdit}
-                title={`Rename "${value}"`}
-                aria-label={`Rename ${value}`}
-                className={`inline-flex items-center justify-center ${
-                  compact ? 'p-1.5' : 'p-2'
-                } text-stone-600 hover:text-stone-900 bg-[#F3EFE8] hover:bg-stone-200 border border-stone-300/80 rounded-lg transition-colors cursor-pointer shrink-0`}
-              >
-                <PenLine className="w-3.5 h-3.5" />
-              </button>
-
-              {options.length > 1 && (
+            {canModifySelected && (
+              <>
                 <button
                   type="button"
-                  onClick={() => {
-                    setErrorMsg(null);
-                    setMode(mode === 'confirm-delete' ? 'idle' : 'confirm-delete');
-                  }}
-                  title={`Remove "${value}"`}
-                  aria-label={`Remove ${value}`}
+                  onClick={startEdit}
+                  title={`Rename "${value}"`}
+                  aria-label={`Rename ${value}`}
                   className={`inline-flex items-center justify-center ${
                     compact ? 'p-1.5' : 'p-2'
-                  } text-stone-500 hover:text-red-700 bg-white hover:bg-red-50 border border-stone-300/80 hover:border-red-200 rounded-lg transition-colors cursor-pointer shrink-0`}
+                  } text-stone-600 hover:text-stone-900 bg-[#F3EFE8] hover:bg-stone-200 border border-stone-300/80 rounded-lg transition-colors cursor-pointer shrink-0`}
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
+                  <PenLine className="w-3.5 h-3.5" />
                 </button>
-              )}
-            </>
-          )}
-        </div>
+
+                {options.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setErrorMsg(null);
+                      setMode(mode === 'confirm-delete' ? 'idle' : 'confirm-delete');
+                    }}
+                    title={`Remove "${value}"`}
+                    aria-label={`Remove ${value}`}
+                    className={`inline-flex items-center justify-center ${
+                      compact ? 'p-1.5' : 'p-2'
+                    } text-stone-500 hover:text-red-700 bg-white hover:bg-red-50 border border-stone-300/80 hover:border-red-200 rounded-lg transition-colors cursor-pointer shrink-0`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
 
-      {(mode === 'add' || mode === 'edit') && (
+      {canEdit && (mode === 'add' || mode === 'edit') && (
         <div className="flex flex-wrap items-center gap-1.5 p-2 rounded-lg bg-[#FBF9F5] border border-stone-300/90">
           <input
             type="text"
@@ -228,7 +239,7 @@ export const EditableDropdownSelect: React.FC<EditableDropdownSelectProps> = ({
         </div>
       )}
 
-      {mode === 'confirm-delete' && canModifySelected && (
+      {canEdit && mode === 'confirm-delete' && canModifySelected && (
         <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-red-50 border border-red-200 text-xs">
           <span className="text-red-900 truncate">
             Remove &ldquo;{value}&rdquo; from list?

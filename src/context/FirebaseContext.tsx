@@ -29,6 +29,7 @@ import {
   Timestamp,
   updateDoc,
   where,
+  writeBatch,
 } from 'firebase/firestore';
 import {
   auth,
@@ -55,12 +56,18 @@ import {
   BlogPost,
   CampaignChannel,
   CartItem,
+  ContactIssueCategory,
+  ContactMessage,
+  ContactMessageStatus,
+  CustomerPaymentMethod,
   DEFAULT_AFFILIATE_CATEGORIES,
+  DEFAULT_BLOG_SAVED_LINKS,
   DEFAULT_CAMPAIGN_CHANNELS,
   DEFAULT_DIGITAL_FORMATS,
   DEFAULT_POST_CATEGORIES,
   DEFAULT_SECTION_HEADERS,
   DEFAULT_STORE_CATEGORIES,
+  DeliveredDigitalAsset,
   DirectOrder,
   DirectProduct,
   DirectProductKind,
@@ -71,10 +78,12 @@ import {
   parsePayoutAccounts,
   PayoutSettlementStatus,
   PRODUCT_AFFILIATE_PLATFORMS,
+  ProductApprovalStatus,
   PublishStatus,
   SavedPayoutAccount,
   SectionHeaderCopy,
   SectionHeaderKey,
+  SellerAccountStatus,
   SellerPayoutMethod,
   serializePayoutAccount,
   SERVICE_AFFILIATE_PLATFORMS,
@@ -139,6 +148,7 @@ export interface DirectProductDraftInput {
   digitalFileUrl?: string;
   digitalFileName?: string;
   digitalFileType?: string;
+  hasDigitalAsset?: boolean;
   summary: string;
   highlights: string[];
   deliveryNote: string;
@@ -164,6 +174,8 @@ export interface DirectCheckoutInput {
   buyerName: string;
   buyerEmail: string;
   shippingAddress: string;
+  paymentMethod?: CustomerPaymentMethod;
+  paymentReference?: string;
 }
 
 export interface SellerAccountInput {
@@ -206,8 +218,27 @@ export interface SiteConfigInput {
   flatShippingCents: number;
   defaultDisclosureText: string;
   storeCheckoutEnabled: boolean;
+  blogEnabled?: boolean;
+  storeEnabled?: boolean;
+  productAffiliateEnabled?: boolean;
+  serviceAffiliateEnabled?: boolean;
   showStarterSeeds: boolean;
   hiddenSeedIds?: string[];
+  aboutMission?: string;
+  aboutStory?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  contactLocation?: string;
+  privacyPolicySummary?: string;
+}
+
+export interface ContactMessageInput {
+  senderName: string;
+  senderEmail: string;
+  category: ContactIssueCategory;
+  orderNumber?: string;
+  subject: string;
+  message: string;
 }
 
 interface PendingTelemetryPayload {
@@ -229,11 +260,14 @@ interface FirebaseContextValue {
   isCreatorAdmin: boolean;
   adminRoleReady: boolean;
   adminRegistry: AdminRecord[];
+  allUsers: UserProfile[];
   siteConfig: SiteConfig;
   hasSavedSiteConfig: boolean;
   // Profiles & Creator Seller Account
   profile: UserProfile | null;
   privateInfo: UserPrivateInfo | null;
+  isActiveSeller: boolean;
+  isSellerSuspended: boolean;
   // Blog & Affiliate Catalog
   publishedPosts: BlogPost[];
   publishedOffers: AffiliateOffer[];
@@ -255,6 +289,7 @@ interface FirebaseContextValue {
   myPurchases: DirectOrder[];
   mySellerOrders: DirectOrder[];
   sellerOrders: DirectOrder[];
+  deliveredDigitalCache: Record<string, DeliveredDigitalAsset>;
   // Shopping Bag & Promo Engine
   cartItems: CartItem[];
   cartCount: number;
@@ -294,6 +329,11 @@ interface FirebaseContextValue {
     accounts: SavedPayoutAccount[],
     primaryId?: string
   ) => Promise<void>;
+  moderateUserSellerStatus: (
+    targetUid: string,
+    nextStatus: SellerAccountStatus,
+    isSellerFlag?: boolean
+  ) => Promise<void>;
   saveOffer: (input: OfferDraftInput) => Promise<string>;
   updateOfferStatus: (offerId: string, status: PublishStatus) => Promise<void>;
   deleteOffer: (offerId: string) => Promise<void>;
@@ -311,11 +351,20 @@ interface FirebaseContextValue {
     status: PublishStatus,
     stockCount?: number
   ) => Promise<void>;
+  moderateDirectProduct: (
+    productId: string,
+    decision: ProductApprovalStatus,
+    moderationNote?: string
+  ) => Promise<void>;
   deleteDirectProduct: (productId: string) => Promise<void>;
   updateDirectProductImage: (
     productId: string,
     nextImageKey: string
   ) => Promise<void>;
+  fetchProtectedDigitalSecret: (
+    productId: string,
+    orderId?: string
+  ) => Promise<DeliveredDigitalAsset | null>;
   saveCampaign: (input: CampaignDraftInput) => Promise<string>;
   updateCampaignStatus: (campaignId: string, status: PublishStatus) => Promise<void>;
   deleteCampaign: (campaignId: string) => Promise<void>;
@@ -358,6 +407,15 @@ interface FirebaseContextValue {
     defaultDigistoreId: string;
   }) => Promise<void>;
   saveSiteConfig: (input: SiteConfigInput) => Promise<void>;
+  contactMessages: ContactMessage[];
+  myContactMessages: ContactMessage[];
+  submitContactMessage: (input: ContactMessageInput) => Promise<ContactMessage>;
+  updateContactMessageStatus: (
+    messageId: string,
+    status: ContactMessageStatus,
+    adminNote: string
+  ) => Promise<void>;
+  deleteContactMessage: (messageId: string) => Promise<void>;
   hideSeedItem: (seedId: string) => Promise<void>;
   grantCoAdmin: (targetUid: string) => Promise<void>;
   revokeCoAdmin: (targetUid: string) => Promise<void>;
@@ -376,16 +434,36 @@ const HIDE_SEEDS_KEY = 'pickra_hide_starter_seeds_v1';
 const HIDDEN_SEED_IDS_KEY = 'pickra_hidden_seed_ids_v1';
 const CART_STORAGE_KEY = 'pickra_direct_cart_v1';
 const PROMO_STORAGE_KEY = 'pickra_active_promo_v1';
-const GUEST_ORDERS_STORAGE_KEY = 'pickra_guest_orders_v1';
-const WORKSPACE_OVERRIDES_STORAGE_KEY = 'pickra_workspace_overrides_v1';
+const GUEST_ORDERS_STORAGE_KEY = 'pickra_guest_orders_v2';
+const DELIVERED_DIGITAL_STORAGE_KEY = 'pickra_delivered_digital_v1';
+const SEED_STOCK_OFFSETS_KEY = 'pickra_seed_stock_offsets_v1';
+const UI_PREFS_STORAGE_KEY = 'pickra_admin_ui_prefs_v2';
 export const BOOTSTRAPPED_ADMIN_EMAIL = 'mengistushimelis@gmail.com';
 
-interface WorkspaceOverridesState {
-  offers: Record<string, AffiliateOffer>;
-  posts: Record<string, BlogPost>;
-  directProducts: Record<string, DirectProduct>;
-  campaigns: Record<string, MarketingCampaign>;
-  deletedIds: string[];
+const FORBIDDEN_DIGITAL_EXTENSIONS = [
+  '.exe',
+  '.msi',
+  '.bat',
+  '.cmd',
+  '.sh',
+  '.ps1',
+  '.apk',
+  '.dmg',
+  '.com',
+  '.scr',
+  '.vbs',
+  '.jar',
+];
+
+const VALID_CUSTOMER_PAYMENT_METHODS: CustomerPaymentMethod[] = [
+  'Card',
+  'Telebirr',
+  'CBEBirr',
+  'PayPal',
+  'BankTransfer',
+];
+
+interface AdminUiPrefsState {
   dropdownOptions: Record<DropdownListKey, string[]>;
   sectionHeaders: Record<SectionHeaderKey, SectionHeaderCopy>;
 }
@@ -408,26 +486,22 @@ function buildDefaultDropdownOptions(): Record<DropdownListKey, string[]> {
     productPlatforms: [...PRODUCT_AFFILIATE_PLATFORMS],
     servicePlatforms: [...SERVICE_AFFILIATE_PLATFORMS],
     blogCategories: [...DEFAULT_POST_CATEGORIES],
+    blogSavedLinks: [...DEFAULT_BLOG_SAVED_LINKS],
     affiliateCategories: seedAffCats,
     digitalFormats: [...DEFAULT_DIGITAL_FORMATS],
     campaignChannels: [...DEFAULT_CAMPAIGN_CHANNELS],
   };
 }
 
-function loadInitialWorkspaceOverrides(): WorkspaceOverridesState {
-  const defaults: WorkspaceOverridesState = {
-    offers: {},
-    posts: {},
-    directProducts: {},
-    campaigns: {},
-    deletedIds: [],
+function loadInitialAdminUiPrefs(): AdminUiPrefsState {
+  const defaults: AdminUiPrefsState = {
     dropdownOptions: buildDefaultDropdownOptions(),
     sectionHeaders: { ...DEFAULT_SECTION_HEADERS },
   };
   try {
-    const raw = localStorage.getItem(WORKSPACE_OVERRIDES_STORAGE_KEY);
+    const raw = localStorage.getItem(UI_PREFS_STORAGE_KEY);
     if (!raw) return defaults;
-    const parsed = JSON.parse(raw) as Partial<WorkspaceOverridesState>;
+    const parsed = JSON.parse(raw) as Partial<AdminUiPrefsState>;
     const defaultDrops = buildDefaultDropdownOptions();
     const mergedDrops = { ...defaultDrops };
     if (parsed.dropdownOptions && typeof parsed.dropdownOptions === 'object') {
@@ -448,7 +522,10 @@ function loadInitialWorkspaceOverrides(): WorkspaceOverridesState {
         const c = parsed.sectionHeaders[k];
         if (c && typeof c === 'object' && typeof c.title === 'string') {
           mergedHeaders[k] = {
-            kicker: typeof c.kicker === 'string' ? c.kicker : DEFAULT_SECTION_HEADERS[k].kicker,
+            kicker:
+              typeof c.kicker === 'string'
+                ? c.kicker
+                : DEFAULT_SECTION_HEADERS[k].kicker,
             title: c.title,
             subtitle:
               typeof c.subtitle === 'string'
@@ -459,25 +536,6 @@ function loadInitialWorkspaceOverrides(): WorkspaceOverridesState {
       }
     }
     return {
-      offers:
-        parsed.offers && typeof parsed.offers === 'object'
-          ? (parsed.offers as Record<string, AffiliateOffer>)
-          : {},
-      posts:
-        parsed.posts && typeof parsed.posts === 'object'
-          ? (parsed.posts as Record<string, BlogPost>)
-          : {},
-      directProducts:
-        parsed.directProducts && typeof parsed.directProducts === 'object'
-          ? (parsed.directProducts as Record<string, DirectProduct>)
-          : {},
-      campaigns:
-        parsed.campaigns && typeof parsed.campaigns === 'object'
-          ? (parsed.campaigns as Record<string, MarketingCampaign>)
-          : {},
-      deletedIds: Array.isArray(parsed.deletedIds)
-        ? parsed.deletedIds.map(String)
-        : [],
       dropdownOptions: mergedDrops,
       sectionHeaders: mergedHeaders,
     };
@@ -485,11 +543,61 @@ function loadInitialWorkspaceOverrides(): WorkspaceOverridesState {
     return defaults;
   }
 }
+
+function buildSeedDigitalBundleAsset(product: DirectProduct): DeliveredDigitalAsset {
+  const htmlDoc = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>${product.title} — Pickra Digital Edition</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 720px; margin: 48px auto; padding: 0 24px; color: #1c1917; background: #faf8f5; line-height: 1.7; }
+  .badge { font-family: system-ui, sans-serif; font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: #9a3412; font-weight: 700; }
+  h1 { font-size: 30px; margin: 8px 0 12px; }
+  .box { background: #ffffff; border: 1px solid #e7e5e4; border-radius: 12px; padding: 24px; margin-top: 24px; font-family: system-ui, sans-serif; }
+  li { margin-bottom: 8px; }
+</style>
+</head>
+<body>
+  <div class="badge">Pickra Verified Digital Edition · SKU ${product.sku}</div>
+  <h1>${product.title}</h1>
+  <p>${product.subtitle}</p>
+  <div class="box">
+    <h3>Included Deliverables</h3>
+    <ul>
+      ${product.highlights.map((h) => `<li>${h}</li>`).join('')}
+    </ul>
+    <p><strong>Overview:</strong> ${product.summary}</p>
+    <p><strong>Fulfillment Note:</strong> ${product.deliveryNote}</p>
+  </div>
+</body>
+</html>`;
+  const encoded = `data:text/html;charset=utf-8,${encodeURIComponent(htmlDoc)}`;
+  return {
+    url: encoded,
+    fileName: `${product.sku.toLowerCase()}-digital-edition.html`,
+    fileType: product.digitalFileType || 'HTML Digital Edition',
+  };
+}
+
 const DEFAULT_FREE_SHIPPING_THRESHOLD_CENTS = 9500;
 const DEFAULT_FLAT_PHYSICAL_SHIPPING_CENTS = 900;
 
 const DEFAULT_SITE_TAGLINE =
-  'Independent editorial blog, multi-creator product store, and global affiliate directory.';
+  'Independent editorial blog, multi-creator store, and curated product & service affiliate directories.';
+
+export const DEFAULT_ABOUT_MISSION =
+  'Pickra is an independent digital publication and creator marketplace built around editorial clarity, transparent commerce, and direct creator empowerment. Rather than blending paid placements into editorial journalism, Pickra separates every experience into four dedicated pillars so readers, buyers, and independent creators always know how each item is produced, fulfilled, and disclosed.';
+
+export const DEFAULT_ABOUT_STORY =
+  'On the Pickra Blog, our editorial desk publishes long-form dispatches, field guides, and technical essays in distraction-free color themes. In the Pickra Store, verified independent creators sell original physical goods and vaulted digital downloads—receiving 90% net payouts while buyers enjoy frictionless guest or account checkout. Alongside the Store, our Product Affiliate and Service Affiliate directories curate vetted hardware, software, and specialist talent across Amazon, Digistore24, Fiverr, Upwork, and global partner networks with full FTC transparency.';
+
+export const DEFAULT_CONTACT_EMAIL = 'mengistushimelis@gmail.com';
+export const DEFAULT_CONTACT_PHONE = 'Direct Desk · Mon–Sat, 09:00–18:00 EAT';
+export const DEFAULT_CONTACT_LOCATION = 'Addis Ababa & Global Digital Desk';
+
+export const DEFAULT_PRIVACY_POLICY_SUMMARY =
+  'Pickra enforces strict role-based data minimization across every module. Account emails, affiliate tracking tags, and seller payout credentials (Telebirr, Bank Transfer, CBE Birr, PayPal, Wise) are isolated inside owner-only private Firestore vaults and never exposed on public profiles. Guest and member Store orders are visible solely to the buyer, the fulfilling seller, and the Pickra administrator, using masked payment references rather than raw card numbers. Digital deliverables are protected in a locked vault until a verified purchase completes.';
 
 const VALID_BLOG_THEMES: BlogColorTheme[] = [
   'classic',
@@ -526,6 +634,32 @@ function timestampToMs(val: unknown): number {
     return (val as { seconds: number }).seconds * 1000;
   }
   return Date.now();
+}
+
+function parseUserProfileDoc(
+  id: string,
+  data: Record<string, unknown>
+): UserProfile {
+  const rawSellerStatus = String(data.sellerStatus || '');
+  const sellerStatus: SellerAccountStatus =
+    rawSellerStatus === 'active' ||
+    rawSellerStatus === 'pending' ||
+    rawSellerStatus === 'suspended' ||
+    rawSellerStatus === 'inactive'
+      ? rawSellerStatus
+      : data.isSeller
+      ? 'active'
+      : 'inactive';
+  return {
+    uid: String(data.uid || id),
+    displayName: String(data.displayName || 'Member'),
+    bio: String(data.bio || ''),
+    isSeller: Boolean(data.isSeller),
+    sellerStatus,
+    storeName: String(data.storeName || ''),
+    createdAtMs: timestampToMs(data.createdAt),
+    updatedAtMs: timestampToMs(data.updatedAt),
+  };
 }
 
 function parseOfferDoc(id: string, data: Record<string, unknown>): AffiliateOffer {
@@ -588,6 +722,19 @@ function parseDirectProductDoc(
   id: string,
   data: Record<string, unknown>
 ): DirectProduct {
+  const rawApproval = String(data.approvalStatus || '');
+  const approvalStatus: ProductApprovalStatus =
+    rawApproval === 'pending' ||
+    rawApproval === 'approved' ||
+    rawApproval === 'rejected'
+      ? rawApproval
+      : data.status === 'published'
+      ? 'approved'
+      : 'pending';
+
+  const legacyUrl =
+    typeof data.digitalFileUrl === 'string' ? data.digitalFileUrl : '';
+
   return {
     id,
     sellerId: String(data.sellerId || ''),
@@ -603,9 +750,20 @@ function parseDirectProductDoc(
     badgeLabel: String(data.badgeLabel || ''),
     imageKey: String(data.imageKey || 'edition'),
     videoUrl: typeof data.videoUrl === 'string' ? data.videoUrl : '',
-    digitalFileUrl: typeof data.digitalFileUrl === 'string' ? data.digitalFileUrl : '',
-    digitalFileName: typeof data.digitalFileName === 'string' ? data.digitalFileName : '',
-    digitalFileType: typeof data.digitalFileType === 'string' ? data.digitalFileType : '',
+    digitalFileUrl: legacyUrl,
+    digitalFileName:
+      typeof data.digitalFileName === 'string' ? data.digitalFileName : '',
+    digitalFileType:
+      typeof data.digitalFileType === 'string' ? data.digitalFileType : '',
+    hasDigitalAsset:
+      typeof data.hasDigitalAsset === 'boolean'
+        ? data.hasDigitalAsset
+        : Boolean(legacyUrl),
+    approvalStatus,
+    moderationNote:
+      typeof data.moderationNote === 'string' ? data.moderationNote : '',
+    lastOrderRef:
+      typeof data.lastOrderRef === 'string' ? data.lastOrderRef : '',
     summary: String(data.summary || ''),
     highlights: Array.isArray(data.highlights)
       ? data.highlights.map((h) => String(h)).slice(0, 4)
@@ -668,6 +826,11 @@ function parseDirectOrderDoc(
       ? 'not_applicable'
       : 'pending';
 
+  const rawPayMethod = String(data.paymentMethod || '') as CustomerPaymentMethod;
+  const paymentMethod = VALID_CUSTOMER_PAYMENT_METHODS.includes(rawPayMethod)
+    ? rawPayMethod
+    : undefined;
+
   return {
     id,
     buyerId: String(data.buyerId || ''),
@@ -680,6 +843,9 @@ function parseDirectOrderDoc(
     buyerName: String(data.buyerName || ''),
     buyerEmail: String(data.buyerEmail || ''),
     shippingAddress: String(data.shippingAddress || ''),
+    paymentMethod,
+    paymentReference:
+      typeof data.paymentReference === 'string' ? data.paymentReference : '',
     productIds: Array.isArray(data.productIds)
       ? data.productIds.map((item) => String(item)).slice(0, 8)
       : [],
@@ -745,12 +911,92 @@ function parseSiteConfigDoc(
       typeof data.storeCheckoutEnabled === 'boolean'
         ? data.storeCheckoutEnabled
         : true,
+    blogEnabled:
+      typeof data.blogEnabled === 'boolean' ? data.blogEnabled : true,
+    storeEnabled:
+      typeof data.storeEnabled === 'boolean' ? data.storeEnabled : true,
+    productAffiliateEnabled:
+      typeof data.productAffiliateEnabled === 'boolean'
+        ? data.productAffiliateEnabled
+        : true,
+    serviceAffiliateEnabled:
+      typeof data.serviceAffiliateEnabled === 'boolean'
+        ? data.serviceAffiliateEnabled
+        : true,
     showStarterSeeds:
       typeof data.showStarterSeeds === 'boolean'
         ? data.showStarterSeeds
         : fallbackShowSeeds,
     hiddenSeedIds,
+    aboutMission:
+      typeof data.aboutMission === 'string' && data.aboutMission.trim()
+        ? data.aboutMission
+        : DEFAULT_ABOUT_MISSION,
+    aboutStory:
+      typeof data.aboutStory === 'string' && data.aboutStory.trim()
+        ? data.aboutStory
+        : DEFAULT_ABOUT_STORY,
+    contactEmail:
+      typeof data.contactEmail === 'string' && data.contactEmail.trim()
+        ? data.contactEmail
+        : DEFAULT_CONTACT_EMAIL,
+    contactPhone:
+      typeof data.contactPhone === 'string'
+        ? data.contactPhone
+        : DEFAULT_CONTACT_PHONE,
+    contactLocation:
+      typeof data.contactLocation === 'string'
+        ? data.contactLocation
+        : DEFAULT_CONTACT_LOCATION,
+    privacyPolicySummary:
+      typeof data.privacyPolicySummary === 'string' &&
+      data.privacyPolicySummary.trim()
+        ? data.privacyPolicySummary
+        : DEFAULT_PRIVACY_POLICY_SUMMARY,
     updatedBy: String(data.updatedBy || ''),
+    updatedAtMs: timestampToMs(data.updatedAt),
+  };
+}
+
+const VALID_CONTACT_CATEGORIES: ContactIssueCategory[] = [
+  'general',
+  'order_support',
+  'seller_payout',
+  'affiliate_partnership',
+  'privacy_issue',
+];
+
+const VALID_CONTACT_STATUSES: ContactMessageStatus[] = [
+  'unread',
+  'in_review',
+  'resolved',
+];
+
+function parseContactMessageDoc(
+  id: string,
+  data: Record<string, unknown>
+): ContactMessage {
+  const rawCat = String(data.category || 'general') as ContactIssueCategory;
+  const category: ContactIssueCategory = VALID_CONTACT_CATEGORIES.includes(rawCat)
+    ? rawCat
+    : 'general';
+  const rawStatus = String(data.status || 'unread') as ContactMessageStatus;
+  const status: ContactMessageStatus = VALID_CONTACT_STATUSES.includes(rawStatus)
+    ? rawStatus
+    : 'unread';
+
+  return {
+    id,
+    senderId: String(data.senderId || ''),
+    senderName: String(data.senderName || 'Visitor'),
+    senderEmail: String(data.senderEmail || ''),
+    category,
+    orderNumber: typeof data.orderNumber === 'string' ? data.orderNumber : '',
+    subject: String(data.subject || ''),
+    message: String(data.message || ''),
+    status,
+    adminNote: typeof data.adminNote === 'string' ? data.adminNote : '',
+    createdAtMs: timestampToMs(data.createdAt),
     updatedAtMs: timestampToMs(data.updatedAt),
   };
 }
@@ -815,6 +1061,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   const [isCoAdmin, setIsCoAdmin] = useState(false);
   const [adminRoleReady, setAdminRoleReady] = useState(false);
   const [adminRegistry, setAdminRegistry] = useState<AdminRecord[]>([]);
+  const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
 
   const bootstrapInFlightRef = useRef<Map<string, Promise<string>>>(new Map());
   const pendingRegSeedRef = useRef<PendingRegistrationSeed | null>(null);
@@ -847,10 +1094,39 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       return [];
     }
   });
+  const [deliveredDigitalCache, setDeliveredDigitalCache] = useState<
+    Record<string, DeliveredDigitalAsset>
+  >(() => {
+    try {
+      const raw = localStorage.getItem(DELIVERED_DIGITAL_STORAGE_KEY);
+      return raw ? (JSON.parse(raw) as Record<string, DeliveredDigitalAsset>) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [seedStockOffsets, setSeedStockOffsets] = useState<Record<string, number>>(
+    () => {
+      try {
+        const raw = localStorage.getItem(SEED_STOCK_OFFSETS_KEY);
+        return raw ? (JSON.parse(raw) as Record<string, number>) : {};
+      } catch {
+        return {};
+      }
+    }
+  );
   const [mySellerOrders, setMySellerOrders] = useState<DirectOrder[]>([]);
   const [adminAllOrders, setAdminAllOrders] = useState<DirectOrder[]>([]);
   const [firestoreAnalyticsEvents, setFirestoreAnalyticsEvents] = useState<
     AnalyticsEvent[]
+  >([]);
+  const [ownContactMessages, setOwnContactMessages] = useState<
+    ContactMessage[]
+  >([]);
+  const [adminContactMessages, setAdminContactMessages] = useState<
+    ContactMessage[]
+  >([]);
+  const [guestContactMessages, setGuestContactMessages] = useState<
+    ContactMessage[]
   >([]);
 
   const [isCartOpen, setIsCartOpen] = useState(false);
@@ -939,21 +1215,19 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   });
 
-  const [workspaceOverrides, setWorkspaceOverrides] =
-    useState<WorkspaceOverridesState>(() => loadInitialWorkspaceOverrides());
+  const [adminUiPrefs, setAdminUiPrefs] = useState<AdminUiPrefsState>(() =>
+    loadInitialAdminUiPrefs()
+  );
 
-  function updateWorkspaceOverrides(
-    updater: (prev: WorkspaceOverridesState) => WorkspaceOverridesState
+  function updateAdminUiPrefs(
+    updater: (prev: AdminUiPrefsState) => AdminUiPrefsState
   ) {
-    setWorkspaceOverrides((prev) => {
+    setAdminUiPrefs((prev) => {
       const next = updater(prev);
       try {
-        localStorage.setItem(
-          WORKSPACE_OVERRIDES_STORAGE_KEY,
-          JSON.stringify(next)
-        );
+        localStorage.setItem(UI_PREFS_STORAGE_KEY, JSON.stringify(next));
       } catch {
-        // ignore storage quota errors; in-memory state stays authoritative
+        // ignore storage quota errors
       }
       return next;
     });
@@ -970,11 +1244,27 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     isNonAnonymousUser(user) && (isBootstrappedCreator || isCoAdmin)
   );
 
+  const isSellerSuspended = Boolean(profile?.sellerStatus === 'suspended');
+
+  const isActiveSeller = useMemo(() => {
+    if (!isNonAnonymousUser(user)) return false;
+    if (isCreatorAdmin) return true;
+    if (isSellerSuspended) return false;
+    const hasStore =
+      profile?.isSeller === true &&
+      (profile.sellerStatus === 'active' || !profile.sellerStatus) &&
+      (profile.storeName || '').trim().length >= 2;
+    const hasPayout =
+      Boolean(privateInfo?.payoutMethod && privateInfo.payoutMethod !== 'None') &&
+      (privateInfo?.payoutAccount || '').trim().length >= 3;
+    return Boolean(hasStore && hasPayout);
+  }, [user, isCreatorAdmin, isSellerSuspended, profile, privateInfo]);
+
   const siteConfig: SiteConfig = useMemo(() => {
     const mergedHidden = Array.from(
       new Set([
         ...(firestoreSiteConfig?.hiddenSeedIds || []),
-        ...localHiddenSeedIds,
+        ...(isCreatorAdmin ? localHiddenSeedIds : []),
       ])
     ).slice(0, 50);
 
@@ -988,19 +1278,29 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       siteTagline: DEFAULT_SITE_TAGLINE,
       announcementEnabled: false,
       announcementText:
-        'Free tracked courier shipping on Pickra Direct physical orders over $95 · Use code PICKRA15',
+        'Free tracked courier shipping on Pickra Store physical orders over $95 · Use code PICKRA15',
       announcementCtaLabel: 'Shop Direct',
       announcementTargetSection: 'store',
       freeShippingThresholdCents: DEFAULT_FREE_SHIPPING_THRESHOLD_CENTS,
       flatShippingCents: DEFAULT_FLAT_PHYSICAL_SHIPPING_CENTS,
       defaultDisclosureText: DEFAULT_DISCLOSURE,
       storeCheckoutEnabled: true,
+      blogEnabled: true,
+      storeEnabled: true,
+      productAffiliateEnabled: true,
+      serviceAffiliateEnabled: true,
       showStarterSeeds: !hideSeeds,
       hiddenSeedIds: mergedHidden,
+      aboutMission: DEFAULT_ABOUT_MISSION,
+      aboutStory: DEFAULT_ABOUT_STORY,
+      contactEmail: DEFAULT_CONTACT_EMAIL,
+      contactPhone: DEFAULT_CONTACT_PHONE,
+      contactLocation: DEFAULT_CONTACT_LOCATION,
+      privacyPolicySummary: DEFAULT_PRIVACY_POLICY_SUMMARY,
       updatedBy: '',
       updatedAtMs: 0,
     };
-  }, [firestoreSiteConfig, hideSeeds, localHiddenSeedIds]);
+  }, [firestoreSiteConfig, hideSeeds, localHiddenSeedIds, isCreatorAdmin]);
 
   const hiddenSeedSet = useMemo(
     () => new Set(siteConfig.hiddenSeedIds || []),
@@ -1089,6 +1389,12 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       pendingRegSeedRef.current = null;
 
       let resolvedName = 'Member';
+      const hasValidSeedPayout = Boolean(
+        regSeed?.payoutAccount &&
+          regSeed.payoutAccount.trim().length >= 3 &&
+          regSeed.payoutMethod &&
+          regSeed.payoutMethod !== 'None'
+      );
 
       try {
         const userRef = doc(db, 'users', currentUser.uid);
@@ -1104,9 +1410,14 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           .slice(0, VALIDATION_LIMITS.DISPLAY_NAME_MAX);
 
         if (!userSnap.exists()) {
-          const initialIsSeller = Boolean(regSeed?.asSeller);
-          const initialStoreName = initialIsSeller
-            ? (regSeed?.storeName || defaultName)
+          const initialIsSeller = Boolean(regSeed?.asSeller && hasValidSeedPayout);
+          const initialSellerStatus: SellerAccountStatus = initialIsSeller
+            ? 'active'
+            : regSeed?.asSeller
+            ? 'pending'
+            : 'inactive';
+          const initialStoreName = regSeed?.asSeller
+            ? (regSeed.storeName || defaultName)
                 .trim()
                 .slice(0, VALIDATION_LIMITS.STORE_NAME_MAX)
             : '';
@@ -1118,6 +1429,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
               ? 'Independent creator selling on Pickra Store.'
               : 'Pickra editorial & creator store member.',
             isSeller: initialIsSeller,
+            sellerStatus: initialSellerStatus,
             storeName: initialStoreName,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
@@ -1130,20 +1442,37 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
               ? 'Independent creator selling on Pickra Store.'
               : 'Pickra editorial & creator store member.',
             isSeller: initialIsSeller,
+            sellerStatus: initialSellerStatus,
             storeName: initialStoreName,
           });
           resolvedName = initialStoreName || defaultName;
         } else {
           const d = userSnap.data();
-          const shouldPromoteSeller = Boolean(regSeed?.asSeller && !d.isSeller);
+          const existingSuspended = d.sellerStatus === 'suspended';
+          const shouldPromoteSeller = Boolean(
+            regSeed?.asSeller && hasValidSeedPayout && !d.isSeller && !existingSuspended
+          );
           const nextStoreName = shouldPromoteSeller
             ? (regSeed?.storeName || String(d.storeName || d.displayName || defaultName))
                 .trim()
                 .slice(0, VALIDATION_LIMITS.STORE_NAME_MAX)
             : String(d.storeName || '');
-          if (shouldPromoteSeller) {
+          const nextSellerStatus: SellerAccountStatus = existingSuspended
+            ? 'suspended'
+            : shouldPromoteSeller
+            ? 'active'
+            : d.sellerStatus === 'active' ||
+              d.sellerStatus === 'pending' ||
+              d.sellerStatus === 'inactive'
+            ? d.sellerStatus
+            : d.isSeller
+            ? 'active'
+            : 'inactive';
+
+          if (shouldPromoteSeller && nextStoreName.length >= 2) {
             await updateDoc(userRef, {
               isSeller: true,
+              sellerStatus: 'active',
               storeName: nextStoreName,
               updatedAt: serverTimestamp(),
             });
@@ -1152,7 +1481,8 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
             uid: currentUser.uid,
             displayName: String(d.displayName || defaultName),
             bio: String(d.bio || ''),
-            isSeller: Boolean(d.isSeller || shouldPromoteSeller),
+            isSeller: Boolean((d.isSeller || shouldPromoteSeller) && !existingSuspended),
+            sellerStatus: nextSellerStatus,
             storeName: nextStoreName,
           };
           setProfile(nextProfile);
@@ -1180,21 +1510,17 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           .slice(0, 60);
 
         if (!privSnap.exists()) {
-          const hasInitPayment = Boolean(
-            regSeed?.payoutAccount && regSeed.payoutAccount.trim()
-          );
           const initMethod: SellerPayoutMethod =
-            (regSeed?.asSeller || hasInitPayment) &&
+            hasValidSeedPayout &&
             regSeed?.payoutMethod &&
             VALID_PAYOUT_METHODS.includes(regSeed.payoutMethod)
               ? regSeed.payoutMethod
               : 'None';
-          const initAccount =
-            regSeed?.asSeller || hasInitPayment
-              ? (regSeed?.payoutAccount || '')
-                  .trim()
-                  .slice(0, VALIDATION_LIMITS.PAYOUT_ACCOUNT_MAX)
-              : '';
+          const initAccount = hasValidSeedPayout
+            ? (regSeed?.payoutAccount || '')
+                .trim()
+                .slice(0, VALIDATION_LIMITS.PAYOUT_ACCOUNT_MAX)
+            : '';
           const initAccountsList: string[] =
             initAccount && initMethod !== 'None'
               ? [
@@ -1245,14 +1571,13 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           let finalAccounts = existingAccounts;
 
           if (
-            regSeed?.payoutAccount &&
-            regSeed.payoutAccount.trim() &&
+            hasValidSeedPayout &&
             !finalAccount &&
-            regSeed.payoutMethod &&
+            regSeed?.payoutMethod &&
             VALID_PAYOUT_METHODS.includes(regSeed.payoutMethod)
           ) {
             finalMethod = regSeed.payoutMethod;
-            finalAccount = regSeed.payoutAccount
+            finalAccount = (regSeed.payoutAccount || '')
               .trim()
               .slice(0, VALIDATION_LIMITS.PAYOUT_ACCOUNT_MAX);
             finalAccounts = [
@@ -1286,7 +1611,6 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         handleFirestoreError(err, OperationType.WRITE, privatePath);
       }
 
-      // Flush queued pre-login telemetry events cleanly now that /users/{uid} exists
       try {
         const rawQueued = sessionStorage.getItem(PENDING_TELEMETRY_KEY);
         if (rawQueued) {
@@ -1342,7 +1666,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     return promise;
   }
 
-  // Ensure User Public Profile & Split Private Info exist upon authenticated Sign-In
+  // Subscribe to own User Profile & Split Private Info in real time
   useEffect(() => {
     if (!authReady || !isNonAnonymousUser(user)) {
       setProfile(null);
@@ -1350,9 +1674,34 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       return;
     }
 
-    void ensureUserBootstrapped(user).catch((err) => {
-      console.error('User bootstrap warning:', err);
-    });
+    let cancelled = false;
+    let unsubOwnProfile = () => {};
+
+    void ensureUserBootstrapped(user)
+      .then(() => {
+        if (cancelled) return;
+        unsubOwnProfile = onSnapshot(
+          doc(db, 'users', user.uid),
+          (snap) => {
+            if (snap.exists() && !cancelled) {
+              setProfile(
+                parseUserProfileDoc(snap.id, snap.data() as Record<string, unknown>)
+              );
+            }
+          },
+          (err) => {
+            handleFirestoreError(err, OperationType.GET, `users/${user.uid}`);
+          }
+        );
+      })
+      .catch((err) => {
+        console.error('User bootstrap warning:', err);
+      });
+
+    return () => {
+      cancelled = true;
+      unsubOwnProfile();
+    };
   }, [authReady, user]);
 
   // Public listeners: SiteConfig singleton, Published Offers, Posts, Direct Products, & Campaigns
@@ -1478,10 +1827,12 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       setAdminAllOrders([]);
       setFirestoreAnalyticsEvents([]);
       setAdminRegistry([]);
+      setAllUsers([]);
+      setOwnContactMessages([]);
+      setAdminContactMessages([]);
       return;
     }
 
-    // 1. Every verified user can view their own customer purchases
     const buyerOrdersQuery = query(
       collection(db, 'directOrders'),
       where('buyerId', '==', user.uid)
@@ -1500,7 +1851,6 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       }
     );
 
-    // 2. Every verified user can manage their own Creator Store products & incoming seller payouts
     const ownProductsQuery = query(
       collection(db, 'directProducts'),
       where('sellerId', '==', user.uid)
@@ -1537,7 +1887,24 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       }
     );
 
-    // 3. Website Owner / Creator Admin Backend Listeners
+    const ownMessagesQuery = query(
+      collection(db, 'contactMessages'),
+      where('senderId', '==', user.uid)
+    );
+    const unsubOwnMessages = onSnapshot(
+      ownMessagesQuery,
+      (snap) => {
+        const items = snap.docs.map((d) =>
+          parseContactMessageDoc(d.id, d.data() as Record<string, unknown>)
+        );
+        items.sort((a, b) => b.createdAtMs - a.createdAtMs);
+        setOwnContactMessages(items);
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'contactMessages');
+      }
+    );
+
     if (!isCreatorAdmin) {
       setAuthorFirestoreOffers([]);
       setAuthorFirestorePosts([]);
@@ -1546,10 +1913,13 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       setAdminAllOrders([]);
       setFirestoreAnalyticsEvents([]);
       setAdminRegistry([]);
+      setAllUsers([]);
+      setAdminContactMessages([]);
       return () => {
         unsubBuyerOrders();
         unsubOwnProducts();
         unsubOwnSellerOrders();
+        unsubOwnMessages();
       };
     }
 
@@ -1648,6 +2018,8 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
 
     let unsubAdminProducts = () => {};
     let unsubAdminOrders = () => {};
+    let unsubAdminUsers = () => {};
+    let unsubAdminMessages = () => {};
 
     if (isBootstrappedCreator) {
       unsubAdminProducts = onSnapshot(
@@ -1677,12 +2049,41 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           handleFirestoreError(err, OperationType.LIST, 'directOrders');
         }
       );
+
+      unsubAdminUsers = onSnapshot(
+        collection(db, 'users'),
+        (snap) => {
+          const items = snap.docs.map((d) =>
+            parseUserProfileDoc(d.id, d.data() as Record<string, unknown>)
+          );
+          items.sort((a, b) => (b.updatedAtMs || 0) - (a.updatedAtMs || 0));
+          setAllUsers(items);
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.LIST, 'users');
+        }
+      );
+
+      unsubAdminMessages = onSnapshot(
+        collection(db, 'contactMessages'),
+        (snap) => {
+          const items = snap.docs.map((d) =>
+            parseContactMessageDoc(d.id, d.data() as Record<string, unknown>)
+          );
+          items.sort((a, b) => b.createdAtMs - a.createdAtMs);
+          setAdminContactMessages(items);
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.LIST, 'contactMessages');
+        }
+      );
     }
 
     return () => {
       unsubBuyerOrders();
       unsubOwnProducts();
       unsubOwnSellerOrders();
+      unsubOwnMessages();
       unsubOffers();
       unsubPosts();
       unsubCampaigns();
@@ -1690,6 +2091,8 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       unsubAdmins();
       unsubAdminProducts();
       unsubAdminOrders();
+      unsubAdminUsers();
+      unsubAdminMessages();
     };
   }, [authReady, user, isCreatorAdmin, isBootstrappedCreator]);
 
@@ -1706,220 +2109,148 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const includeSeeds = siteConfig.showStarterSeeds;
 
-  const deletedSet = useMemo(
-    () => new Set([...hiddenSeedSet, ...workspaceOverrides.deletedIds]),
-    [hiddenSeedSet, workspaceOverrides.deletedIds]
-  );
-
   const publishedOffers = useMemo(() => {
     const map = new Map<string, AffiliateOffer>();
     for (const offer of publicFirestoreOffers) {
-      if (!deletedSet.has(offer.id)) {
+      if (!hiddenSeedSet.has(offer.id)) {
         map.set(offer.id, offer);
       }
     }
     if (includeSeeds) {
       for (const seed of SEED_OFFERS) {
-        if (!map.has(seed.id) && !deletedSet.has(seed.id)) {
+        if (!map.has(seed.id) && !hiddenSeedSet.has(seed.id)) {
           map.set(seed.id, seed);
         }
       }
     }
-    for (const localOffer of Object.values(workspaceOverrides.offers)) {
-      if (deletedSet.has(localOffer.id) || localOffer.status !== 'published') {
-        map.delete(localOffer.id);
-      } else {
-        map.set(localOffer.id, localOffer);
-      }
-    }
     return Array.from(map.values()).sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-  }, [publicFirestoreOffers, includeSeeds, deletedSet, workspaceOverrides.offers]);
+  }, [publicFirestoreOffers, includeSeeds, hiddenSeedSet]);
 
   const publishedPosts = useMemo(() => {
     const map = new Map<string, BlogPost>();
     for (const post of publicFirestorePosts) {
-      if (!deletedSet.has(post.id)) {
+      if (!hiddenSeedSet.has(post.id)) {
         map.set(post.id, post);
       }
     }
     if (includeSeeds) {
       for (const seed of SEED_POSTS) {
-        if (!map.has(seed.id) && !deletedSet.has(seed.id)) {
+        if (!map.has(seed.id) && !hiddenSeedSet.has(seed.id)) {
           map.set(seed.id, seed);
         }
-      }
-    }
-    for (const localPost of Object.values(workspaceOverrides.posts)) {
-      if (deletedSet.has(localPost.id) || localPost.status !== 'published') {
-        map.delete(localPost.id);
-      } else {
-        map.set(localPost.id, localPost);
       }
     }
     return Array.from(map.values()).sort((a, b) => {
       if (a.featured !== b.featured) return a.featured ? -1 : 1;
       return b.updatedAtMs - a.updatedAtMs;
     });
-  }, [publicFirestorePosts, includeSeeds, deletedSet, workspaceOverrides.posts]);
+  }, [publicFirestorePosts, includeSeeds, hiddenSeedSet]);
 
   const publishedDirectProducts = useMemo(() => {
     const map = new Map<string, DirectProduct>();
     for (const prod of publicFirestoreProducts) {
-      if (!deletedSet.has(prod.id)) {
+      if (
+        !hiddenSeedSet.has(prod.id) &&
+        (!prod.approvalStatus || prod.approvalStatus === 'approved')
+      ) {
         map.set(prod.id, prod);
       }
     }
     if (includeSeeds) {
       for (const seed of SEED_DIRECT_PRODUCTS) {
-        if (!map.has(seed.id) && !deletedSet.has(seed.id)) {
-          map.set(seed.id, seed);
+        if (!map.has(seed.id) && !hiddenSeedSet.has(seed.id)) {
+          const offset = seedStockOffsets[seed.id] || 0;
+          map.set(seed.id, {
+            ...seed,
+            approvalStatus: 'approved',
+            hasDigitalAsset: seed.kind === 'digital',
+            stockCount:
+              seed.kind === 'physical'
+                ? Math.max(0, seed.stockCount - offset)
+                : seed.stockCount,
+          });
         }
-      }
-    }
-    for (const localProd of Object.values(workspaceOverrides.directProducts)) {
-      if (deletedSet.has(localProd.id) || localProd.status !== 'published') {
-        map.delete(localProd.id);
-      } else {
-        map.set(localProd.id, localProd);
       }
     }
     return Array.from(map.values()).sort((a, b) => {
       if (a.featured !== b.featured) return a.featured ? -1 : 1;
       return b.updatedAtMs - a.updatedAtMs;
     });
-  }, [
-    publicFirestoreProducts,
-    includeSeeds,
-    deletedSet,
-    workspaceOverrides.directProducts,
-  ]);
+  }, [publicFirestoreProducts, includeSeeds, hiddenSeedSet, seedStockOffsets]);
 
   const publishedCampaigns = useMemo(() => {
     const map = new Map<string, MarketingCampaign>();
     for (const camp of publicFirestoreCampaigns) {
-      if (!deletedSet.has(camp.id)) {
+      if (!hiddenSeedSet.has(camp.id)) {
         map.set(camp.id, camp);
       }
     }
     if (includeSeeds) {
       for (const seed of SEED_CAMPAIGNS) {
-        if (!map.has(seed.id) && !deletedSet.has(seed.id)) {
+        if (!map.has(seed.id) && !hiddenSeedSet.has(seed.id)) {
           map.set(seed.id, seed);
         }
       }
     }
-    for (const localCamp of Object.values(workspaceOverrides.campaigns)) {
-      if (deletedSet.has(localCamp.id) || localCamp.status !== 'published') {
-        map.delete(localCamp.id);
-      } else {
-        map.set(localCamp.id, localCamp);
-      }
-    }
     return Array.from(map.values()).sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-  }, [
-    publicFirestoreCampaigns,
-    includeSeeds,
-    deletedSet,
-    workspaceOverrides.campaigns,
-  ]);
+  }, [publicFirestoreCampaigns, includeSeeds, hiddenSeedSet]);
 
   const studioOffers = useMemo(() => {
     const map = new Map<string, AffiliateOffer>();
     for (const offer of authorFirestoreOffers) {
-      if (!deletedSet.has(offer.id)) {
+      if (!hiddenSeedSet.has(offer.id)) {
         map.set(offer.id, offer);
       }
     }
     for (const offer of publicFirestoreOffers) {
-      if (!map.has(offer.id) && !deletedSet.has(offer.id)) {
+      if (!map.has(offer.id) && !hiddenSeedSet.has(offer.id)) {
         map.set(offer.id, offer);
       }
     }
-    for (const localOffer of Object.values(workspaceOverrides.offers)) {
-      if (!deletedSet.has(localOffer.id)) {
-        map.set(localOffer.id, localOffer);
-      }
-    }
     return Array.from(map.values()).sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-  }, [
-    authorFirestoreOffers,
-    publicFirestoreOffers,
-    deletedSet,
-    workspaceOverrides.offers,
-  ]);
+  }, [authorFirestoreOffers, publicFirestoreOffers, hiddenSeedSet]);
 
   const studioPosts = useMemo(() => {
     const map = new Map<string, BlogPost>();
     for (const post of authorFirestorePosts) {
-      if (!deletedSet.has(post.id)) {
+      if (!hiddenSeedSet.has(post.id)) {
         map.set(post.id, post);
       }
     }
     for (const post of publicFirestorePosts) {
-      if (!map.has(post.id) && !deletedSet.has(post.id)) {
+      if (!map.has(post.id) && !hiddenSeedSet.has(post.id)) {
         map.set(post.id, post);
       }
     }
-    for (const localPost of Object.values(workspaceOverrides.posts)) {
-      if (!deletedSet.has(localPost.id)) {
-        map.set(localPost.id, localPost);
-      }
-    }
     return Array.from(map.values()).sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-  }, [
-    authorFirestorePosts,
-    publicFirestorePosts,
-    deletedSet,
-    workspaceOverrides.posts,
-  ]);
+  }, [authorFirestorePosts, publicFirestorePosts, hiddenSeedSet]);
 
   const studioDirectProducts = useMemo(() => {
     const map = new Map<string, DirectProduct>();
     for (const prod of adminAllProducts) {
-      if (!deletedSet.has(prod.id)) {
+      if (!hiddenSeedSet.has(prod.id)) {
         map.set(prod.id, prod);
       }
     }
     for (const prod of ownSellerProducts) {
-      if (!deletedSet.has(prod.id)) {
+      if (!hiddenSeedSet.has(prod.id)) {
         map.set(prod.id, prod);
       }
     }
     for (const prod of publicFirestoreProducts) {
-      if (!map.has(prod.id) && !deletedSet.has(prod.id)) {
+      if (!map.has(prod.id) && !hiddenSeedSet.has(prod.id)) {
         map.set(prod.id, prod);
       }
     }
-    for (const localProd of Object.values(workspaceOverrides.directProducts)) {
-      if (!deletedSet.has(localProd.id)) {
-        map.set(localProd.id, localProd);
-      }
-    }
     return Array.from(map.values()).sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-  }, [
-    adminAllProducts,
-    ownSellerProducts,
-    publicFirestoreProducts,
-    deletedSet,
-    workspaceOverrides.directProducts,
-  ]);
+  }, [adminAllProducts, ownSellerProducts, publicFirestoreProducts, hiddenSeedSet]);
 
   const effectiveMySellerProducts = useMemo(() => {
-    const map = new Map<string, DirectProduct>();
-    for (const prod of ownSellerProducts) {
-      if (!deletedSet.has(prod.id)) {
-        map.set(prod.id, prod);
-      }
-    }
-    for (const localProd of Object.values(workspaceOverrides.directProducts)) {
-      if (!deletedSet.has(localProd.id)) {
-        if (!user || localProd.sellerId === user.uid || localProd.sellerId === 'editorial_desk') {
-          map.set(localProd.id, localProd);
-        }
-      }
-    }
-    return Array.from(map.values()).sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-  }, [ownSellerProducts, workspaceOverrides.directProducts, deletedSet, user]);
+    if (!isNonAnonymousUser(user)) return [];
+    return ownSellerProducts
+      .filter((prod) => !hiddenSeedSet.has(prod.id) && prod.sellerId === user.uid)
+      .sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+  }, [ownSellerProducts, hiddenSeedSet, user]);
 
   const myPurchases = useMemo(() => {
     const map = new Map<string, DirectOrder>();
@@ -1948,113 +2279,87 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   const studioCampaigns = useMemo(() => {
     const map = new Map<string, MarketingCampaign>();
     for (const camp of authorFirestoreCampaigns) {
-      if (!deletedSet.has(camp.id)) {
+      if (!hiddenSeedSet.has(camp.id)) {
         map.set(camp.id, camp);
       }
     }
     for (const camp of publicFirestoreCampaigns) {
-      if (!map.has(camp.id) && !deletedSet.has(camp.id)) {
+      if (!map.has(camp.id) && !hiddenSeedSet.has(camp.id)) {
         map.set(camp.id, camp);
       }
     }
-    for (const localCamp of Object.values(workspaceOverrides.campaigns)) {
-      if (!deletedSet.has(localCamp.id)) {
-        map.set(localCamp.id, localCamp);
-      }
-    }
     return Array.from(map.values()).sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-  }, [
-    authorFirestoreCampaigns,
-    publicFirestoreCampaigns,
-    deletedSet,
-    workspaceOverrides.campaigns,
-  ]);
+  }, [authorFirestoreCampaigns, publicFirestoreCampaigns, hiddenSeedSet]);
 
   const allAccessibleOffersMap = useMemo(() => {
     const record: Record<string, AffiliateOffer> = {};
     for (const seed of SEED_OFFERS) {
-      if (!deletedSet.has(seed.id)) {
+      if (!hiddenSeedSet.has(seed.id)) {
         record[seed.id] = seed;
       }
     }
     for (const pub of publicFirestoreOffers) {
-      if (!deletedSet.has(pub.id)) {
+      if (!hiddenSeedSet.has(pub.id)) {
         record[pub.id] = pub;
       }
     }
     for (const own of authorFirestoreOffers) {
-      if (!deletedSet.has(own.id)) {
+      if (!hiddenSeedSet.has(own.id)) {
         record[own.id] = own;
       }
     }
-    for (const localOffer of Object.values(workspaceOverrides.offers)) {
-      if (!deletedSet.has(localOffer.id)) {
-        record[localOffer.id] = localOffer;
-      }
-    }
     return record;
-  }, [
-    publicFirestoreOffers,
-    authorFirestoreOffers,
-    deletedSet,
-    workspaceOverrides.offers,
-  ]);
+  }, [publicFirestoreOffers, authorFirestoreOffers, hiddenSeedSet]);
 
   const allAccessiblePostsMap = useMemo(() => {
     const record: Record<string, BlogPost> = {};
     for (const seed of SEED_POSTS) {
-      if (!deletedSet.has(seed.id)) {
+      if (!hiddenSeedSet.has(seed.id)) {
         record[seed.id] = seed;
       }
     }
     for (const pub of publicFirestorePosts) {
-      if (!deletedSet.has(pub.id)) {
+      if (!hiddenSeedSet.has(pub.id)) {
         record[pub.id] = pub;
       }
     }
     for (const own of authorFirestorePosts) {
-      if (!deletedSet.has(own.id)) {
+      if (!hiddenSeedSet.has(own.id)) {
         record[own.id] = own;
       }
     }
-    for (const localPost of Object.values(workspaceOverrides.posts)) {
-      if (!deletedSet.has(localPost.id)) {
-        record[localPost.id] = localPost;
-      }
-    }
     return record;
-  }, [
-    publicFirestorePosts,
-    authorFirestorePosts,
-    deletedSet,
-    workspaceOverrides.posts,
-  ]);
+  }, [publicFirestorePosts, authorFirestorePosts, hiddenSeedSet]);
 
   const allAccessibleDirectProductsMap = useMemo(() => {
     const record: Record<string, DirectProduct> = {};
     for (const seed of SEED_DIRECT_PRODUCTS) {
-      if (!deletedSet.has(seed.id)) {
-        record[seed.id] = seed;
+      if (!hiddenSeedSet.has(seed.id)) {
+        const offset = seedStockOffsets[seed.id] || 0;
+        record[seed.id] = {
+          ...seed,
+          approvalStatus: 'approved',
+          hasDigitalAsset: seed.kind === 'digital',
+          stockCount:
+            seed.kind === 'physical'
+              ? Math.max(0, seed.stockCount - offset)
+              : seed.stockCount,
+        };
       }
     }
     for (const pub of publicFirestoreProducts) {
-      if (!deletedSet.has(pub.id)) {
+      if (!hiddenSeedSet.has(pub.id)) {
         record[pub.id] = pub;
       }
     }
     for (const own of ownSellerProducts) {
-      if (!deletedSet.has(own.id)) {
+      if (!hiddenSeedSet.has(own.id)) {
         record[own.id] = own;
       }
     }
     for (const adm of adminAllProducts) {
-      if (!deletedSet.has(adm.id)) {
+      if (!hiddenSeedSet.has(adm.id)) {
         record[adm.id] = adm;
-      }
-    }
-    for (const localProd of Object.values(workspaceOverrides.directProducts)) {
-      if (!deletedSet.has(localProd.id)) {
-        record[localProd.id] = localProd;
       }
     }
     return record;
@@ -2062,8 +2367,8 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     publicFirestoreProducts,
     ownSellerProducts,
     adminAllProducts,
-    deletedSet,
-    workspaceOverrides.directProducts,
+    hiddenSeedSet,
+    seedStockOffsets,
   ]);
 
   const clickCounts = useMemo(() => {
@@ -2242,7 +2547,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
 
   function addToCart(productId: string, quantity = 1, openDrawer = true) {
     const product = allAccessibleDirectProductsMap[productId];
-    if (!product || product.stockCount <= 0) return;
+    if (!product || product.stockCount <= 0 || product.status !== 'published') return;
 
     setCartItems((prev) => {
       const existing = prev.find((i) => i.productId === productId);
@@ -2283,7 +2588,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       channel: 'store',
       targetId: product.id,
       targetTitle: product.title,
-      platform: 'Pickra Direct',
+      platform: 'Pickra Store',
       valueCents: product.priceCents * Math.max(1, quantity),
     });
 
@@ -2358,7 +2663,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     }
     return {
       ok: true,
-      message: `Applied ${found.promoCode} for ${found.discountPercent}% off your direct order.`,
+      message: `Applied ${found.promoCode} for ${found.discountPercent}% off your order.`,
     };
   }
 
@@ -2434,6 +2739,17 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       if (input.password.length < 6) {
         throw new Error('Password must be at least 6 characters.');
       }
+      if (input.asSeller) {
+        const cleanStore = (input.storeName || cleanName).trim();
+        if (cleanStore.length < 2) {
+          throw new Error('Enter a seller store name (at least 2 characters).');
+        }
+        if (!input.payoutAccount || input.payoutAccount.trim().length < 3) {
+          throw new Error(
+            'Enter a payout account (Telebirr, Bank Account, PayPal, etc.) to activate a seller account.'
+          );
+        }
+      }
 
       pendingRegSeedRef.current = {
         fullName: cleanName,
@@ -2464,7 +2780,6 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       }
       await ensureUserBootstrapped(cred.user);
 
-      // If registering with the Website Owner email, dispatch verification email so email_verified can be confirmed
       if (
         cleanEmail.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase() &&
         !cred.user.emailVerified
@@ -2519,7 +2834,9 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     try {
       const cleanEmail = email.trim();
       if (!cleanEmail || !cleanEmail.includes('@')) {
-        throw new Error('Enter your account email address first to receive a password reset link.');
+        throw new Error(
+          'Enter your account email address first to receive a password reset link.'
+        );
       }
       await sendPasswordResetEmail(auth, cleanEmail);
     } catch (err) {
@@ -2542,7 +2859,6 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     if (!auth.currentUser) return;
     await auth.currentUser.reload();
     const refreshed = auth.currentUser;
-    // Trigger shallow state refresh so user.emailVerified updates in React
     setUser(refreshed ? ({ ...refreshed } as User) : null);
   }
 
@@ -2553,7 +2869,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
 
   function assertCreatorAccess() {
     if (!isNonAnonymousUser(user)) {
-      throw new Error('Please sign in to your Website Owner account first.');
+      throw new Error('Website Owner sign-in required.');
     }
     if (!isCreatorAdmin) {
       if (
@@ -2561,22 +2877,42 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         !user.emailVerified
       ) {
         throw new Error(
-          'Please verify your owner email address (or sign in with Google) to unlock Website Owner Backend write permissions.'
+          'Please verify your owner email address (or sign in with Google) to unlock Admin Dashboard permissions.'
         );
       }
       throw new Error(
-        'Website Owner permission required: only authorized Pickra administrators can modify global blog stories, affiliate links, or backend settings.'
+        'Permission denied: only the authorized Pickra Website Owner can manage blog posts, affiliate listings, campaigns, or global settings.'
       );
     }
   }
 
-  function assertVerifiedSeller() {
+  function assertSignedInAccount() {
     if (!isNonAnonymousUser(user)) {
-      throw new Error('Create a Creator Account or sign in first to publish and sell products.');
+      throw new Error('Sign in or create an account first.');
+    }
+  }
+
+  function assertActiveSellerAccess() {
+    if (!isNonAnonymousUser(user)) {
+      throw new Error(
+        'Register and sign in to a Seller Account before adding or managing Store products.'
+      );
+    }
+    if (isCreatorAdmin) return;
+    if (isSellerSuspended) {
+      throw new Error(
+        'Your seller account has been suspended by the website administrator.'
+      );
+    }
+    if (!isActiveSeller) {
+      throw new Error(
+        'Activate your Seller Account with a storefront name and verified payout method before managing Store products.'
+      );
     }
   }
 
   async function hideSeedItem(seedId: string): Promise<void> {
+    assertCreatorAccess();
     if (!seedId.startsWith('seed_')) return;
     const nextHidden = Array.from(
       new Set([...(siteConfig.hiddenSeedIds || []), seedId])
@@ -2589,35 +2925,43 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       // ignore storage quota errors
     }
 
-    if (isNonAnonymousUser(user) && isCreatorAdmin) {
-      await saveSiteConfig({
-        siteTagline: siteConfig.siteTagline,
-        announcementEnabled: siteConfig.announcementEnabled,
-        announcementText: siteConfig.announcementText,
-        announcementCtaLabel: siteConfig.announcementCtaLabel,
-        announcementTargetSection: siteConfig.announcementTargetSection,
-        freeShippingThresholdCents: siteConfig.freeShippingThresholdCents,
-        flatShippingCents: siteConfig.flatShippingCents,
-        defaultDisclosureText: siteConfig.defaultDisclosureText,
-        storeCheckoutEnabled: siteConfig.storeCheckoutEnabled,
-        showStarterSeeds: siteConfig.showStarterSeeds,
-        hiddenSeedIds: nextHidden,
-      });
-    }
+    await saveSiteConfig({
+      siteTagline: siteConfig.siteTagline,
+      announcementEnabled: siteConfig.announcementEnabled,
+      announcementText: siteConfig.announcementText,
+      announcementCtaLabel: siteConfig.announcementCtaLabel,
+      announcementTargetSection: siteConfig.announcementTargetSection,
+      freeShippingThresholdCents: siteConfig.freeShippingThresholdCents,
+      flatShippingCents: siteConfig.flatShippingCents,
+      defaultDisclosureText: siteConfig.defaultDisclosureText,
+      storeCheckoutEnabled: siteConfig.storeCheckoutEnabled,
+      blogEnabled: siteConfig.blogEnabled,
+      storeEnabled: siteConfig.storeEnabled,
+      productAffiliateEnabled: siteConfig.productAffiliateEnabled,
+      serviceAffiliateEnabled: siteConfig.serviceAffiliateEnabled,
+      showStarterSeeds: siteConfig.showStarterSeeds,
+      hiddenSeedIds: nextHidden,
+    });
   }
 
   async function registerOrUpdateSellerAccount(
     input: SellerAccountInput
   ): Promise<void> {
-    assertVerifiedSeller();
+    assertSignedInAccount();
     if (!user) throw new Error('Sign-in required.');
+    if (isSellerSuspended && !isCreatorAdmin) {
+      throw new Error(
+        'Your seller account is currently suspended and cannot be reactivated without administrator review.'
+      );
+    }
 
-    const cleanStoreName = (
-      input.storeName.trim() ||
-      profile?.displayName ||
-      user.displayName ||
-      'Creator Studio'
-    ).slice(0, VALIDATION_LIMITS.STORE_NAME_MAX);
+    const cleanStoreName = input.storeName
+      .trim()
+      .slice(0, VALIDATION_LIMITS.STORE_NAME_MAX);
+    if (cleanStoreName.length < 2) {
+      throw new Error('Store / Studio name must be at least 2 characters.');
+    }
+
     const cleanBio = input.bio.trim().slice(0, VALIDATION_LIMITS.BIO_MAX);
     const cleanMethod: SellerPayoutMethod = VALID_PAYOUT_METHODS.includes(
       input.payoutMethod
@@ -2627,6 +2971,13 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     const cleanPayoutAccount = input.payoutAccount
       .trim()
       .slice(0, VALIDATION_LIMITS.PAYOUT_ACCOUNT_MAX);
+
+    if (cleanMethod === 'None' || cleanPayoutAccount.length < 3) {
+      throw new Error(
+        'Add a valid payout method and account number (Telebirr, Bank, Stripe, PayPal, etc.) to activate your Seller Account.'
+      );
+    }
+
     const safeEmail = (user.email || 'creator@example.com').slice(0, 254);
 
     await ensureParentUserProfileExists(user);
@@ -2637,25 +2988,6 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       cleanStoreName
     ).slice(0, VALIDATION_LIMITS.DISPLAY_NAME_MAX);
 
-    try {
-      await updateDoc(doc(db, 'users', user.uid), {
-        displayName,
-        bio: cleanBio,
-        isSeller: true,
-        storeName: cleanStoreName,
-        updatedAt: serverTimestamp(),
-      });
-      setProfile({
-        uid: user.uid,
-        displayName,
-        bio: cleanBio,
-        isSeller: true,
-        storeName: cleanStoreName,
-      });
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`);
-    }
-
     const existingParsed = parsePayoutAccounts(
       privateInfo?.payoutAccounts,
       privateInfo?.payoutMethod,
@@ -2664,8 +2996,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     );
     const nextAccountsObj: SavedPayoutAccount[] = input.payoutAccounts
       ? input.payoutAccounts.slice(0, 6)
-      : cleanPayoutAccount
-      ? [
+      : [
           {
             id: existingParsed[0]?.id || 'pay_primary',
             method: cleanMethod,
@@ -2674,13 +3005,13 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
             accountNumber: cleanPayoutAccount,
           },
           ...existingParsed.slice(1, 6),
-        ]
-      : existingParsed;
+        ];
     const serializedList = nextAccountsObj
       .filter((a) => a.accountNumber.trim().length > 0)
       .slice(0, 6)
       .map(serializePayoutAccount);
 
+    // 1. Persist private payout record first so isActiveSellerUser relational check is satisfied immediately
     try {
       const privRef = doc(db, 'users', user.uid, 'private', 'info');
       const snap = await getDoc(privRef);
@@ -2721,19 +3052,41 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         `users/${user.uid}/private/info`
       );
     }
+
+    // 2. Activate Seller Profile on /users/{uid}
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        displayName,
+        bio: cleanBio,
+        isSeller: true,
+        sellerStatus: 'active',
+        storeName: cleanStoreName,
+        updatedAt: serverTimestamp(),
+      });
+      setProfile({
+        uid: user.uid,
+        displayName,
+        bio: cleanBio,
+        isSeller: true,
+        sellerStatus: 'active',
+        storeName: cleanStoreName,
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`);
+    }
   }
 
   async function saveUserPaymentMethods(
     accounts: SavedPayoutAccount[],
     primaryId?: string
   ): Promise<void> {
-    assertVerifiedSeller();
+    assertSignedInAccount();
     if (!user) throw new Error('Sign-in required.');
 
     await ensureParentUserProfileExists(user);
 
     const validAccounts = accounts
-      .filter((acc) => acc.accountNumber && acc.accountNumber.trim().length >= 2)
+      .filter((acc) => acc.accountNumber && acc.accountNumber.trim().length >= 3)
       .slice(0, VALIDATION_LIMITS.PAYOUT_ACCOUNTS_MAX_COUNT);
 
     if (primaryId) {
@@ -2796,6 +3149,39 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }
 
+  async function moderateUserSellerStatus(
+    targetUid: string,
+    nextStatus: SellerAccountStatus,
+    isSellerFlag?: boolean
+  ): Promise<void> {
+    assertCreatorAccess();
+    const cleanUid = targetUid.trim();
+    if (!VALIDATION_LIMITS.ID_REGEX.test(cleanUid)) {
+      throw new Error('Invalid user UID.');
+    }
+    const existingTarget = allUsers.find((u) => u.uid === cleanUid);
+    const nextIsSeller =
+      typeof isSellerFlag === 'boolean'
+        ? isSellerFlag
+        : nextStatus === 'active';
+    const nextStoreName =
+      nextIsSeller && (!existingTarget?.storeName || existingTarget.storeName.length < 2)
+        ? (existingTarget?.displayName || 'Creator Studio').slice(0, 80)
+        : existingTarget?.storeName || '';
+
+    const path = `users/${cleanUid}`;
+    try {
+      await updateDoc(doc(db, 'users', cleanUid), {
+        isSeller: nextIsSeller,
+        sellerStatus: nextStatus,
+        storeName: nextStoreName,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, path);
+    }
+  }
+
   function sanitizeOptionalMediaVideoUrl(raw?: string): string {
     const val = (raw || '').trim();
     if (!val) return '';
@@ -2811,10 +3197,22 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     return normalized.slice(0, VALIDATION_LIMITS.VIDEO_URL_MAX);
   }
 
+  function canMutateDropdownList(listKey: DropdownListKey): boolean {
+    if (isCreatorAdmin) return true;
+    if (
+      (listKey === 'storeCategories' || listKey === 'digitalFormats') &&
+      isActiveSeller
+    ) {
+      return true;
+    }
+    return false;
+  }
+
   function addDropdownOption(listKey: DropdownListKey, newOption: string) {
-    const cleaned = newOption.trim().slice(0, 60);
+    if (!canMutateDropdownList(listKey)) return;
+    const cleaned = newOption.trim().slice(0, 140);
     if (cleaned.length < 2) return;
-    updateWorkspaceOverrides((prev) => {
+    updateAdminUiPrefs((prev) => {
       const current = prev.dropdownOptions[listKey] || [];
       if (current.some((o) => o.toLowerCase() === cleaned.toLowerCase())) {
         return prev;
@@ -2834,9 +3232,10 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     oldOption: string,
     nextOption: string
   ) {
-    const cleaned = nextOption.trim().slice(0, 60);
+    if (!canMutateDropdownList(listKey)) return;
+    const cleaned = nextOption.trim().slice(0, 140);
     if (cleaned.length < 2) return;
-    updateWorkspaceOverrides((prev) => {
+    updateAdminUiPrefs((prev) => {
       const current = prev.dropdownOptions[listKey] || [];
       const updated = current.map((o) => (o === oldOption ? cleaned : o));
       const deduped = Array.from(new Set(updated));
@@ -2854,7 +3253,8 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     listKey: DropdownListKey,
     optionToDelete: string
   ) {
-    updateWorkspaceOverrides((prev) => {
+    if (!canMutateDropdownList(listKey)) return;
+    updateAdminUiPrefs((prev) => {
       const current = prev.dropdownOptions[listKey] || [];
       if (current.length <= 1) return prev;
       const filtered = current.filter((o) => o !== optionToDelete);
@@ -2869,7 +3269,8 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   function saveSectionHeader(key: SectionHeaderKey, copy: SectionHeaderCopy) {
-    updateWorkspaceOverrides((prev) => ({
+    if (!isCreatorAdmin) return;
+    updateAdminUiPrefs((prev) => ({
       ...prev,
       sectionHeaders: {
         ...prev.sectionHeaders,
@@ -2886,7 +3287,8 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   function resetSectionHeader(key: SectionHeaderKey) {
-    updateWorkspaceOverrides((prev) => ({
+    if (!isCreatorAdmin) return;
+    updateAdminUiPrefs((prev) => ({
       ...prev,
       sectionHeaders: {
         ...prev.sectionHeaders,
@@ -2896,6 +3298,9 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   async function saveOffer(input: OfferDraftInput): Promise<string> {
+    assertCreatorAccess();
+    if (!user) throw new Error('Website Owner sign-in required.');
+
     const cleanTitle = input.title.trim().slice(0, VALIDATION_LIMITS.OFFER_TITLE_MAX);
     if (cleanTitle.length < 2) {
       throw new Error('Title must be at least 2 characters.');
@@ -2946,56 +3351,12 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       .filter((item) => item.length >= 1)
       .slice(0, VALIDATION_LIMITS.HIGHLIGHTS_MAX_COUNT);
 
-    const canWriteCloud = Boolean(
-      isCreatorAdmin &&
-        isNonAnonymousUser(user) &&
-        (!input.id || !input.id.startsWith('local_'))
-    );
-
-    if (!canWriteCloud || !user) {
-      const nowMs = Date.now();
-      const targetId = input.id || generateSafeDocId('local_offer');
-      const existing = allAccessibleOffersMap[targetId];
-      const localAuthorName =
-        profile?.displayName ||
-        user?.displayName ||
-        existing?.authorName ||
-        'Pickra Editorial';
-      const localRecord: AffiliateOffer = {
-        id: targetId,
-        authorId: user?.uid || existing?.authorId || 'editorial_desk',
-        authorName: localAuthorName,
-        title: cleanTitle,
-        kind: input.kind,
-        platform: cleanPlatform,
-        category: cleanCategory,
-        priceLabel: cleanPrice,
-        commissionNote: cleanCommission,
-        affiliateUrl: cleanUrl,
-        imageKey: cleanImageKey,
-        videoUrl: cleanVideoUrl,
-        summary: cleanSummary,
-        highlights: cleanHighlights,
-        status: input.status,
-        isSeed: false,
-        createdAtMs: existing?.createdAtMs || nowMs,
-        updatedAtMs: nowMs,
-      };
-      updateWorkspaceOverrides((prev) => ({
-        ...prev,
-        deletedIds: prev.deletedIds.filter((id) => id !== targetId),
-        offers: {
-          ...prev.offers,
-          [targetId]: localRecord,
-        },
-      }));
-      return targetId;
-    }
-
     const authorName = await ensureParentUserProfileExists(user);
     const replacingSeedId =
       input.id && input.id.startsWith('seed_') ? input.id : null;
-    const isUpdate = Boolean(input.id && !input.id.startsWith('seed_'));
+    const isUpdate = Boolean(
+      input.id && !input.id.startsWith('seed_') && !input.id.startsWith('local_')
+    );
     const offerId = isUpdate && input.id ? input.id : generateSafeDocId('offer');
     const path = `offers/${offerId}`;
 
@@ -3038,17 +3399,6 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         });
       }
 
-      updateWorkspaceOverrides((prev) => {
-        const nextOffers = { ...prev.offers };
-        delete nextOffers[offerId];
-        if (replacingSeedId) delete nextOffers[replacingSeedId];
-        return {
-          ...prev,
-          deletedIds: prev.deletedIds.filter((id) => id !== offerId),
-          offers: nextOffers,
-        };
-      });
-
       if (replacingSeedId) {
         await hideSeedItem(replacingSeedId);
       }
@@ -3063,6 +3413,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   async function updateOfferImage(offerId: string, nextImageKey: string) {
+    assertCreatorAccess();
     const existing = allAccessibleOffersMap[offerId];
     if (!existing) return;
     await saveOffer({
@@ -3083,22 +3434,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   async function updateOfferStatus(offerId: string, status: PublishStatus) {
-    if (
-      !isCreatorAdmin ||
-      !isNonAnonymousUser(user) ||
-      offerId.startsWith('local_')
-    ) {
-      const existing = allAccessibleOffersMap[offerId];
-      if (!existing) return;
-      updateWorkspaceOverrides((prev) => ({
-        ...prev,
-        offers: {
-          ...prev.offers,
-          [offerId]: { ...existing, status, updatedAtMs: Date.now() },
-        },
-      }));
-      return;
-    }
+    assertCreatorAccess();
     if (offerId.startsWith('seed_')) {
       if (status !== 'published') {
         await hideSeedItem(offerId);
@@ -3117,34 +3453,23 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   async function deleteOffer(offerId: string) {
-    updateWorkspaceOverrides((prev) => {
-      const nextOffers = { ...prev.offers };
-      delete nextOffers[offerId];
-      return {
-        ...prev,
-        offers: nextOffers,
-        deletedIds: Array.from(new Set([...prev.deletedIds, offerId])),
-      };
-    });
-
+    assertCreatorAccess();
     if (offerId.startsWith('seed_')) {
       await hideSeedItem(offerId);
       return;
     }
-    if (offerId.startsWith('local_')) {
-      return;
-    }
-    if (isCreatorAdmin && isNonAnonymousUser(user)) {
-      const path = `offers/${offerId}`;
-      try {
-        await deleteDoc(doc(db, 'offers', offerId));
-      } catch (err) {
-        handleFirestoreError(err, OperationType.DELETE, path);
-      }
+    const path = `offers/${offerId}`;
+    try {
+      await deleteDoc(doc(db, 'offers', offerId));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, path);
     }
   }
 
   async function savePost(input: PostDraftInput): Promise<string> {
+    assertCreatorAccess();
+    if (!user) throw new Error('Website Owner sign-in required.');
+
     const cleanTitle = input.title.trim().slice(0, VALIDATION_LIMITS.POST_TITLE_MAX);
     if (cleanTitle.length < VALIDATION_LIMITS.POST_TITLE_MIN) {
       throw new Error('Headline must be at least 4 characters.');
@@ -3154,7 +3479,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     const cleanSubtitle = (
       rawSubtitle.length >= VALIDATION_LIMITS.POST_SUBTITLE_MIN
         ? rawSubtitle
-        : `${cleanTitle} — Editorial notes and curated picks.`
+        : `${cleanTitle} — Editorial notes and dispatches.`
     ).slice(0, VALIDATION_LIMITS.POST_SUBTITLE_MAX);
 
     const cleanCategory = (
@@ -3183,10 +3508,6 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         ? input.theme
         : 'classic';
 
-    const cleanAttachedIds = Array.from(new Set(input.attachedOfferIds))
-      .filter((oid) => VALIDATION_LIMITS.ID_REGEX.test(oid) && oid.length <= 128)
-      .slice(0, VALIDATION_LIMITS.POST_ATTACHED_OFFERS_MAX);
-
     const cleanDisclosure = (
       input.disclosureText.trim() || siteConfig.defaultDisclosureText
     ).slice(0, VALIDATION_LIMITS.DISCLOSURE_MAX);
@@ -3200,57 +3521,12 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       })
     ).slice(0, 40);
 
-    const canWriteCloud = Boolean(
-      isCreatorAdmin &&
-        isNonAnonymousUser(user) &&
-        (!input.id || !input.id.startsWith('local_'))
-    );
-
-    if (!canWriteCloud || !user) {
-      const nowMs = Date.now();
-      const targetId = input.id || generateSafeDocId('local_post');
-      const existing = allAccessiblePostsMap[targetId];
-      const localAuthorName =
-        profile?.displayName ||
-        user?.displayName ||
-        existing?.authorName ||
-        'Pickra Editorial';
-      const localRecord: BlogPost = {
-        id: targetId,
-        authorId: user?.uid || existing?.authorId || 'editorial_desk',
-        authorName: localAuthorName,
-        title: cleanTitle,
-        subtitle: cleanSubtitle,
-        slug: cleanSlug,
-        category: cleanCategory,
-        readTimeMinutes: cleanReadMinutes,
-        coverImageKey: cleanCover,
-        content: cleanContent,
-        theme: cleanTheme,
-        attachedOfferIds: cleanAttachedIds,
-        disclosureText: cleanDisclosure,
-        featured: Boolean(input.featured),
-        status: input.status,
-        publishedLabel: cleanPublishedLabel,
-        isSeed: false,
-        createdAtMs: existing?.createdAtMs || nowMs,
-        updatedAtMs: nowMs,
-      };
-      updateWorkspaceOverrides((prev) => ({
-        ...prev,
-        deletedIds: prev.deletedIds.filter((id) => id !== targetId),
-        posts: {
-          ...prev.posts,
-          [targetId]: localRecord,
-        },
-      }));
-      return targetId;
-    }
-
     const authorName = await ensureParentUserProfileExists(user);
     const replacingSeedId =
       input.id && input.id.startsWith('seed_') ? input.id : null;
-    const isUpdate = Boolean(input.id && !input.id.startsWith('seed_'));
+    const isUpdate = Boolean(
+      input.id && !input.id.startsWith('seed_') && !input.id.startsWith('local_')
+    );
     const postId = isUpdate && input.id ? input.id : generateSafeDocId('post');
     const path = `posts/${postId}`;
 
@@ -3266,7 +3542,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           coverImageKey: cleanCover,
           content: cleanContent,
           theme: cleanTheme,
-          attachedOfferIds: cleanAttachedIds,
+          attachedOfferIds: [],
           disclosureText: cleanDisclosure,
           featured: Boolean(input.featured),
           status: input.status,
@@ -3285,7 +3561,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           coverImageKey: cleanCover,
           content: cleanContent,
           theme: cleanTheme,
-          attachedOfferIds: cleanAttachedIds,
+          attachedOfferIds: [],
           disclosureText: cleanDisclosure,
           featured: Boolean(input.featured),
           status: input.status,
@@ -3294,17 +3570,6 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           updatedAt: serverTimestamp(),
         });
       }
-
-      updateWorkspaceOverrides((prev) => {
-        const nextPosts = { ...prev.posts };
-        delete nextPosts[postId];
-        if (replacingSeedId) delete nextPosts[replacingSeedId];
-        return {
-          ...prev,
-          deletedIds: prev.deletedIds.filter((id) => id !== postId),
-          posts: nextPosts,
-        };
-      });
 
       if (replacingSeedId) {
         await hideSeedItem(replacingSeedId);
@@ -3323,6 +3588,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     postId: string,
     nextCoverImageKey: string
   ) {
+    assertCreatorAccess();
     const existing = allAccessiblePostsMap[postId];
     if (!existing) return;
     await savePost({
@@ -3335,7 +3601,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       coverImageKey: nextCoverImageKey,
       content: existing.content,
       theme: existing.theme,
-      attachedOfferIds: existing.attachedOfferIds,
+      attachedOfferIds: [],
       disclosureText: existing.disclosureText,
       featured: existing.featured,
       status: existing.status,
@@ -3344,32 +3610,12 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   async function updatePostStatus(postId: string, status: PublishStatus) {
+    assertCreatorAccess();
     const publishedLabel = new Date().toLocaleDateString('en-US', {
       month: 'long',
       day: 'numeric',
       year: 'numeric',
     });
-    if (
-      !isCreatorAdmin ||
-      !isNonAnonymousUser(user) ||
-      postId.startsWith('local_')
-    ) {
-      const existing = allAccessiblePostsMap[postId];
-      if (!existing) return;
-      updateWorkspaceOverrides((prev) => ({
-        ...prev,
-        posts: {
-          ...prev.posts,
-          [postId]: {
-            ...existing,
-            status,
-            publishedLabel,
-            updatedAtMs: Date.now(),
-          },
-        },
-      }));
-      return;
-    }
     if (postId.startsWith('seed_')) {
       if (status !== 'published') {
         await hideSeedItem(postId);
@@ -3389,34 +3635,32 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   async function deletePost(postId: string) {
-    updateWorkspaceOverrides((prev) => {
-      const nextPosts = { ...prev.posts };
-      delete nextPosts[postId];
-      return {
-        ...prev,
-        posts: nextPosts,
-        deletedIds: Array.from(new Set([...prev.deletedIds, postId])),
-      };
-    });
-
+    assertCreatorAccess();
     if (postId.startsWith('seed_')) {
       await hideSeedItem(postId);
       return;
     }
-    if (postId.startsWith('local_')) {
-      return;
-    }
-    if (isCreatorAdmin && isNonAnonymousUser(user)) {
-      const path = `posts/${postId}`;
-      try {
-        await deleteDoc(doc(db, 'posts', postId));
-      } catch (err) {
-        handleFirestoreError(err, OperationType.DELETE, path);
-      }
+    const path = `posts/${postId}`;
+    try {
+      await deleteDoc(doc(db, 'posts', postId));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, path);
     }
   }
 
   async function saveDirectProduct(input: DirectProductDraftInput): Promise<string> {
+    assertActiveSellerAccess();
+    if (!user) throw new Error('Seller sign-in required.');
+
+    const existing = input.id ? allAccessibleDirectProductsMap[input.id] : undefined;
+    const isSeedId = Boolean(input.id && input.id.startsWith('seed_'));
+
+    if (isSeedId) {
+      assertCreatorAccess();
+    } else if (existing && existing.sellerId !== user.uid && !isCreatorAdmin) {
+      throw new Error('Permission denied: sellers can never modify another seller’s products.');
+    }
+
     const cleanTitle = input.title.trim().slice(0, VALIDATION_LIMITS.OFFER_TITLE_MAX);
     if (cleanTitle.length < VALIDATION_LIMITS.OFFER_TITLE_MIN) {
       throw new Error('Product title must be at least 2 characters.');
@@ -3456,10 +3700,26 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     );
     const cleanVideoUrl = sanitizeOptionalMediaVideoUrl(input.videoUrl);
 
+    const rawFileName = (input.digitalFileName || '').trim();
+    if (rawFileName) {
+      const lowerName = rawFileName.toLowerCase();
+      if (FORBIDDEN_DIGITAL_EXTENSIONS.some((ext) => lowerName.endsWith(ext))) {
+        throw new Error(
+          'Executable files are blocked for security. Upload PDF, ZIP, Excel, eBook, HTML, or Markdown deliverables.'
+        );
+      }
+    }
+
     let cleanDigitalFileUrl = '';
     if (input.kind === 'digital' && input.digitalFileUrl && input.digitalFileUrl.trim()) {
       const rawFileUrl = input.digitalFileUrl.trim();
       if (rawFileUrl.startsWith('data:')) {
+        if (
+          rawFileUrl.startsWith('data:application/x-msdownload') ||
+          rawFileUrl.startsWith('data:application/x-executable')
+        ) {
+          throw new Error('Executable binary uploads are blocked for security.');
+        }
         cleanDigitalFileUrl = rawFileUrl.slice(0, VALIDATION_LIMITS.DIGITAL_FILE_URL_MAX);
       } else {
         let normFileUrl = rawFileUrl;
@@ -3468,24 +3728,52 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         } else if (normFileUrl.startsWith('http://')) {
           normFileUrl = `https://${normFileUrl.slice(7)}`;
         }
+        if (!VALIDATION_LIMITS.HTTPS_URL_REGEX.test(normFileUrl)) {
+          throw new Error('Digital download link must be a valid https:// URL.');
+        }
         cleanDigitalFileUrl = normFileUrl.slice(0, VALIDATION_LIMITS.DIGITAL_FILE_URL_MAX);
       }
     }
+
+    const isUpdate = Boolean(
+      input.id && !isSeedId && !input.id.startsWith('local_')
+    );
+    const preservesExistingVault = Boolean(
+      isUpdate &&
+        input.kind === 'digital' &&
+        !cleanDigitalFileUrl &&
+        existing?.hasDigitalAsset
+    );
+
+    if (input.kind === 'digital' && !cleanDigitalFileUrl && !preservesExistingVault && !isSeedId) {
+      throw new Error(
+        'Upload a digital deliverable (PDF, ZIP, Excel, eBook, HTML, Tool) or paste an HTTPS download link before saving a digital product.'
+      );
+    }
+
     const cleanDigitalFileName =
-      input.kind === 'digital' && cleanDigitalFileUrl
-        ? (input.digitalFileName || '').trim().slice(0, VALIDATION_LIMITS.DIGITAL_FILE_NAME_MAX)
+      input.kind === 'digital'
+        ? (
+            rawFileName ||
+            (preservesExistingVault ? existing?.digitalFileName || '' : '') ||
+            (cleanDigitalFileUrl ? `${cleanSku.toLowerCase()}-download` : '')
+          ).slice(0, VALIDATION_LIMITS.DIGITAL_FILE_NAME_MAX)
         : '';
     const cleanDigitalFileType =
-      input.kind === 'digital' && cleanDigitalFileUrl
-        ? (input.digitalFileType || '').trim().slice(0, VALIDATION_LIMITS.DIGITAL_FILE_TYPE_MAX)
+      input.kind === 'digital'
+        ? (
+            (input.digitalFileType || '').trim() ||
+            (preservesExistingVault ? existing?.digitalFileType || '' : '') ||
+            'Digital Download'
+          ).slice(0, VALIDATION_LIMITS.DIGITAL_FILE_TYPE_MAX)
         : '';
+    const hasDigitalAsset = Boolean(
+      input.kind === 'digital' && (cleanDigitalFileUrl || preservesExistingVault)
+    );
 
-    if (
-      cleanImageKey.length + cleanVideoUrl.length + cleanDigitalFileUrl.length >
-      890000
-    ) {
+    if (cleanImageKey.length + cleanVideoUrl.length > 430000) {
       throw new Error(
-        'Combined image, video, and digital deliverable exceeds cloud document limits. Paste a Google Drive / Dropbox / YouTube HTTPS link for one of the large media attachments.'
+        'Combined cover image and showcase video exceed cloud document limits. Use a YouTube/Vimeo/MP4 HTTPS link for the showcase video.'
       );
     }
 
@@ -3508,85 +3796,33 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         : 'Ships directly within 48 hours via tracked courier')
     ).slice(0, VALIDATION_LIMITS.PRODUCT_DELIVERY_NOTE_MAX);
 
-    const existing = input.id ? allAccessibleDirectProductsMap[input.id] : undefined;
-    const isSeedId = Boolean(input.id && input.id.startsWith('seed_'));
-    const isLocalId = Boolean(input.id && input.id.startsWith('local_'));
-
-    // Determine whether Firestore cloud write is authorized and applicable
-    const canWriteCloud = Boolean(
-      isNonAnonymousUser(user) &&
-        !isLocalId &&
-        (!input.id ||
-          (isSeedId && isCreatorAdmin) ||
-          (!isSeedId &&
-            (isCreatorAdmin || !existing || existing.sellerId === user.uid)))
-    );
-
-    if (!canWriteCloud || !user) {
-      const nowMs = Date.now();
-      const targetId = input.id || generateSafeDocId('local_prod');
-      const localSellerName =
-        profile?.storeName ||
-        profile?.displayName ||
-        user?.displayName ||
-        existing?.sellerName ||
-        'Pickra Studio';
-      const localSellerId =
-        user && !user.isAnonymous
-          ? user.uid
-          : existing?.sellerId || 'editorial_desk';
-      const localRecord: DirectProduct = {
-        id: targetId,
-        sellerId: localSellerId,
-        sellerName: localSellerName,
-        title: cleanTitle,
-        subtitle: cleanSubtitle,
-        kind: input.kind,
-        category: cleanCategory,
-        sku: cleanSku,
-        priceCents: cleanPriceCents,
-        compareAtCents: cleanCompareAtCents,
-        stockCount: cleanStock,
-        badgeLabel: cleanBadge,
-        imageKey: cleanImageKey,
-        videoUrl: cleanVideoUrl,
-        digitalFileUrl: cleanDigitalFileUrl,
-        digitalFileName: cleanDigitalFileName,
-        digitalFileType: cleanDigitalFileType,
-        summary: cleanSummary,
-        highlights: cleanHighlights,
-        deliveryNote: cleanDeliveryNote,
-        featured: Boolean(input.featured),
-        status: input.status,
-        isSeed: false,
-        createdAtMs: existing?.createdAtMs || nowMs,
-        updatedAtMs: nowMs,
-      };
-      updateWorkspaceOverrides((prev) => ({
-        ...prev,
-        deletedIds: prev.deletedIds.filter((id) => id !== targetId),
-        directProducts: {
-          ...prev.directProducts,
-          [targetId]: localRecord,
-        },
-      }));
-      return targetId;
-    }
-
     const replacingSeedId = isSeedId && input.id ? input.id : null;
-    const isUpdate = Boolean(input.id && !isSeedId);
     const resolvedSellerName = await ensureParentUserProfileExists(user);
     const sellerName =
       existing && existing.sellerId !== user.uid && !isSeedId
         ? existing.sellerName
-        : resolvedSellerName;
+        : (profile?.storeName || resolvedSellerName).slice(0, 80);
+    const targetSellerId =
+      isUpdate && existing?.sellerId ? existing.sellerId : user.uid;
+
+    // Non-admin seller submissions MUST enter Admin Review Queue (draft + pending)
+    const enforcedApprovalStatus: ProductApprovalStatus = isCreatorAdmin
+      ? 'approved'
+      : 'pending';
+    const enforcedStatus: PublishStatus = isCreatorAdmin ? input.status : 'draft';
+    const enforcedModerationNote = isCreatorAdmin
+      ? existing?.moderationNote || ''
+      : 'Submitted for administrator review before public Store publication.';
 
     const productId = isUpdate && input.id ? input.id : generateSafeDocId('prod');
     const path = `directProducts/${productId}`;
 
     try {
+      const batch = writeBatch(db);
+      const prodRef = doc(db, 'directProducts', productId);
+
       if (isUpdate) {
-        await updateDoc(doc(db, 'directProducts', productId), {
+        batch.update(prodRef, {
           sellerName,
           title: cleanTitle,
           subtitle: cleanSubtitle,
@@ -3599,19 +3835,22 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           badgeLabel: cleanBadge,
           imageKey: cleanImageKey,
           videoUrl: cleanVideoUrl,
-          digitalFileUrl: cleanDigitalFileUrl,
+          digitalFileUrl: '',
           digitalFileName: cleanDigitalFileName,
           digitalFileType: cleanDigitalFileType,
+          hasDigitalAsset,
+          approvalStatus: enforcedApprovalStatus,
+          moderationNote: enforcedModerationNote,
           summary: cleanSummary,
           highlights: cleanHighlights,
           deliveryNote: cleanDeliveryNote,
           featured: Boolean(input.featured),
-          status: input.status,
+          status: enforcedStatus,
           updatedAt: serverTimestamp(),
         });
       } else {
-        await setDoc(doc(db, 'directProducts', productId), {
-          sellerId: user.uid,
+        batch.set(prodRef, {
+          sellerId: targetSellerId,
           sellerName,
           title: cleanTitle,
           subtitle: cleanSubtitle,
@@ -3624,29 +3863,54 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           badgeLabel: cleanBadge,
           imageKey: cleanImageKey,
           videoUrl: cleanVideoUrl,
-          digitalFileUrl: cleanDigitalFileUrl,
+          digitalFileUrl: '',
           digitalFileName: cleanDigitalFileName,
           digitalFileType: cleanDigitalFileType,
+          hasDigitalAsset,
+          approvalStatus: enforcedApprovalStatus,
+          moderationNote: enforcedModerationNote,
           summary: cleanSummary,
           highlights: cleanHighlights,
           deliveryNote: cleanDeliveryNote,
           featured: Boolean(input.featured),
-          status: input.status,
+          status: enforcedStatus,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
       }
 
-      updateWorkspaceOverrides((prev) => {
-        const nextProds = { ...prev.directProducts };
-        delete nextProds[productId];
-        if (replacingSeedId) delete nextProds[replacingSeedId];
-        return {
-          ...prev,
-          deletedIds: prev.deletedIds.filter((id) => id !== productId),
-          directProducts: nextProds,
-        };
-      });
+      if (input.kind === 'digital' && cleanDigitalFileUrl) {
+        const secretRef = doc(db, 'productSecrets', productId);
+        let secretExists = false;
+        if (isUpdate) {
+          try {
+            const existingSecret = await getDoc(secretRef);
+            secretExists = existingSecret.exists();
+          } catch {
+            secretExists = false;
+          }
+        }
+        if (secretExists) {
+          batch.update(secretRef, {
+            digitalFileUrl: cleanDigitalFileUrl,
+            digitalFileName: cleanDigitalFileName,
+            digitalFileType: cleanDigitalFileType,
+            updatedAt: serverTimestamp(),
+          });
+        } else {
+          batch.set(secretRef, {
+            productId,
+            sellerId: targetSellerId,
+            digitalFileUrl: cleanDigitalFileUrl,
+            digitalFileName: cleanDigitalFileName,
+            digitalFileType: cleanDigitalFileType,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+      }
+
+      await batch.commit();
 
       if (replacingSeedId) {
         await hideSeedItem(replacingSeedId);
@@ -3661,12 +3925,41 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }
 
+  async function moderateDirectProduct(
+    productId: string,
+    decision: ProductApprovalStatus,
+    moderationNote = ''
+  ): Promise<void> {
+    assertCreatorAccess();
+    if (productId.startsWith('seed_')) return;
+    const nextStatus: PublishStatus =
+      decision === 'approved' ? 'published' : 'draft';
+    const cleanNote = moderationNote.trim().slice(0, 300);
+    const path = `directProducts/${productId}`;
+    try {
+      await updateDoc(doc(db, 'directProducts', productId), {
+        approvalStatus: decision,
+        status: nextStatus,
+        moderationNote: cleanNote,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, path);
+    }
+  }
+
   async function updateDirectProductImage(
     productId: string,
     nextImageKey: string
   ) {
+    assertActiveSellerAccess();
     const existing = allAccessibleDirectProductsMap[productId];
     if (!existing) return;
+    if (productId.startsWith('seed_')) {
+      assertCreatorAccess();
+    } else if (existing.sellerId !== user?.uid && !isCreatorAdmin) {
+      throw new Error('Permission denied: sellers can only edit their own products.');
+    }
     await saveDirectProduct({
       id: existing.id,
       title: existing.title,
@@ -3680,9 +3973,9 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       badgeLabel: existing.badgeLabel,
       imageKey: nextImageKey,
       videoUrl: existing.videoUrl,
-      digitalFileUrl: existing.digitalFileUrl,
       digitalFileName: existing.digitalFileName,
       digitalFileType: existing.digitalFileType,
+      hasDigitalAsset: existing.hasDigitalAsset,
       summary: existing.summary,
       highlights: existing.highlights,
       deliveryNote: existing.deliveryNote,
@@ -3696,38 +3989,36 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     status: PublishStatus,
     stockCount?: number
   ) {
+    assertActiveSellerAccess();
     const existingProd = allAccessibleDirectProductsMap[productId];
+    if (!existingProd) return;
+
+    if (productId.startsWith('seed_')) {
+      assertCreatorAccess();
+      if (status !== 'published') {
+        await hideSeedItem(productId);
+      }
+      return;
+    }
+
+    if (existingProd.sellerId !== user?.uid && !isCreatorAdmin) {
+      throw new Error('Permission denied: sellers can never modify another seller’s products.');
+    }
+
+    if (
+      !isCreatorAdmin &&
+      status === 'published' &&
+      existingProd.approvalStatus !== 'approved'
+    ) {
+      throw new Error(
+        'This product is awaiting Administrator approval before it can be published to the public Store.'
+      );
+    }
+
     const nextStock =
       typeof stockCount === 'number'
         ? Math.max(0, Math.min(100000, Math.round(stockCount)))
-        : existingProd?.stockCount ?? 10;
-
-    const canWriteCloud = Boolean(
-      isNonAnonymousUser(user) &&
-        !productId.startsWith('local_') &&
-        !productId.startsWith('seed_') &&
-        (isCreatorAdmin || existingProd?.sellerId === user.uid)
-    );
-
-    if (!canWriteCloud) {
-      if (productId.startsWith('seed_') && isCreatorAdmin && status !== 'published') {
-        await hideSeedItem(productId);
-      }
-      if (!existingProd) return;
-      updateWorkspaceOverrides((prev) => ({
-        ...prev,
-        directProducts: {
-          ...prev.directProducts,
-          [productId]: {
-            ...existingProd,
-            status,
-            stockCount: nextStock,
-            updatedAtMs: Date.now(),
-          },
-        },
-      }));
-      return;
-    }
+        : existingProd.stockCount ?? 10;
 
     const path = `directProducts/${productId}`;
     try {
@@ -3742,38 +4033,105 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   async function deleteDirectProduct(productId: string) {
+    assertActiveSellerAccess();
     const existingProd = allAccessibleDirectProductsMap[productId];
-    updateWorkspaceOverrides((prev) => {
-      const nextProds = { ...prev.directProducts };
-      delete nextProds[productId];
-      return {
-        ...prev,
-        directProducts: nextProds,
-        deletedIds: Array.from(new Set([...prev.deletedIds, productId])),
-      };
-    });
 
     if (productId.startsWith('seed_')) {
+      assertCreatorAccess();
       await hideSeedItem(productId);
       return;
     }
-    if (productId.startsWith('local_')) {
-      return;
+
+    if (existingProd && existingProd.sellerId !== user?.uid && !isCreatorAdmin) {
+      throw new Error('Permission denied: sellers can only delete their own products.');
     }
-    if (
-      isNonAnonymousUser(user) &&
-      (isCreatorAdmin || existingProd?.sellerId === user.uid)
-    ) {
-      const path = `directProducts/${productId}`;
-      try {
-        await deleteDoc(doc(db, 'directProducts', productId));
-      } catch (err) {
-        handleFirestoreError(err, OperationType.DELETE, path);
+
+    const path = `directProducts/${productId}`;
+    try {
+      await deleteDoc(doc(db, 'directProducts', productId));
+      if (existingProd?.hasDigitalAsset) {
+        try {
+          await deleteDoc(doc(db, 'productSecrets', productId));
+        } catch {
+          // ignore if secret record was never created
+        }
       }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, path);
+    }
+  }
+
+  async function fetchProtectedDigitalSecret(
+    productId: string,
+    orderId?: string
+  ): Promise<DeliveredDigitalAsset | null> {
+    if (deliveredDigitalCache[productId]) {
+      return deliveredDigitalCache[productId];
+    }
+    const prod = allAccessibleDirectProductsMap[productId];
+    if (prod?.isSeed && prod.kind === 'digital') {
+      const seedAsset = buildSeedDigitalBundleAsset(prod);
+      return seedAsset;
+    }
+    if (prod?.digitalFileUrl && prod.digitalFileUrl.trim()) {
+      return {
+        url: prod.digitalFileUrl,
+        fileName: prod.digitalFileName || `${prod.sku.toLowerCase()}-download`,
+        fileType: prod.digitalFileType || 'Digital Download',
+      };
+    }
+
+    const secretRef = doc(db, 'productSecrets', productId);
+    // If signed-in buyer is re-downloading from an existing paid order, unlock capability window first
+    if (
+      orderId &&
+      isNonAnonymousUser(user) &&
+      prod &&
+      prod.sellerId !== user.uid &&
+      !isCreatorAdmin
+    ) {
+      try {
+        await updateDoc(secretRef, {
+          lastOrderRef: orderId,
+          unlockedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `productSecrets/${productId}`);
+      }
+    }
+
+    try {
+      const snap = await getDoc(secretRef);
+      if (!snap.exists()) return null;
+      const d = snap.data();
+      const asset: DeliveredDigitalAsset = {
+        url: String(d.digitalFileUrl || ''),
+        fileName: String(d.digitalFileName || `${productId}-download`),
+        fileType: String(d.digitalFileType || 'Digital Download'),
+      };
+      if (!asset.url) return null;
+      if (orderId) {
+        setDeliveredDigitalCache((prev) => {
+          const next = { ...prev, [productId]: asset };
+          try {
+            localStorage.setItem(DELIVERED_DIGITAL_STORAGE_KEY, JSON.stringify(next));
+          } catch {
+            // ignore storage quota errors
+          }
+          return next;
+        });
+      }
+      return asset;
+    } catch {
+      return null;
     }
   }
 
   async function saveCampaign(input: CampaignDraftInput): Promise<string> {
+    assertCreatorAccess();
+    if (!user) throw new Error('Website Owner sign-in required.');
+
     const cleanTitle = input.title
       .trim()
       .slice(0, VALIDATION_LIMITS.CAMPAIGN_TITLE_MAX);
@@ -3811,47 +4169,12 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       40
     );
 
-    const canWriteCloud = Boolean(
-      isCreatorAdmin &&
-        isNonAnonymousUser(user) &&
-        (!input.id || !input.id.startsWith('local_'))
-    );
-
-    if (!canWriteCloud || !user) {
-      const nowMs = Date.now();
-      const targetId = input.id || generateSafeDocId('local_camp');
-      const localRecord: MarketingCampaign = {
-        id: targetId,
-        authorId: user?.uid || 'editorial_desk',
-        title: cleanTitle,
-        description: cleanDesc,
-        promoCode: cleanCode,
-        discountPercent: cleanDiscount,
-        minOrderCents: cleanMinOrder,
-        channel: cleanChannel,
-        featuredProductId: cleanFeaturedId,
-        ctaLabel: cleanCta,
-        expiresLabel: cleanExpires,
-        status: input.status,
-        isSeed: false,
-        createdAtMs: nowMs,
-        updatedAtMs: nowMs,
-      };
-      updateWorkspaceOverrides((prev) => ({
-        ...prev,
-        deletedIds: prev.deletedIds.filter((id) => id !== targetId),
-        campaigns: {
-          ...prev.campaigns,
-          [targetId]: localRecord,
-        },
-      }));
-      return targetId;
-    }
-
     await ensureParentUserProfileExists(user);
     const replacingSeedId =
       input.id && input.id.startsWith('seed_') ? input.id : null;
-    const isUpdate = Boolean(input.id && !input.id.startsWith('seed_'));
+    const isUpdate = Boolean(
+      input.id && !input.id.startsWith('seed_') && !input.id.startsWith('local_')
+    );
     const campaignId = isUpdate && input.id ? input.id : generateSafeDocId('camp');
     const path = `campaigns/${campaignId}`;
 
@@ -3888,17 +4211,6 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         });
       }
 
-      updateWorkspaceOverrides((prev) => {
-        const nextCamps = { ...prev.campaigns };
-        delete nextCamps[campaignId];
-        if (replacingSeedId) delete nextCamps[replacingSeedId];
-        return {
-          ...prev,
-          deletedIds: prev.deletedIds.filter((id) => id !== campaignId),
-          campaigns: nextCamps,
-        };
-      });
-
       if (replacingSeedId) {
         await hideSeedItem(replacingSeedId);
       }
@@ -3913,24 +4225,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   async function updateCampaignStatus(campaignId: string, status: PublishStatus) {
-    if (
-      !isCreatorAdmin ||
-      !isNonAnonymousUser(user) ||
-      campaignId.startsWith('local_')
-    ) {
-      const existing =
-        publishedCampaigns.find((c) => c.id === campaignId) ||
-        studioCampaigns.find((c) => c.id === campaignId);
-      if (!existing) return;
-      updateWorkspaceOverrides((prev) => ({
-        ...prev,
-        campaigns: {
-          ...prev.campaigns,
-          [campaignId]: { ...existing, status, updatedAtMs: Date.now() },
-        },
-      }));
-      return;
-    }
+    assertCreatorAccess();
     if (campaignId.startsWith('seed_')) {
       if (status !== 'published') {
         await hideSeedItem(campaignId);
@@ -3949,37 +4244,23 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   async function deleteCampaign(campaignId: string) {
-    updateWorkspaceOverrides((prev) => {
-      const nextCamps = { ...prev.campaigns };
-      delete nextCamps[campaignId];
-      return {
-        ...prev,
-        campaigns: nextCamps,
-        deletedIds: Array.from(new Set([...prev.deletedIds, campaignId])),
-      };
-    });
-
+    assertCreatorAccess();
     if (campaignId.startsWith('seed_')) {
       await hideSeedItem(campaignId);
       return;
     }
-    if (campaignId.startsWith('local_')) {
-      return;
-    }
-    if (isCreatorAdmin && isNonAnonymousUser(user)) {
-      const path = `campaigns/${campaignId}`;
-      try {
-        await deleteDoc(doc(db, 'campaigns', campaignId));
-      } catch (err) {
-        handleFirestoreError(err, OperationType.DELETE, path);
-      }
+    const path = `campaigns/${campaignId}`;
+    try {
+      await deleteDoc(doc(db, 'campaigns', campaignId));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, path);
     }
   }
 
   async function placeDirectOrder(input: DirectCheckoutInput): Promise<DirectOrder> {
-    if (!siteConfig.storeCheckoutEnabled) {
+    if (!siteConfig.storeCheckoutEnabled || !siteConfig.storeEnabled) {
       throw new Error(
-        'Direct Store checkout is temporarily paused by the website owner. Please check back shortly.'
+        'Store checkout is temporarily paused by the website owner. Please check back shortly.'
       );
     }
     if (cartItems.length === 0) {
@@ -3989,7 +4270,9 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     const resolvedLines = cartItems
       .map((item) => {
         const product = allAccessibleDirectProductsMap[item.productId];
-        return product ? { product, quantity: item.quantity } : null;
+        return product && product.status === 'published'
+          ? { product, quantity: item.quantity }
+          : null;
       })
       .filter(
         (line): line is { product: DirectProduct; quantity: number } => Boolean(line)
@@ -3997,6 +4280,14 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
 
     if (resolvedLines.length === 0) {
       throw new Error('Selected products are no longer available.');
+    }
+
+    for (const line of resolvedLines) {
+      if (line.product.kind === 'physical' && line.quantity > line.product.stockCount) {
+        throw new Error(
+          `Only ${line.product.stockCount} unit(s) of "${line.product.title}" remain in stock.`
+        );
+      }
     }
 
     const cleanBuyerName = input.buyerName
@@ -4023,6 +4314,15 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       throw new Error('Enter a complete shipping address for physical items.');
     }
 
+    const cleanPayMethod: CustomerPaymentMethod =
+      input.paymentMethod &&
+      VALID_CUSTOMER_PAYMENT_METHODS.includes(input.paymentMethod)
+        ? input.paymentMethod
+        : 'Card';
+    const cleanPayRef = (input.paymentReference || `${cleanPayMethod} Verified`)
+      .trim()
+      .slice(0, 80);
+
     if (isSignedInBuyer) {
       await ensureParentUserProfileExists(user);
     }
@@ -4031,7 +4331,6 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       ? user.uid
       : generateSafeDocId('guest');
 
-    // Group cart items per Creator Seller so each creator receives an isolated order & net payout ledger!
     const groupedBySeller = new Map<
       string,
       { sellerName: string; lines: { product: DirectProduct; quantity: number }[] }
@@ -4050,6 +4349,8 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     const activeCode =
       appliedCampaign && cartDiscountCents > 0 ? appliedCampaign.promoCode : '';
     const createdOrders: DirectOrder[] = [];
+    const newlyUnlockedDigital: Record<string, DeliveredDigitalAsset> = {};
+    const seedPhysicalDecrements: Record<string, number> = {};
     const nowMs = Date.now();
     let shippingAssigned = false;
 
@@ -4113,12 +4414,13 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       const orderId = generateSafeDocId('ord');
       const initialFulfillmentNote =
         fulfillmentType === 'digital'
-          ? 'Instant digital product unlocked. Download your files immediately below or in My Purchases.'
-          : `Order received by ${group.sellerName}. Preparing tracked dispatch.`;
+          ? 'Instant digital product unlocked. Download your files immediately from your Order Confirmation or My Purchases.'
+          : `Order confirmed (${cleanPayRef}). ${group.sellerName} is preparing tracked dispatch.`;
 
       const path = `directOrders/${orderId}`;
       try {
-        await setDoc(doc(db, 'directOrders', orderId), {
+        const batch = writeBatch(db);
+        batch.set(doc(db, 'directOrders', orderId), {
           buyerId: effectiveBuyerId,
           sellerId,
           sellerName: group.sellerName.slice(0, 80),
@@ -4126,6 +4428,8 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           buyerName: cleanBuyerName,
           buyerEmail: cleanBuyerEmail,
           shippingAddress: groupHasPhysical ? cleanAddress : '',
+          paymentMethod: cleanPayMethod,
+          paymentReference: cleanPayRef,
           productIds,
           itemsSummary,
           itemCount,
@@ -4145,8 +4449,78 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
+
+        for (const line of groupLines) {
+          const p = line.product;
+          if (p.kind === 'physical') {
+            if (p.isSeed || p.id.startsWith('seed_')) {
+              seedPhysicalDecrements[p.id] =
+                (seedPhysicalDecrements[p.id] || 0) + line.quantity;
+            } else {
+              batch.update(doc(db, 'directProducts', p.id), {
+                stockCount: Math.max(0, p.stockCount - line.quantity),
+                lastOrderRef: orderId,
+                updatedAt: serverTimestamp(),
+              });
+            }
+          } else if (p.kind === 'digital') {
+            if (
+              !p.isSeed &&
+              !p.id.startsWith('seed_') &&
+              p.hasDigitalAsset &&
+              !p.digitalFileUrl
+            ) {
+              batch.update(doc(db, 'productSecrets', p.id), {
+                lastOrderRef: orderId,
+                unlockedAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+              });
+            }
+          }
+        }
+
+        await batch.commit();
       } catch (err) {
         handleFirestoreError(err, OperationType.CREATE, path);
+      }
+
+      const orderDeliveredAssets: Record<string, DeliveredDigitalAsset> = {};
+      for (const line of groupLines) {
+        const p = line.product;
+        if (p.kind !== 'digital') continue;
+        if (p.isSeed || p.id.startsWith('seed_')) {
+          const seedAsset = buildSeedDigitalBundleAsset(p);
+          orderDeliveredAssets[p.id] = seedAsset;
+          newlyUnlockedDigital[p.id] = seedAsset;
+        } else if (p.digitalFileUrl && p.digitalFileUrl.trim()) {
+          const legacyAsset: DeliveredDigitalAsset = {
+            url: p.digitalFileUrl,
+            fileName: p.digitalFileName || `${p.sku.toLowerCase()}-download`,
+            fileType: p.digitalFileType || 'Digital Download',
+          };
+          orderDeliveredAssets[p.id] = legacyAsset;
+          newlyUnlockedDigital[p.id] = legacyAsset;
+        } else if (p.hasDigitalAsset) {
+          try {
+            const secretSnap = await getDoc(doc(db, 'productSecrets', p.id));
+            if (secretSnap.exists()) {
+              const sd = secretSnap.data();
+              const vaultedAsset: DeliveredDigitalAsset = {
+                url: String(sd.digitalFileUrl || ''),
+                fileName: String(
+                  sd.digitalFileName || `${p.sku.toLowerCase()}-download`
+                ),
+                fileType: String(sd.digitalFileType || 'Digital Download'),
+              };
+              if (vaultedAsset.url) {
+                orderDeliveredAssets[p.id] = vaultedAsset;
+                newlyUnlockedDigital[p.id] = vaultedAsset;
+              }
+            }
+          } catch {
+            // non-fatal; buyer can re-trigger fetchProtectedDigitalSecret
+          }
+        }
       }
 
       void persistTelemetryEvent({
@@ -4168,6 +4542,8 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         buyerName: cleanBuyerName,
         buyerEmail: cleanBuyerEmail,
         shippingAddress: groupHasPhysical ? cleanAddress : '',
+        paymentMethod: cleanPayMethod,
+        paymentReference: cleanPayRef,
         productIds,
         itemsSummary,
         itemCount,
@@ -4184,8 +4560,36 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         payoutNote: '',
         fulfillmentNote: initialFulfillmentNote,
         status: 'paid',
+        deliveredDigitalAssets: orderDeliveredAssets,
         createdAtMs: nowMs,
         updatedAtMs: nowMs,
+      });
+    }
+
+    if (Object.keys(newlyUnlockedDigital).length > 0) {
+      setDeliveredDigitalCache((prev) => {
+        const next = { ...prev, ...newlyUnlockedDigital };
+        try {
+          localStorage.setItem(DELIVERED_DIGITAL_STORAGE_KEY, JSON.stringify(next));
+        } catch {
+          // ignore storage quota errors
+        }
+        return next;
+      });
+    }
+
+    if (Object.keys(seedPhysicalDecrements).length > 0) {
+      setSeedStockOffsets((prev) => {
+        const next = { ...prev };
+        for (const [sid, qty] of Object.entries(seedPhysicalDecrements)) {
+          next[sid] = (next[sid] || 0) + qty;
+        }
+        try {
+          localStorage.setItem(SEED_STOCK_OFFSETS_KEY, JSON.stringify(next));
+        } catch {
+          // ignore storage quota errors
+        }
+        return next;
       });
     }
 
@@ -4210,10 +4614,12 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     status: OrderFulfillmentStatus,
     fulfillmentNote: string
   ) {
-    assertVerifiedSeller();
+    assertActiveSellerAccess();
     const targetOrder = sellerOrders.find((o) => o.id === orderId);
     if (targetOrder && targetOrder.sellerId !== user?.uid && !isCreatorAdmin) {
-      throw new Error('Only the product seller or Website Owner can update fulfillment.');
+      throw new Error(
+        'Only the product seller or Website Owner can update fulfillment.'
+      );
     }
     const cleanNote = fulfillmentNote
       .trim()
@@ -4234,7 +4640,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     orderId: string,
     sellerPayoutDetails: string
   ) {
-    assertVerifiedSeller();
+    assertActiveSellerAccess();
     const cleanDetails = sellerPayoutDetails
       .trim()
       .slice(0, VALIDATION_LIMITS.ORDER_PAYOUT_DETAILS_MAX);
@@ -4351,6 +4757,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         displayName: cleanName,
         bio: cleanBio,
         isSeller: prev?.isSeller,
+        sellerStatus: prev?.sellerStatus,
         storeName: prev?.storeName,
       }));
     } catch (err) {
@@ -4435,6 +4842,66 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       )
     ).slice(0, 50);
 
+    const nextBlogEnabled =
+      typeof input.blogEnabled === 'boolean'
+        ? input.blogEnabled
+        : siteConfig.blogEnabled;
+    const nextStoreEnabled =
+      typeof input.storeEnabled === 'boolean'
+        ? input.storeEnabled
+        : siteConfig.storeEnabled;
+    const nextProductAffEnabled =
+      typeof input.productAffiliateEnabled === 'boolean'
+        ? input.productAffiliateEnabled
+        : siteConfig.productAffiliateEnabled;
+    const nextServiceAffEnabled =
+      typeof input.serviceAffiliateEnabled === 'boolean'
+        ? input.serviceAffiliateEnabled
+        : siteConfig.serviceAffiliateEnabled;
+
+    const cleanAboutMission = (
+      input.aboutMission !== undefined
+        ? input.aboutMission
+        : siteConfig.aboutMission || DEFAULT_ABOUT_MISSION
+    )
+      .trim()
+      .slice(0, 2500);
+    const cleanAboutStory = (
+      input.aboutStory !== undefined
+        ? input.aboutStory
+        : siteConfig.aboutStory || DEFAULT_ABOUT_STORY
+    )
+      .trim()
+      .slice(0, 4000);
+    const cleanContactEmail = (
+      input.contactEmail !== undefined
+        ? input.contactEmail
+        : siteConfig.contactEmail || DEFAULT_CONTACT_EMAIL
+    )
+      .trim()
+      .slice(0, 254);
+    const cleanContactPhone = (
+      input.contactPhone !== undefined
+        ? input.contactPhone
+        : siteConfig.contactPhone || DEFAULT_CONTACT_PHONE
+    )
+      .trim()
+      .slice(0, 80);
+    const cleanContactLocation = (
+      input.contactLocation !== undefined
+        ? input.contactLocation
+        : siteConfig.contactLocation || DEFAULT_CONTACT_LOCATION
+    )
+      .trim()
+      .slice(0, 160);
+    const cleanPrivacyPolicy = (
+      input.privacyPolicySummary !== undefined
+        ? input.privacyPolicySummary
+        : siteConfig.privacyPolicySummary || DEFAULT_PRIVACY_POLICY_SUMMARY
+    )
+      .trim()
+      .slice(0, 5000);
+
     await ensureParentUserProfileExists(user);
 
     const configRef = doc(db, 'siteConfig', 'main');
@@ -4453,8 +4920,18 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           flatShippingCents: cleanFlatShippingCents,
           defaultDisclosureText: cleanDisclosure,
           storeCheckoutEnabled: Boolean(input.storeCheckoutEnabled),
+          blogEnabled: nextBlogEnabled,
+          storeEnabled: nextStoreEnabled,
+          productAffiliateEnabled: nextProductAffEnabled,
+          serviceAffiliateEnabled: nextServiceAffEnabled,
           showStarterSeeds: Boolean(input.showStarterSeeds),
           hiddenSeedIds: cleanHiddenSeedIds,
+          aboutMission: cleanAboutMission,
+          aboutStory: cleanAboutStory,
+          contactEmail: cleanContactEmail,
+          contactPhone: cleanContactPhone,
+          contactLocation: cleanContactLocation,
+          privacyPolicySummary: cleanPrivacyPolicy,
           updatedBy: user.uid,
           updatedAt: serverTimestamp(),
         });
@@ -4469,8 +4946,18 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           flatShippingCents: cleanFlatShippingCents,
           defaultDisclosureText: cleanDisclosure,
           storeCheckoutEnabled: Boolean(input.storeCheckoutEnabled),
+          blogEnabled: nextBlogEnabled,
+          storeEnabled: nextStoreEnabled,
+          productAffiliateEnabled: nextProductAffEnabled,
+          serviceAffiliateEnabled: nextServiceAffEnabled,
           showStarterSeeds: Boolean(input.showStarterSeeds),
           hiddenSeedIds: cleanHiddenSeedIds,
+          aboutMission: cleanAboutMission,
+          aboutStory: cleanAboutStory,
+          contactEmail: cleanContactEmail,
+          contactPhone: cleanContactPhone,
+          contactLocation: cleanContactLocation,
+          privacyPolicySummary: cleanPrivacyPolicy,
           updatedBy: user.uid,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
@@ -4493,6 +4980,123 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       }
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, path);
+    }
+  }
+
+  async function submitContactMessage(
+    input: ContactMessageInput
+  ): Promise<ContactMessage> {
+    const cleanName = input.senderName.trim().slice(0, 80);
+    if (cleanName.length < 2) {
+      throw new Error('Please enter your name (at least 2 characters).');
+    }
+    const isSignedInSender = isNonAnonymousUser(user);
+    const cleanEmail = (
+      input.senderEmail.trim() ||
+      (isSignedInSender ? user.email || '' : '')
+    ).slice(0, 254);
+    if (cleanEmail.length < 3 || !cleanEmail.includes('@')) {
+      throw new Error('Please enter a valid reply-to email address.');
+    }
+    const cleanCategory: ContactIssueCategory = VALID_CONTACT_CATEGORIES.includes(
+      input.category
+    )
+      ? input.category
+      : 'general';
+    const cleanOrderNumber = (input.orderNumber || '').trim().slice(0, 40);
+    const cleanSubject = input.subject.trim().slice(0, 140);
+    if (cleanSubject.length < 3) {
+      throw new Error('Please enter a brief subject (at least 3 characters).');
+    }
+    const cleanMessage = input.message.trim().slice(0, 3000);
+    if (cleanMessage.length < 10) {
+      throw new Error(
+        'Please describe your inquiry or private issue (at least 10 characters).'
+      );
+    }
+
+    if (isSignedInSender) {
+      await ensureParentUserProfileExists(user);
+    }
+
+    const senderId = isSignedInSender
+      ? user.uid
+      : generateSafeDocId('guest');
+    const messageId = generateSafeDocId('msg');
+    const path = `contactMessages/${messageId}`;
+    const nowMs = Date.now();
+
+    try {
+      await setDoc(doc(db, 'contactMessages', messageId), {
+        senderId,
+        senderName: cleanName,
+        senderEmail: cleanEmail,
+        category: cleanCategory,
+        orderNumber: cleanOrderNumber,
+        subject: cleanSubject,
+        message: cleanMessage,
+        status: 'unread',
+        adminNote: '',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, path);
+    }
+
+    const createdRecord: ContactMessage = {
+      id: messageId,
+      senderId,
+      senderName: cleanName,
+      senderEmail: cleanEmail,
+      category: cleanCategory,
+      orderNumber: cleanOrderNumber,
+      subject: cleanSubject,
+      message: cleanMessage,
+      status: 'unread',
+      adminNote: '',
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
+    };
+
+    if (!isSignedInSender) {
+      setGuestContactMessages((prev) => [createdRecord, ...prev].slice(0, 15));
+    }
+
+    return createdRecord;
+  }
+
+  async function updateContactMessageStatus(
+    messageId: string,
+    status: ContactMessageStatus,
+    adminNote: string
+  ): Promise<void> {
+    assertCreatorAccess();
+    const cleanStatus: ContactMessageStatus = VALID_CONTACT_STATUSES.includes(
+      status
+    )
+      ? status
+      : 'in_review';
+    const cleanNote = adminNote.trim().slice(0, 500);
+    const path = `contactMessages/${messageId}`;
+    try {
+      await updateDoc(doc(db, 'contactMessages', messageId), {
+        status: cleanStatus,
+        adminNote: cleanNote,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, path);
+    }
+  }
+
+  async function deleteContactMessage(messageId: string): Promise<void> {
+    assertCreatorAccess();
+    const path = `contactMessages/${messageId}`;
+    try {
+      await deleteDoc(doc(db, 'contactMessages', messageId));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, path);
     }
   }
 
@@ -4535,9 +5139,8 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   async function importStarterCatalog() {
     assertCreatorAccess();
 
-    const offerIdMap: Record<string, string> = {};
     for (const seedOffer of SEED_OFFERS) {
-      const createdId = await saveOffer({
+      await saveOffer({
         title: seedOffer.title,
         kind: seedOffer.kind,
         platform: seedOffer.platform,
@@ -4550,11 +5153,14 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         highlights: seedOffer.highlights,
         status: 'published',
       });
-      offerIdMap[seedOffer.id] = createdId;
     }
 
     const productIdMap: Record<string, string> = {};
     for (const seedProd of SEED_DIRECT_PRODUCTS) {
+      const seedDigitalAsset =
+        seedProd.kind === 'digital'
+          ? buildSeedDigitalBundleAsset(seedProd)
+          : null;
       const createdProdId = await saveDirectProduct({
         title: seedProd.title,
         subtitle: seedProd.subtitle,
@@ -4566,6 +5172,9 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         stockCount: seedProd.stockCount,
         badgeLabel: seedProd.badgeLabel,
         imageKey: seedProd.imageKey,
+        digitalFileUrl: seedDigitalAsset?.url || '',
+        digitalFileName: seedDigitalAsset?.fileName || '',
+        digitalFileType: seedDigitalAsset?.fileType || '',
         summary: seedProd.summary,
         highlights: seedProd.highlights,
         deliveryNote: seedProd.deliveryNote,
@@ -4591,20 +5200,12 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     }
 
     for (const seedPost of SEED_POSTS) {
-      let remappedContent = seedPost.content;
-      for (const [oldId, newId] of Object.entries(offerIdMap)) {
-        remappedContent = remappedContent
-          .split(`[[offer:${oldId}]]`)
-          .join(`[[offer:${newId}]]`);
-      }
-      for (const [oldPid, newPid] of Object.entries(productIdMap)) {
-        remappedContent = remappedContent
-          .split(`[[product:${oldPid}]]`)
-          .join(`[[product:${newPid}]]`);
-      }
-      const remappedAttached = seedPost.attachedOfferIds.map(
-        (oldId) => offerIdMap[oldId] || oldId
-      );
+      // Strip any legacy [[offer:...]] or [[product:...]] tokens so imported Blog posts stay 100% module-independent
+      const cleanProse = seedPost.content
+        .replace(/\[\[offer:[a-zA-Z0-9_-]+\]\]/g, '')
+        .replace(/\[\[product:[a-zA-Z0-9_-]+\]\]/g, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
       await savePost({
         title: seedPost.title,
         subtitle: seedPost.subtitle,
@@ -4612,9 +5213,9 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         category: seedPost.category,
         readTimeMinutes: seedPost.readTimeMinutes,
         coverImageKey: seedPost.coverImageKey,
-        content: remappedContent,
+        content: cleanProse,
         theme: seedPost.theme || 'classic',
-        attachedOfferIds: remappedAttached,
+        attachedOfferIds: [],
         disclosureText: seedPost.disclosureText,
         featured: seedPost.featured,
         status: 'published',
@@ -4632,6 +5233,10 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       flatShippingCents: siteConfig.flatShippingCents,
       defaultDisclosureText: siteConfig.defaultDisclosureText,
       storeCheckoutEnabled: siteConfig.storeCheckoutEnabled,
+      blogEnabled: siteConfig.blogEnabled,
+      storeEnabled: siteConfig.storeEnabled,
+      productAffiliateEnabled: siteConfig.productAffiliateEnabled,
+      serviceAffiliateEnabled: siteConfig.serviceAffiliateEnabled,
       showStarterSeeds: false,
       hiddenSeedIds: [],
     });
@@ -4699,7 +5304,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       channel: 'store',
       targetId: product.id,
       targetTitle: product.title,
-      platform: 'Pickra Direct',
+      platform: 'Pickra Store',
       valueCents: product.priceCents,
     });
   }
@@ -4724,10 +5329,13 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         isCreatorAdmin,
         adminRoleReady,
         adminRegistry,
+        allUsers,
         siteConfig,
         hasSavedSiteConfig: Boolean(firestoreSiteConfig),
         profile,
         privateInfo,
+        isActiveSeller,
+        isSellerSuspended,
         publishedPosts,
         publishedOffers,
         studioPosts,
@@ -4747,6 +5355,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         myPurchases,
         mySellerOrders,
         sellerOrders,
+        deliveredDigitalCache,
         cartItems,
         cartCount,
         cartSubtotalCents,
@@ -4781,6 +5390,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         signOutUser,
         registerOrUpdateSellerAccount,
         saveUserPaymentMethods,
+        moderateUserSellerStatus,
         saveOffer,
         updateOfferStatus,
         deleteOffer,
@@ -4791,16 +5401,18 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         updatePostCoverImage,
         saveDirectProduct,
         updateDirectProductStatus,
+        moderateDirectProduct,
         deleteDirectProduct,
         updateDirectProductImage,
+        fetchProtectedDigitalSecret,
         saveCampaign,
         updateCampaignStatus,
         deleteCampaign,
-        dropdownOptions: workspaceOverrides.dropdownOptions,
+        dropdownOptions: adminUiPrefs.dropdownOptions,
         addDropdownOption,
         renameDropdownOption,
         deleteDropdownOption,
-        sectionHeaders: workspaceOverrides.sectionHeaders,
+        sectionHeaders: adminUiPrefs.sectionHeaders,
         saveSectionHeader,
         resetSectionHeader,
         placeDirectOrder,
@@ -4812,6 +5424,15 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         deleteDirectOrder,
         saveProfileAndAffiliateTags,
         saveSiteConfig,
+        contactMessages: isBootstrappedCreator
+          ? adminContactMessages
+          : ownContactMessages,
+        myContactMessages: isNonAnonymousUser(user)
+          ? ownContactMessages
+          : guestContactMessages,
+        submitContactMessage,
+        updateContactMessageStatus,
+        deleteContactMessage,
         hideSeedItem,
         grantCoAdmin,
         revokeCoAdmin,

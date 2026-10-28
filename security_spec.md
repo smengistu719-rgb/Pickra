@@ -1,40 +1,58 @@
-# Pickra Zero-Trust Firestore Security Specification
+# Pickra Zero-Trust Firestore Security Specification (`security_spec.md`)
 
-## 1. Data Invariants & Master Source of Truth
+## 1. Data Invariants & Relational Sources of Truth
 
-1. **Global Default-Deny**: Every path not explicitly matched is rejected (`allow read, write: if false;`).
-2. **Verified Authentication Gate**: All writes require `request.auth != null && request.auth.token.email_verified == true`.
-3. **Website Owner & Admin Governance (`/admins/{adminId}`)**:
-   - Only the bootstrapped website owner (`mengistushimelis@gmail.com` with `email_verified == true`) or a UID registered in `/admins/{uid}` is recognized as `isAdmin()`.
-   - Editorial Blog Posts (`/posts/{postId}`), Affiliate Products & Services (`/offers/{offerId}`), Marketing Campaigns (`/campaigns/{campaignId}`), and Global Site Config (`/siteConfig/main`) can only be created, updated, or deleted by `isAdmin()`.
-4. **Split-Collection PII & Master Gate (`/users/{userId}` + `/users/{userId}/private/info`)**:
-   - Public profile `/users/{userId}` never stores email, phone, address, or payout account numbers; `list` is prohibited (`allow list: if false`).
-   - Private subcollection `/users/{userId}/private/info` enforces the Master Gate (`exists(/users/$(userId)) && get(/users/$(userId)).data.uid == request.auth.uid`), restricts `get`/`create`/`update` strictly to `isOwner(userId)`, and bounds `payoutAccounts` (`size() <= 6`, each item `<= 240` chars across Telebirr, BankTransfer, CBEBirr, MobileMoney, Stripe, PayPal, Wise, Custom).
-5. **Multi-Creator Storefront (`/directProducts/{productId}`)**:
-   - Any verified user with an active `/users/{uid}` profile can publish, update, or delete their own physical or digital products (`sellerId == request.auth.uid`), including bounded `videoUrl` (`<= 250000`) and digital deliverable `digitalFileUrl` (`<= 560000` for HTTPS links or compact PDF/ZIP/Excel/eBook/HTML/Tool uploads).
-   - Sellers cannot spoof `sellerId`, modify archived products without admin privileges, or delete another creator's products. Website owner (`isAdmin()`) retains full moderation override.
-6. **Customer Orders, Guest Checkout & Creator Payout Ledger (`/directOrders/{orderId}`)**:
-   - Strictly private PII (`buyerName`, `buyerEmail`, `shippingAddress`, `sellerPayoutDetails`): `get` and `list` are restricted strictly to authenticated `buyerId`, `sellerId`, or `isAdmin()` (unauthenticated users have zero read/list access). Zero `get()`/`exists()` inside `allow list`.
-   - Direct Store checkout supports both verified account buyers (`incoming().buyerId == request.auth.uid && exists(/users/$(buyerId))`) and unauthenticated guest buyers (`!isSignedIn() && incoming().buyerId.matches('^guest_[a-zA-Z0-9_\\-]+$')`).
-   - Buyers cannot create pre-settled orders (`payoutStatus == 'paid_out'`).
-   - Sellers can update fulfillment (`status`, `fulfillmentNote`, `sellerPayoutDetails`) prior to terminal state (`fulfilled` / `cancelled`) or update `sellerPayoutDetails` while payout is unsettled, but ONLY `isAdmin()` (website owner) can mark `payoutStatus: 'paid_out'` or edit `payoutNote`.
-7. **Temporal & Structural Integrity**:
-   - Every `create` enforces `createdAt == request.time` (and `updatedAt == request.time`). Every `update` enforces `updatedAt == request.time` and immutable `createdAt` + owner UIDs.
-   - Every string and list is strictly bounded by `.size()`.
+1. **Global Default-Deny Catch-All:** `match /{document=**} { allow read, write: if false; }` is the first block inside `match /databases/{database}/documents`.
+2. **Trusted Admin Source of Truth:** Admin privileges derive strictly from either:
+   - `isBootstrappedAdmin()` (`request.auth.token.email_verified == true && request.auth.token.email == 'mengistushimelis@gmail.com'`), or
+   - `exists(/databases/$(database)/documents/admins/$(request.auth.uid))`.
+   Client-writable profile fields can never grant admin permissions.
+3. **PII Split-Collection Master Gate:**
+   - `/users/{userId}` holds strictly non-PII profile fields (`uid`, `displayName`, `bio`, `isSeller`, `sellerStatus`, `storeName`, `createdAt`, `updatedAt`). `allow list` is restricted exclusively to `isBootstrappedAdmin()` (zero `get()`/`exists()` calls) so the website owner can monitor users and sellers without exposing user lists publicly.
+   - `/users/{userId}/private/info` holds PII (`email`, `payoutMethod`, `payoutAccount`, `payoutAccounts`, affiliate tags) and enforces `isOwner(userId)` plus the Master Gate check on parent `/users/{userId}`. Suspended sellers cannot unsuspend their own `sellerStatus`.
+4. **Seller Registration & Activation Gate (`isActiveSellerUser`):**
+   - Non-admin users can create, update, or delete `/directProducts/{productId}` and `/productSecrets/{productId}` ONLY if:
+     1. `/users/{uid}` exists with `isSeller == true` and `sellerStatus == 'active'` (not `'inactive'`, `'pending'`, or `'suspended'`), AND
+     2. `/users/{uid}/private/info` exists with a configured `payoutMethod != 'None'` and `payoutAccount.size() >= 3`, AND
+     3. `sellerId == request.auth.uid` (sellers can never modify another seller's products).
+5. **Admin Product Review & Approval Gate:**
+   - Non-admin sellers cannot self-approve or directly publish new or content-edited products: seller `create` and content `update` on `/directProducts` strictly enforce `incoming().status == 'draft'` and `incoming().approvalStatus == 'pending'`.
+   - Only `isAdmin()` can set `approvalStatus == 'approved'` and publish a pending listing (or reject/edit/remove inappropriate listings). Once approved (`existing().approvalStatus == 'approved'`), an active seller may update only `['status', 'stockCount', 'updatedAt']` without bypassing content moderation.
+6. **Digital File Vault Isolation (`/productSecrets/{productId}`):**
+   - Public `/directProducts/{productId}` forbids storing non-empty `digitalFileUrl` (`digitalFileUrl == ''`), preventing unauthenticated Store visitors from scraping paid digital deliverables.
+   - Actual digital URLs/files live in `/productSecrets/{productId}`, where `allow list` is restricted to `isBootstrappedAdmin()`, and `allow get` is restricted to the owning seller, `isAdmin()`, or a short-lived (`5m`) post-purchase capability window unlocked atomically via `existsAfter(/directOrders/$(incoming().lastOrderRef))` in the same batch as a newly created paid order containing `productId` (or re-unlocked by a verified buyer who owns an existing paid order containing `productId`).
+7. **Guest Checkout, Atomic Inventory Decrement & Order PII Protection:**
+   - Unauthenticated guests (`!isSignedIn() && isGuestBuyerId(buyerId)`) and verified signed-in buyers (`buyerId == request.auth.uid`) can create `paid` orders in `/directOrders/{orderId}` when `storeCheckoutEnabled == true`.
+   - Physical inventory decrements (`stockCount`) on `/directProducts/{productId}` are permitted for buyers/guests ONLY via an atomic batch creating a brand-new `/directOrders/{lastOrderRef}` containing `productId`.
+   - `/directOrders` contains customer PII and masked payment records (`paymentMethod`, `paymentReference`); `allow get` and `allow list` are strictly denied to unauthenticated guests and restricted to the verified buyer, verified seller, or website owner.
+8. **Website Owner Exclusive Modules:**
+   - `/posts` (Blog), `/offers` (Product Affiliate & Service Affiliate), `/campaigns` (Store Promos), and `/siteConfig/main` (Module switches & global settings) allow writes exclusively to `isAdmin()`.
 
 ---
 
 ## 2. The "Dirty Dozen" Adversarial Payloads
 
-1. **Payload 1 — Shadow Field Injection on `UserProfile`**: Injecting `isAdmin: true` into `/users/{uid}` -> Rejected by `data.keys().hasOnly(...)`.
-2. **Payload 2 — Unverified Email Spoofing Bootstrapped Owner**: `email: 'mengistushimelis@gmail.com'` with `email_verified: false` creating `/posts/post_1` -> Rejected by `isBootstrappedAdmin()` / `isAdmin()`.
-3. **Payload 3 — Non-Owner Reading Private Payout Account**: `user_b` calling `get` on `/users/user_a/private/info` -> Rejected by `isOwner(userId)`.
-4. **Payload 4 — Non-Admin Publishing Affiliate Offer**: Verified third-party seller creating `/offers/off_1` -> Rejected by `isAdmin()`.
-5. **Payload 5 — Seller Identity Spoofing on `DirectProduct`**: `user_b` creating `/directProducts/prod_1` with `sellerId: 'user_a'` -> Rejected by `incoming().sellerId == request.auth.uid`.
-6. **Payload 6 — Orphaned `DirectProduct` Without `/users/{uid}`**: Verified `user_c` creating `/directProducts/prod_2` before `/users/user_c` exists -> Rejected by `exists(/databases/$(database)/documents/users/$(incoming().sellerId))`.
-7. **Payload 7 — Seller Self-Marking Order `paid_out`**: Seller `user_a` updating `/directOrders/ord_1` with `payoutStatus: 'paid_out'` -> Rejected because seller `affectedKeys().hasOnly(...)` excludes `payoutStatus`.
-8. **Payload 8 — Guest or Buyer Creating Order Already Marked `paid_out`**: Creating `/directOrders/ord_2` with `payoutStatus: 'paid_out'` -> Rejected by create guard `incoming().payoutStatus in ['pending', 'not_applicable']`.
-9. **Payload 9 — Unauthenticated Guest Attempting to Read `/directOrders/ord_1`**: Unauthenticated client calling `get` or `list` on `/directOrders` -> Rejected by `isVerifiedUser()` on `get` and `list`.
-10. **Payload 10 — Blanket Order Scraping (`allow list`)**: Authenticated user listing `/directOrders` without filtering by `buyerId` or `sellerId` -> Rejected by `existing().buyerId == request.auth.uid || existing().sellerId == request.auth.uid`.
-11. **Payload 11 — ID Poisoning & Oversized File Exhaustion**: Document ID containing slashes/spaces or `digitalFileUrl` > 560,000 chars -> Rejected by `isValidId()` and `data.digitalFileUrl.size() <= 560000`.
-12. **Payload 12 — Client Timestamp Forgery**: Creating `/posts/post_2` with backdated `createdAt` != `request.time` -> Rejected by `incoming().createdAt == request.time`.
+1. **Payload 1 — Shadow Field Privilege Escalation on `/users/user_1` (`create`):**
+   `{ uid: "user_1", displayName: "Attacker", bio: "", isAdmin: true, createdAt: SERVER_TIME, updatedAt: SERVER_TIME }` -> **PERMISSION_DENIED** (`hasOnly` rejects `isAdmin`).
+2. **Payload 2 — Unverified Email Spoofing Website Owner on `/posts/post_1` (`create`):**
+   Auth token `{ email: "mengistushimelis@gmail.com", email_verified: false }` -> **PERMISSION_DENIED** (`isBootstrappedAdmin()` requires `email_verified == true`).
+3. **Payload 3 — Non-Owner Reading Private Seller Payout Account `/users/seller_a/private/info` (`get`):**
+   Authenticated as `buyer_b` -> **PERMISSION_DENIED** (`isOwner(userId)` fails).
+4. **Payload 4 — Unactivated Buyer Creating Store Product `/directProducts/prod_unactivated` (`create`):**
+   Authenticated `buyer_b` (`isSeller: false`) writes `/directProducts/prod_unactivated` -> **PERMISSION_DENIED** (`isActiveSellerUser` fails).
+5. **Payload 5 — Active Seller Bypassing Admin Approval (`status: "published", approvalStatus: "approved"`) on `/directProducts/prod_bypass` (`create`):**
+   Active seller tries to publish immediately without admin review -> **PERMISSION_DENIED** (Seller create enforces `status == 'draft' && approvalStatus == 'pending'`).
+6. **Payload 6 — Seller Modifying Another Seller's Product `/directProducts/prod_seller_a` (`update`):**
+   Active `seller_b` updates `seller_a`'s product -> **PERMISSION_DENIED** (`existing().sellerId == request.auth.uid` fails).
+7. **Payload 7 — Unpurchased Visitor Scraping Protected Digital File `/productSecrets/prod_dig_1` (`get`):**
+   Unauthenticated visitor calls `getDoc` on `/productSecrets/prod_dig_1` without atomic order unlock -> **PERMISSION_DENIED**.
+8. **Payload 8 — Arbitrary Stock Zeroing Without Order Batch on `/directProducts/prod_phys_1` (`update`):**
+   Guest attempts to decrement `stockCount` to `0` without creating `/directOrders/{lastOrderRef}` in the same batch -> **PERMISSION_DENIED** (`existsAfter` & `!exists` fail).
+9. **Payload 9 — Suspended Seller Self-Reactivating `/users/seller_suspended` (`update`):**
+   Suspended seller (`existing().sellerStatus == 'suspended'`) updates `sellerStatus: 'active'` -> **PERMISSION_DENIED** (`existing().sellerStatus != 'suspended'` gate fails).
+10. **Payload 10 — Seller Self-Marking Order `paid_out` on `/directOrders/ord_1` (`update`):**
+    Seller attempts to update `payoutStatus: 'paid_out'` -> **PERMISSION_DENIED** (Seller `affectedKeys().hasOnly` excludes `payoutStatus`).
+11. **Payload 11 — Blanket Customer Order Scraping on `/directOrders` (`list`):**
+    Authenticated user queries `/directOrders` without `buyerId` or `sellerId` ownership filter -> **PERMISSION_DENIED** (`allow list` enforces `existing().buyerId == request.auth.uid || existing().sellerId == request.auth.uid || isBootstrappedAdmin()`).
+12. **Payload 12 — Oversized Payload / Value Poisoning (`imageKey` > 180KB on `update`):**
+    Seller updates `imageKey` with a 500KB string -> **PERMISSION_DENIED** (`isValidDirectProduct(incoming())` wraps `allow update` and enforces `size() <= 180000`).

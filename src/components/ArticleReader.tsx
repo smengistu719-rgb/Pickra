@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
+  ArrowUpRight,
+  BookOpen,
   Camera,
   Palette,
   PenLine,
-  ShoppingBag,
   Trash2,
 } from 'lucide-react';
 import {
@@ -15,29 +16,23 @@ import {
   DirectProduct,
 } from '../types';
 import { ResilientImage } from './ResilientImage';
-import { OfferCard } from './OfferCard';
-import { DirectProductCard } from './DirectProductCard';
-import {
-  extractOfferIdsFromBlocks,
-  extractProductIdsFromBlocks,
-  markdownToBlocks,
-} from '../utils/editorialBlocks';
+import { markdownToBlocks } from '../utils/editorialBlocks';
 import { StoryBlocksRenderer } from './EditorialRichBlocks';
 import { useFirebaseApp } from '../context/FirebaseContext';
-import { compressImageFileToDataUrl, formatPriceCents } from '../firebase';
+import { compressImageFileToDataUrl } from '../firebase';
 
 interface ArticleReaderProps {
   post: BlogPost;
-  offersMap: Record<string, AffiliateOffer>;
+  offersMap?: Record<string, AffiliateOffer>;
   directProductsMap?: Record<string, DirectProduct>;
   onBack: () => void;
+  onSelectPost?: (post: BlogPost) => void;
   onEditInEditor?: (post: BlogPost) => void;
   onDeletePost?: (post: BlogPost) => Promise<void> | void;
   onChangeCoverImage?: (
     post: BlogPost,
     nextCoverImageKey: string
   ) => Promise<void> | void;
-  onOpenStore?: () => void;
 }
 
 const THEME_ORDER: BlogColorTheme[] = [
@@ -50,21 +45,13 @@ const THEME_ORDER: BlogColorTheme[] = [
 
 export const ArticleReader: React.FC<ArticleReaderProps> = ({
   post,
-  offersMap,
-  directProductsMap = {},
   onBack,
+  onSelectPost,
   onEditInEditor,
   onDeletePost,
   onChangeCoverImage,
-  onOpenStore,
 }) => {
-  const {
-    cartCount,
-    cartTotalCents,
-    setIsCartOpen,
-    siteConfig,
-    recordPostView,
-  } = useFirebaseApp();
+  const { publishedPosts, recordPostView } = useFirebaseApp();
   const coverInputRef = useRef<HTMLInputElement | null>(null);
   const [scrollProgress, setScrollProgress] = useState(0);
   const [activeTheme, setActiveTheme] = useState<BlogColorTheme>(
@@ -119,26 +106,28 @@ export const ArticleReader: React.FC<ArticleReaderProps> = ({
 
   const blocks = useMemo(() => markdownToBlocks(post.content), [post.content]);
 
-  const attachedOffers = useMemo(() => {
-    const inlineIds = extractOfferIdsFromBlocks(blocks);
-    const ids = Array.from(new Set([...post.attachedOfferIds, ...inlineIds]));
-    return ids
-      .map((id) => offersMap[id])
-      .filter((item): item is AffiliateOffer => Boolean(item));
-  }, [post.attachedOfferIds, blocks, offersMap]);
+  const relatedPosts = useMemo(() => {
+    const others = publishedPosts.filter((p) => p.id !== post.id);
+    const sameCategory = others.filter((p) => p.category === post.category);
+    const diffCategory = others.filter((p) => p.category !== post.category);
+    return [...sameCategory, ...diffCategory].slice(0, 4);
+  }, [publishedPosts, post.id, post.category]);
 
-  const attachedDirectProducts = useMemo(() => {
-    const inlineProductIds = extractProductIdsFromBlocks(blocks);
-    return inlineProductIds
-      .map((id) => directProductsMap[id])
-      .filter((item): item is DirectProduct => Boolean(item));
-  }, [blocks, directProductsMap]);
-
-  const totalFeaturedCount =
-    attachedDirectProducts.length + attachedOffers.length;
+  const sectionHeadings = useMemo(
+    () =>
+      blocks
+        .filter(
+          (b): b is Extract<typeof b, { type: 'heading' }> =>
+            b.type === 'heading' && Boolean(b.text.trim())
+        )
+        .map((b) => b.text.trim()),
+    [blocks]
+  );
 
   return (
-    <div className={`relative transition-colors duration-200 ${palette.canvasClass}`}>
+    <div
+      className={`relative transition-colors duration-200 ${palette.canvasClass}`}
+    >
       {onChangeCoverImage && (
         <input
           ref={coverInputRef}
@@ -199,19 +188,6 @@ export const ArticleReader: React.FC<ArticleReaderProps> = ({
               })}
             </div>
 
-            {cartCount > 0 && (
-              <button
-                type="button"
-                onClick={() => setIsCartOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
-              >
-                <ShoppingBag className="w-3.5 h-3.5" />
-                <span>
-                  Bag ({cartCount}) · {formatPriceCents(cartTotalCents)}
-                </span>
-              </button>
-            )}
-
             {onChangeCoverImage && (
               <button
                 type="button"
@@ -269,7 +245,9 @@ export const ArticleReader: React.FC<ArticleReaderProps> = ({
 
         {/* Editorial Header */}
         <header className="mt-8 sm:mt-10 max-w-3xl">
-          <div className={`flex flex-wrap items-center gap-2 text-xs ${palette.mutedClass}`}>
+          <div
+            className={`flex flex-wrap items-center gap-2 text-xs ${palette.mutedClass}`}
+          >
             <span className="font-medium text-[#9A3412]">{post.category}</span>
             <span aria-hidden="true">·</span>
             <span>{post.publishedLabel}</span>
@@ -322,114 +300,99 @@ export const ArticleReader: React.FC<ArticleReaderProps> = ({
           <figcaption
             className={`mt-2.5 text-xs font-serif italic ${palette.mutedClass}`}
           >
-            Editorial field documentation — {post.category} ·{' '}
-            {totalFeaturedCount} vetted{' '}
-            {totalFeaturedCount === 1 ? 'offering' : 'offerings'} featured
+            Editorial field documentation — {post.category} · {post.publishedLabel}
           </figcaption>
         </figure>
 
-        {/* Asymmetric Reading Grid: 70% Essay / 30% Sticky Attached Picks Rail */}
+        {/* Asymmetric Reading Grid: 70% Essay / 30% Sticky Blog Reading Rail */}
         <div className="mt-10 sm:mt-14 grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
           {/* Main Essay Column */}
           <div className="lg:col-span-8 max-w-2xl">
-            {/* Explicit Affiliate & Direct Store Disclosure */}
-            <div
-              className={`mb-8 py-3.5 px-4 rounded-lg border text-xs leading-relaxed ${
-                palette.isDark
-                  ? 'bg-[#1E2126] border-stone-800 text-stone-300'
-                  : 'bg-white/80 border-stone-200/80 text-stone-600'
-              }`}
-            >
-              <span
-                className={`font-semibold ${
-                  palette.isDark ? 'text-stone-100' : 'text-stone-800'
+            {post.disclosureText && (
+              <div
+                className={`mb-8 py-3.5 px-4 rounded-lg border text-xs leading-relaxed ${
+                  palette.isDark
+                    ? 'bg-[#1E2126] border-stone-800 text-stone-300'
+                    : 'bg-white/80 border-stone-200/80 text-stone-600'
                 }`}
               >
-                Editorial &amp; Commerce Disclosure:{' '}
-              </span>
-              {post.disclosureText || siteConfig.defaultDisclosureText}
-            </div>
+                <span
+                  className={`font-semibold ${
+                    palette.isDark ? 'text-stone-100' : 'text-stone-800'
+                  }`}
+                >
+                  Editorial Note:{' '}
+                </span>
+                {post.disclosureText}
+              </div>
+            )}
 
             <StoryBlocksRenderer
               blocks={blocks}
-              offersMap={offersMap}
-              directProductsMap={directProductsMap}
               enableDropCap={true}
               articleTheme={activeTheme}
             />
           </div>
 
-          {/* Sticky Margin Rail: Direct Store Editions + Attached Affiliate Products & Services */}
+          {/* Sticky Margin Rail: Pure Blog Outline + More From the Blog */}
           <aside className="lg:col-span-4 lg:sticky lg:top-20 bg-white border border-stone-200/90 rounded-xl p-6 space-y-6 text-stone-900">
+            {sectionHeadings.length > 0 && (
+              <div className="pb-5 border-b border-stone-200/80">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-[#9A3412]">
+                  <BookOpen className="w-3.5 h-3.5" />
+                  <span>In This Dispatch</span>
+                </div>
+                <ol className="mt-3 space-y-2 text-xs text-stone-700 list-decimal list-inside">
+                  {sectionHeadings.map((heading, idx) => (
+                    <li key={idx} className="leading-snug">
+                      {heading}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+
             <div>
-              <div className="pb-4 border-b border-stone-200/80">
+              <div className="pb-3 border-b border-stone-200/80">
                 <span className="text-xs font-medium text-stone-500">
-                  Featured Offerings ({totalFeaturedCount})
+                  Pickra Blog Archive
                 </span>
-                <h3 className="mt-1 font-serif text-lg font-medium text-stone-900">
-                  Featured in This Blog
+                <h3 className="mt-0.5 font-serif text-lg font-medium text-stone-900">
+                  More From the Blog
                 </h3>
-                <p className="mt-1 text-xs text-stone-500 leading-relaxed">
-                  Creator store products and partner affiliate links to physical gear, digital products, and specialist services reviewed in this article.
-                </p>
               </div>
 
-              {totalFeaturedCount === 0 ? (
-                <p className="py-6 text-xs text-stone-500">
-                  No store products or partner links attached to this blog post.
+              {relatedPosts.length === 0 ? (
+                <p className="py-5 text-xs text-stone-500">
+                  Explore more essays and dispatches from the main Blog index.
                 </p>
               ) : (
-                <div className="mt-4 space-y-5">
-                  {attachedDirectProducts.length > 0 && (
-                    <div>
-                      <div className="flex items-center justify-between text-[11px] font-medium text-stone-500 pb-2">
-                        <span>Sold on Pickra Store</span>
-                        {onOpenStore && (
-                          <button
-                            type="button"
-                            onClick={onOpenStore}
-                            className="text-[#9A3412] hover:underline cursor-pointer"
-                          >
-                            Visit Store →
-                          </button>
-                        )}
+                <div className="mt-3 divide-y divide-stone-200/80">
+                  {relatedPosts.map((rel) => (
+                    <div key={rel.id} className="py-3.5 first:pt-1 last:pb-0">
+                      <div className="flex items-center gap-1.5 text-[11px] text-stone-500">
+                        <span className="font-medium text-[#9A3412]">
+                          {rel.category}
+                        </span>
+                        <span aria-hidden="true">·</span>
+                        <span className="font-mono tabular-nums">
+                          {rel.readTimeMinutes} min read
+                        </span>
                       </div>
-                      <div>
-                        {attachedDirectProducts.map((product) => (
-                          <DirectProductCard
-                            key={product.id}
-                            product={product}
-                            variant="rail"
-                          />
-                        ))}
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onSelectPost ? onSelectPost(rel) : onBack()
+                        }
+                        className="mt-1 text-left group inline-flex items-start justify-between gap-2 w-full cursor-pointer"
+                      >
+                        <span className="text-sm font-semibold text-stone-900 group-hover:text-[#9A3412] transition-colors leading-snug line-clamp-2">
+                          {rel.title}
+                        </span>
+                        <ArrowUpRight className="w-3.5 h-3.5 text-stone-400 group-hover:text-[#9A3412] shrink-0 mt-0.5" />
+                      </button>
                     </div>
-                  )}
-
-                  {attachedOffers.length > 0 && (
-                    <div
-                      className={
-                        attachedDirectProducts.length > 0
-                          ? 'pt-4 border-t border-stone-200/80'
-                          : ''
-                      }
-                    >
-                      {attachedDirectProducts.length > 0 && (
-                        <div className="text-[11px] font-medium text-stone-500 pb-2">
-                          Partner Marketplace &amp; Service Links
-                        </div>
-                      )}
-                      <div>
-                        {attachedOffers.map((offer) => (
-                          <OfferCard
-                            key={offer.id}
-                            offer={offer}
-                            variant="rail"
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  ))}
                 </div>
               )}
             </div>

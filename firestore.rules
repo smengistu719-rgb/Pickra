@@ -53,6 +53,21 @@ service cloud.firestore {
       );
     }
 
+    // Relational Master Gate verifying Seller has registered store + active seller status + valid payout account
+    function isActiveSellerUser(uid) {
+      return exists(/databases/$(database)/documents/users/$(uid)) &&
+        get(/databases/$(database)/documents/users/$(uid)).data.isSeller == true &&
+        (
+          !('sellerStatus' in get(/databases/$(database)/documents/users/$(uid)).data) ||
+          get(/databases/$(database)/documents/users/$(uid)).data.sellerStatus == 'active'
+        ) &&
+        exists(/databases/$(database)/documents/users/$(uid)/private/info) &&
+        'payoutMethod' in get(/databases/$(database)/documents/users/$(uid)/private/info).data &&
+        get(/databases/$(database)/documents/users/$(uid)/private/info).data.payoutMethod != 'None' &&
+        'payoutAccount' in get(/databases/$(database)/documents/users/$(uid)/private/info).data &&
+        get(/databases/$(database)/documents/users/$(uid)/private/info).data.payoutAccount.size() >= 3;
+    }
+
     // =========================================================================
     // Validation Blueprints (Static Schema & Identity Checks — Zero DB Reads)
     // =========================================================================
@@ -61,18 +76,27 @@ service cloud.firestore {
         data.keys().hasOnly(['uid', 'grantedBy', 'createdAt']) &&
         isValidId(data.uid) &&
         isValidId(data.grantedBy) &&
+        isSignedIn() &&
         data.grantedBy == request.auth.uid &&
         data.createdAt is timestamp;
     }
 
     function isValidUserProfile(data) {
       return data.keys().hasAll(['uid', 'displayName', 'bio', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['uid', 'displayName', 'bio', 'isSeller', 'storeName', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly([
+          'uid', 'displayName', 'bio', 'isSeller', 'sellerStatus', 'storeName', 'createdAt', 'updatedAt'
+        ]) &&
         isValidId(data.uid) &&
-        data.uid == request.auth.uid &&
+        isSignedIn() &&
+        (data.uid == request.auth.uid || isBootstrappedAdmin()) &&
         data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
         data.bio is string && data.bio.size() <= 300 &&
         (!('isSeller' in data) || data.isSeller is bool) &&
+        (!('sellerStatus' in data) || (
+          data.sellerStatus is string &&
+          data.sellerStatus.size() <= 20 &&
+          data.sellerStatus in ['inactive', 'pending', 'active', 'suspended']
+        )) &&
         (!('storeName' in data) || (data.storeName is string && data.storeName.size() <= 80)) &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
@@ -112,6 +136,7 @@ service cloud.firestore {
           'payoutMethod', 'payoutAccount', 'payoutAccounts', 'createdAt', 'updatedAt'
         ]) &&
         isValidId(data.uid) &&
+        isSignedIn() &&
         data.uid == request.auth.uid &&
         data.email is string && data.email.size() >= 3 && data.email.size() <= 254 &&
         data.defaultAmazonTag is string && data.defaultAmazonTag.size() <= 60 &&
@@ -155,6 +180,7 @@ service cloud.firestore {
           'summary', 'highlights', 'status', 'createdAt', 'updatedAt'
         ]) &&
         isValidId(data.authorId) &&
+        isSignedIn() &&
         (data.authorId == request.auth.uid || isBootstrappedAdmin()) &&
         data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 80 &&
         data.title is string && data.title.size() >= 2 && data.title.size() <= 140 &&
@@ -201,6 +227,7 @@ service cloud.firestore {
           'createdAt', 'updatedAt'
         ]) &&
         isValidId(data.authorId) &&
+        isSignedIn() &&
         (data.authorId == request.auth.uid || isBootstrappedAdmin()) &&
         data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 80 &&
         data.title is string && data.title.size() >= 4 && data.title.size() <= 160 &&
@@ -236,11 +263,15 @@ service cloud.firestore {
           'sellerId', 'sellerName', 'title', 'subtitle', 'kind', 'category',
           'sku', 'priceCents', 'compareAtCents', 'stockCount', 'badgeLabel',
           'imageKey', 'videoUrl', 'digitalFileUrl', 'digitalFileName', 'digitalFileType',
+          'hasDigitalAsset', 'approvalStatus', 'moderationNote', 'lastOrderRef',
           'summary', 'highlights', 'deliveryNote', 'featured',
           'status', 'createdAt', 'updatedAt'
         ]) &&
         isValidId(data.sellerId) &&
-        (data.sellerId == request.auth.uid || isBootstrappedAdmin()) &&
+        (
+          (isSignedIn() && (data.sellerId == request.auth.uid || isBootstrappedAdmin())) ||
+          ('lastOrderRef' in data && isValidId(data.lastOrderRef))
+        ) &&
         data.sellerName is string && data.sellerName.size() >= 1 && data.sellerName.size() <= 80 &&
         data.title is string && data.title.size() >= 2 && data.title.size() <= 140 &&
         data.subtitle is string && data.subtitle.size() >= 4 && data.subtitle.size() <= 220 &&
@@ -257,11 +288,51 @@ service cloud.firestore {
         (!('digitalFileUrl' in data) || isValidOptionalDigitalFileUrl(data.digitalFileUrl)) &&
         (!('digitalFileName' in data) || (data.digitalFileName is string && data.digitalFileName.size() <= 140)) &&
         (!('digitalFileType' in data) || (data.digitalFileType is string && data.digitalFileType.size() <= 60)) &&
+        (!('hasDigitalAsset' in data) || data.hasDigitalAsset is bool) &&
+        (!('approvalStatus' in data) || (
+          data.approvalStatus is string &&
+          data.approvalStatus.size() <= 20 &&
+          data.approvalStatus in ['pending', 'approved', 'rejected']
+        )) &&
+        (!('moderationNote' in data) || (data.moderationNote is string && data.moderationNote.size() <= 300)) &&
+        (!('lastOrderRef' in data) || (
+          data.lastOrderRef is string &&
+          data.lastOrderRef.size() <= 128 &&
+          (data.lastOrderRef.size() == 0 || isValidId(data.lastOrderRef))
+        )) &&
         data.summary is string && data.summary.size() >= 10 && data.summary.size() <= 1500 &&
         isValidHighlightsList(data.highlights) &&
         data.deliveryNote is string && data.deliveryNote.size() >= 2 && data.deliveryNote.size() <= 200 &&
         data.featured is bool &&
         data.status is string && data.status.size() <= 20 && data.status in ['draft', 'published', 'archived'] &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidProductSecret(data) {
+      return data.keys().hasAll([
+          'productId', 'sellerId', 'digitalFileUrl', 'digitalFileName', 'digitalFileType', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'productId', 'sellerId', 'digitalFileUrl', 'digitalFileName', 'digitalFileType',
+          'lastOrderRef', 'unlockedAt', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.productId) &&
+        isValidId(data.sellerId) &&
+        (
+          (isSignedIn() && (data.sellerId == request.auth.uid || isBootstrappedAdmin())) ||
+          ('lastOrderRef' in data && isValidId(data.lastOrderRef))
+        ) &&
+        isValidOptionalDigitalFileUrl(data.digitalFileUrl) &&
+        data.digitalFileUrl.size() >= 1 &&
+        data.digitalFileName is string && data.digitalFileName.size() <= 140 &&
+        data.digitalFileType is string && data.digitalFileType.size() <= 60 &&
+        (!('lastOrderRef' in data) || (
+          data.lastOrderRef is string &&
+          data.lastOrderRef.size() <= 128 &&
+          (data.lastOrderRef.size() == 0 || isValidId(data.lastOrderRef))
+        )) &&
+        (!('unlockedAt' in data) || data.unlockedAt is timestamp) &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
     }
@@ -278,6 +349,7 @@ service cloud.firestore {
           'expiresLabel', 'status', 'createdAt', 'updatedAt'
         ]) &&
         isValidId(data.authorId) &&
+        isSignedIn() &&
         (data.authorId == request.auth.uid || isBootstrappedAdmin()) &&
         data.title is string && data.title.size() >= 3 && data.title.size() <= 120 &&
         data.description is string && data.description.size() >= 8 && data.description.size() <= 280 &&
@@ -319,7 +391,8 @@ service cloud.firestore {
         ]) &&
         data.keys().hasOnly([
           'buyerId', 'sellerId', 'sellerName', 'orderNumber', 'buyerName', 'buyerEmail',
-          'shippingAddress', 'productIds', 'itemsSummary', 'itemCount',
+          'shippingAddress', 'paymentMethod', 'paymentReference',
+          'productIds', 'itemsSummary', 'itemCount',
           'fulfillmentType', 'promoCode', 'subtotalCents', 'discountCents',
           'shippingCents', 'totalCents', 'platformFeeCents', 'sellerPayoutCents',
           'payoutStatus', 'sellerPayoutDetails', 'payoutNote', 'fulfillmentNote', 'status',
@@ -341,6 +414,13 @@ service cloud.firestore {
         data.buyerName is string && data.buyerName.size() >= 2 && data.buyerName.size() <= 80 &&
         data.buyerEmail is string && data.buyerEmail.size() >= 3 && data.buyerEmail.size() <= 254 &&
         data.shippingAddress is string && data.shippingAddress.size() <= 300 &&
+        (!('paymentMethod' in data) || (
+          data.paymentMethod is string &&
+          data.paymentMethod.size() >= 2 &&
+          data.paymentMethod.size() <= 24 &&
+          data.paymentMethod in ['Card', 'Telebirr', 'CBEBirr', 'PayPal', 'BankTransfer']
+        )) &&
+        (!('paymentReference' in data) || (data.paymentReference is string && data.paymentReference.size() <= 80)) &&
         isValidOrderProductIdList(data.productIds) &&
         data.itemsSummary is string && data.itemsSummary.size() >= 2 && data.itemsSummary.size() <= 600 &&
         data.itemCount is int && data.itemCount >= 1 && data.itemCount <= 50 &&
@@ -385,8 +465,11 @@ service cloud.firestore {
           'siteTagline', 'announcementEnabled', 'announcementText',
           'announcementCtaLabel', 'announcementTargetSection',
           'freeShippingThresholdCents', 'flatShippingCents',
-          'defaultDisclosureText', 'storeCheckoutEnabled', 'showStarterSeeds',
-          'hiddenSeedIds', 'updatedBy', 'createdAt', 'updatedAt'
+          'defaultDisclosureText', 'storeCheckoutEnabled',
+          'blogEnabled', 'storeEnabled', 'productAffiliateEnabled', 'serviceAffiliateEnabled',
+          'showStarterSeeds', 'hiddenSeedIds',
+          'aboutMission', 'aboutStory', 'contactEmail', 'contactPhone', 'contactLocation', 'privacyPolicySummary',
+          'updatedBy', 'createdAt', 'updatedAt'
         ]) &&
         data.siteTagline is string && data.siteTagline.size() >= 4 && data.siteTagline.size() <= 140 &&
         data.announcementEnabled is bool &&
@@ -404,9 +487,20 @@ service cloud.firestore {
         data.defaultDisclosureText.size() >= 10 &&
         data.defaultDisclosureText.size() <= 400 &&
         data.storeCheckoutEnabled is bool &&
+        (!('blogEnabled' in data) || data.blogEnabled is bool) &&
+        (!('storeEnabled' in data) || data.storeEnabled is bool) &&
+        (!('productAffiliateEnabled' in data) || data.productAffiliateEnabled is bool) &&
+        (!('serviceAffiliateEnabled' in data) || data.serviceAffiliateEnabled is bool) &&
         data.showStarterSeeds is bool &&
         (!('hiddenSeedIds' in data) || isValidHiddenSeedList(data.hiddenSeedIds)) &&
+        (!('aboutMission' in data) || (data.aboutMission is string && data.aboutMission.size() <= 2500)) &&
+        (!('aboutStory' in data) || (data.aboutStory is string && data.aboutStory.size() <= 4000)) &&
+        (!('contactEmail' in data) || (data.contactEmail is string && data.contactEmail.size() <= 254)) &&
+        (!('contactPhone' in data) || (data.contactPhone is string && data.contactPhone.size() <= 80)) &&
+        (!('contactLocation' in data) || (data.contactLocation is string && data.contactLocation.size() <= 160)) &&
+        (!('privacyPolicySummary' in data) || (data.privacyPolicySummary is string && data.privacyPolicySummary.size() <= 5000)) &&
         isValidId(data.updatedBy) &&
+        isSignedIn() &&
         data.updatedBy == request.auth.uid &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
@@ -422,6 +516,7 @@ service cloud.firestore {
           'targetId', 'targetTitle', 'platform', 'valueCents', 'createdAt'
         ]) &&
         isValidId(data.actorId) &&
+        isSignedIn() &&
         data.actorId == request.auth.uid &&
         data.actorScope is string && data.actorScope.size() <= 20 &&
         data.actorScope in ['customer', 'creator'] &&
@@ -437,6 +532,40 @@ service cloud.firestore {
         data.createdAt is timestamp;
     }
 
+    function isValidContactMessage(data) {
+      return data.keys().hasAll([
+          'senderId', 'senderName', 'senderEmail', 'category',
+          'orderNumber', 'subject', 'message', 'status', 'adminNote',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'senderId', 'senderName', 'senderEmail', 'category',
+          'orderNumber', 'subject', 'message', 'status', 'adminNote',
+          'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.senderId) &&
+        (
+          (isSignedIn() && (
+            data.senderId == request.auth.uid ||
+            isBootstrappedAdmin() ||
+            isAdmin()
+          )) ||
+          (!isSignedIn() && isGuestBuyerId(data.senderId))
+        ) &&
+        data.senderName is string && data.senderName.size() >= 2 && data.senderName.size() <= 80 &&
+        data.senderEmail is string && data.senderEmail.size() >= 3 && data.senderEmail.size() <= 254 &&
+        data.category is string && data.category.size() <= 32 &&
+        data.category in ['general', 'order_support', 'seller_payout', 'affiliate_partnership', 'privacy_issue'] &&
+        data.orderNumber is string && data.orderNumber.size() <= 40 &&
+        data.subject is string && data.subject.size() >= 3 && data.subject.size() <= 140 &&
+        data.message is string && data.message.size() >= 10 && data.message.size() <= 3000 &&
+        data.status is string && data.status.size() <= 20 &&
+        data.status in ['unread', 'in_review', 'resolved'] &&
+        data.adminNote is string && data.adminNote.size() <= 500 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
     // =========================================================================
     // Collection Rules
     // =========================================================================
@@ -444,7 +573,6 @@ service cloud.firestore {
     // 1. Trusted Website Owner & Co-Admin Registry
     match /admins/{adminId} {
       allow get: if isSignedIn() && isValidId(adminId) && (request.auth.uid == adminId || isAdmin());
-      // Zero get()/exists() in list; allows bootstrapped creator or granting admin to view registry
       allow list: if isBootstrappedAdmin() ||
         (isVerifiedUser() && existing().grantedBy == request.auth.uid);
       allow create: if isVerifiedUser() &&
@@ -457,23 +585,44 @@ service cloud.firestore {
       allow delete: if isVerifiedUser() && isValidId(adminId) && isAdmin();
     }
 
-    // 2. Public Author, Seller & Customer Profiles (Strictly Non-PII; No list permitted)
+    // 2. Public Author, Seller & Customer Profiles (Strictly Non-PII; Admin-Only Directory Monitoring)
     match /users/{userId} {
       allow get: if isValidId(userId);
-      allow list: if false;
+      allow list: if isBootstrappedAdmin();
       allow create: if isOwner(userId) &&
         isValidId(userId) &&
         isValidUserProfile(incoming()) &&
         incoming().uid == userId &&
+        incoming().uid == request.auth.uid &&
+        (!('sellerStatus' in incoming()) || incoming().sellerStatus in ['inactive', 'pending', 'active']) &&
+        (!('isSeller' in incoming()) || incoming().isSeller == false || ('storeName' in incoming() && incoming().storeName.size() >= 2)) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
-      allow update: if isOwner(userId) &&
+      allow update: if isValidUserProfile(incoming()) &&
+        isVerifiedUser() &&
         isValidId(userId) &&
-        isValidUserProfile(incoming()) &&
         incoming().uid == existing().uid &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
-        incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'bio', 'isSeller', 'storeName', 'updatedAt']);
+        (
+          // Action 1: Owner updates own profile or registers/activates seller storefront (cannot unsuspend if suspended)
+          (
+            isOwner(userId) &&
+            (!('sellerStatus' in existing()) || existing().sellerStatus != 'suspended') &&
+            (!('sellerStatus' in incoming()) || incoming().sellerStatus in ['inactive', 'pending', 'active']) &&
+            (!('isSeller' in incoming()) || incoming().isSeller == false || ('storeName' in incoming() && incoming().storeName.size() >= 2)) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'bio', 'isSeller', 'sellerStatus', 'storeName', 'updatedAt'
+            ])
+          ) ||
+          // Action 2: Website Owner / Admin moderates user & seller status (activate, suspend, edit)
+          (
+            isAdmin() &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'bio', 'isSeller', 'sellerStatus', 'storeName', 'updatedAt'
+            ])
+          )
+        );
       allow delete: if isVerifiedUser() && isValidId(userId) && (isOwner(userId) || isAdmin());
 
       // 3. Split-Collection PII, Default Affiliate Tags & Seller Payout Account (Master Gate Enforced)
@@ -495,11 +644,11 @@ service cloud.firestore {
           incoming().updatedAt == request.time &&
           exists(/databases/$(database)/documents/users/$(userId)) &&
           get(/databases/$(database)/documents/users/$(userId)).data.uid == request.auth.uid;
-        allow update: if isOwner(userId) &&
+        allow update: if isValidUserPrivateInfo(incoming()) &&
+          isOwner(userId) &&
           isValidId(userId) &&
           isValidId(infoId) &&
           infoId == 'info' &&
-          isValidUserPrivateInfo(incoming()) &&
           incoming().uid == existing().uid &&
           incoming().createdAt == existing().createdAt &&
           incoming().updatedAt == request.time &&
@@ -528,21 +677,20 @@ service cloud.firestore {
         (isSignedIn() && existing().authorId == request.auth.uid) ||
         isAdmin()
       );
-      // Zero get()/exists() calls in list to prevent O(n) cost explosions
       allow list: if existing().status == 'published' ||
         (isSignedIn() && existing().authorId == request.auth.uid) ||
         isBootstrappedAdmin();
       allow create: if isVerifiedUser() &&
         isValidId(offerId) &&
         isValidOffer(incoming()) &&
-        incoming().authorId == request.auth.uid &&
+        (incoming().authorId == request.auth.uid || isBootstrappedAdmin()) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
         isAdmin() &&
-        exists(/databases/$(database)/documents/users/$(incoming().authorId));
-      allow update: if isVerifiedUser() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid));
+      allow update: if isValidOffer(incoming()) &&
+        isVerifiedUser() &&
         isValidId(offerId) &&
-        isValidOffer(incoming()) &&
         incoming().authorId == existing().authorId &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
@@ -562,7 +710,6 @@ service cloud.firestore {
             existing().status != 'archived' &&
             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
           ) ||
-          isBootstrappedAdmin() ||
           isAdmin()
         );
       allow delete: if isVerifiedUser() &&
@@ -570,28 +717,27 @@ service cloud.firestore {
         isAdmin();
     }
 
-    // 5. Medium-Style Editorial Blog Posts (Website Owner-Managed)
+    // 5. Independent Medium-Style Editorial Blog Posts (Website Owner-Managed)
     match /posts/{postId} {
       allow get: if isValidId(postId) && (
         existing().status == 'published' ||
         (isSignedIn() && existing().authorId == request.auth.uid) ||
         isAdmin()
       );
-      // Zero get()/exists() calls in list to prevent O(n) cost explosions
       allow list: if existing().status == 'published' ||
         (isSignedIn() && existing().authorId == request.auth.uid) ||
         isBootstrappedAdmin();
       allow create: if isVerifiedUser() &&
         isValidId(postId) &&
         isValidPost(incoming()) &&
-        incoming().authorId == request.auth.uid &&
+        (incoming().authorId == request.auth.uid || isBootstrappedAdmin()) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
         isAdmin() &&
-        exists(/databases/$(database)/documents/users/$(incoming().authorId));
-      allow update: if isVerifiedUser() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid));
+      allow update: if isValidPost(incoming()) &&
+        isVerifiedUser() &&
         isValidId(postId) &&
-        isValidPost(incoming()) &&
         incoming().authorId == existing().authorId &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
@@ -611,7 +757,6 @@ service cloud.firestore {
             existing().status != 'archived' &&
             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'publishedLabel', 'updatedAt'])
           ) ||
-          isBootstrappedAdmin() ||
           isAdmin()
         );
       allow delete: if isVerifiedUser() &&
@@ -619,77 +764,217 @@ service cloud.firestore {
         isAdmin();
     }
 
-    // 6. Multi-Creator Direct Storefront Products (Verified Creators Publish & Manage Own Listings; Admin Moderates All)
+    // 6. Storefront Products (Active Sellers Manage Own Listings Subject to Admin Approval; Atomic Checkout Stock Decrements)
     match /directProducts/{productId} {
       allow get: if isValidId(productId) && (
         existing().status == 'published' ||
         (isSignedIn() && existing().sellerId == request.auth.uid) ||
         isAdmin()
       );
-      // Zero get()/exists() calls in list to prevent O(n) cost explosions
       allow list: if existing().status == 'published' ||
         (isSignedIn() && existing().sellerId == request.auth.uid) ||
         isBootstrappedAdmin();
       allow create: if isVerifiedUser() &&
         isValidId(productId) &&
         isValidDirectProduct(incoming()) &&
-        incoming().sellerId == request.auth.uid &&
+        (!('digitalFileUrl' in incoming()) || incoming().digitalFileUrl == '') &&
+        (
+          !('hasDigitalAsset' in incoming()) ||
+          incoming().hasDigitalAsset == false ||
+          existsAfter(/databases/$(database)/documents/productSecrets/$(productId))
+        ) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
-        exists(/databases/$(database)/documents/users/$(incoming().sellerId));
-      allow update: if isVerifiedUser() &&
+        (
+          // Branch 1: Active Seller submits own product into pending moderation queue (cannot self-publish)
+          (
+            incoming().sellerId == request.auth.uid &&
+            incoming().status == 'draft' &&
+            'approvalStatus' in incoming() &&
+            incoming().approvalStatus == 'pending' &&
+            isActiveSellerUser(request.auth.uid)
+          ) ||
+          // Branch 2: Website Owner / Admin creates approved or draft store listing
+          (
+            isAdmin() &&
+            exists(/databases/$(database)/documents/users/$(request.auth.uid))
+          )
+        );
+      allow update: if isValidDirectProduct(incoming()) &&
         isValidId(productId) &&
-        isValidDirectProduct(incoming()) &&
         incoming().sellerId == existing().sellerId &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         (
+          !('digitalFileUrl' in incoming().diff(existing()).affectedKeys()) ||
+          incoming().digitalFileUrl == ''
+        ) &&
+        (
+          !('hasDigitalAsset' in incoming()) ||
+          incoming().hasDigitalAsset == false ||
+          exists(/databases/$(database)/documents/productSecrets/$(productId)) ||
+          existsAfter(/databases/$(database)/documents/productSecrets/$(productId))
+        ) &&
+        (
+          // Action 1: Active Seller edits own product content (re-enters draft + pending admin review)
           (
+            isVerifiedUser() &&
             existing().sellerId == request.auth.uid &&
             existing().status != 'archived' &&
+            incoming().status == 'draft' &&
+            'approvalStatus' in incoming() &&
+            incoming().approvalStatus == 'pending' &&
+            isActiveSellerUser(request.auth.uid) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'sellerName', 'title', 'subtitle', 'kind', 'category',
               'sku', 'priceCents', 'compareAtCents', 'stockCount', 'badgeLabel',
               'imageKey', 'videoUrl', 'digitalFileUrl', 'digitalFileName', 'digitalFileType',
+              'hasDigitalAsset', 'approvalStatus', 'moderationNote',
               'summary', 'highlights', 'deliveryNote', 'featured',
               'status', 'updatedAt'
             ])
           ) ||
+          // Action 2: Active Seller updates inventory stock or draft/publish visibility on an already Admin-approved product
           (
+            isVerifiedUser() &&
             existing().sellerId == request.auth.uid &&
             existing().status != 'archived' &&
+            'approvalStatus' in existing() &&
+            existing().approvalStatus == 'approved' &&
+            incoming().status in ['draft', 'published'] &&
+            isActiveSellerUser(request.auth.uid) &&
             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'stockCount', 'updatedAt'])
           ) ||
-          isBootstrappedAdmin() ||
-          isAdmin()
+          // Action 3: Atomic Checkout Physical Inventory Decrement (Guest or Signed-In Buyer)
+          (
+            existing().kind == 'physical' &&
+            existing().status == 'published' &&
+            'lastOrderRef' in incoming() &&
+            isValidId(incoming().lastOrderRef) &&
+            incoming().stockCount < existing().stockCount &&
+            (existing().stockCount - incoming().stockCount) >= 1 &&
+            (existing().stockCount - incoming().stockCount) <= 50 &&
+            incoming().stockCount >= 0 &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['stockCount', 'lastOrderRef', 'updatedAt']) &&
+            !exists(/databases/$(database)/documents/directOrders/$(incoming().lastOrderRef)) &&
+            existsAfter(/databases/$(database)/documents/directOrders/$(incoming().lastOrderRef)) &&
+            productId in getAfter(/databases/$(database)/documents/directOrders/$(incoming().lastOrderRef)).data.productIds
+          ) ||
+          // Action 4: Website Owner / Admin full moderation (approve, reject, edit, archive)
+          (
+            isVerifiedUser() &&
+            isAdmin()
+          )
         );
       allow delete: if isVerifiedUser() &&
         isValidId(productId) &&
-        (existing().sellerId == request.auth.uid || isAdmin());
+        (
+          (existing().sellerId == request.auth.uid && isActiveSellerUser(request.auth.uid)) ||
+          isAdmin()
+        );
     }
 
-    // 7. Marketing Campaigns & Checkout Promo Codes (Website Owner-Managed)
+    // 7. Protected Digital Deliverable Vault (Isolated from Public Storefront; Unlocked Only After Verified Purchase)
+    match /productSecrets/{productId} {
+      allow get: if isValidId(productId) && (
+        (isSignedIn() && existing().sellerId == request.auth.uid) ||
+        isAdmin() ||
+        (
+          'unlockedAt' in existing() &&
+          existing().unlockedAt is timestamp &&
+          request.time < existing().unlockedAt + duration.value(5, 'm')
+        )
+      );
+      allow list: if isBootstrappedAdmin();
+      allow create: if isVerifiedUser() &&
+        isValidId(productId) &&
+        isValidProductSecret(incoming()) &&
+        incoming().productId == productId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (
+          (incoming().sellerId == request.auth.uid && isActiveSellerUser(request.auth.uid)) ||
+          isAdmin()
+        ) &&
+        (
+          exists(/databases/$(database)/documents/directProducts/$(productId)) ||
+          existsAfter(/databases/$(database)/documents/directProducts/$(productId))
+        );
+      allow update: if isValidProductSecret(incoming()) &&
+        isValidId(productId) &&
+        incoming().productId == existing().productId &&
+        incoming().sellerId == existing().sellerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          // Action 1: Active Seller updates own vaulted digital asset
+          (
+            isVerifiedUser() &&
+            existing().sellerId == request.auth.uid &&
+            isActiveSellerUser(request.auth.uid) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'digitalFileUrl', 'digitalFileName', 'digitalFileType', 'updatedAt'
+            ])
+          ) ||
+          // Action 2: Atomic Checkout Digital Delivery Unlock (Guest or Signed-In Buyer creating paid order in same batch)
+          (
+            'lastOrderRef' in incoming() &&
+            isValidId(incoming().lastOrderRef) &&
+            'unlockedAt' in incoming() &&
+            incoming().unlockedAt == request.time &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['lastOrderRef', 'unlockedAt', 'updatedAt']) &&
+            !exists(/databases/$(database)/documents/directOrders/$(incoming().lastOrderRef)) &&
+            existsAfter(/databases/$(database)/documents/directOrders/$(incoming().lastOrderRef)) &&
+            productId in getAfter(/databases/$(database)/documents/directOrders/$(incoming().lastOrderRef)).data.productIds
+          ) ||
+          // Action 3: Verified Signed-In Buyer Re-Download Unlock for Existing Paid Order
+          (
+            isVerifiedUser() &&
+            'lastOrderRef' in incoming() &&
+            isValidId(incoming().lastOrderRef) &&
+            'unlockedAt' in incoming() &&
+            incoming().unlockedAt == request.time &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['lastOrderRef', 'unlockedAt', 'updatedAt']) &&
+            exists(/databases/$(database)/documents/directOrders/$(incoming().lastOrderRef)) &&
+            get(/databases/$(database)/documents/directOrders/$(incoming().lastOrderRef)).data.buyerId == request.auth.uid &&
+            get(/databases/$(database)/documents/directOrders/$(incoming().lastOrderRef)).data.status != 'cancelled' &&
+            productId in get(/databases/$(database)/documents/directOrders/$(incoming().lastOrderRef)).data.productIds
+          ) ||
+          // Action 4: Website Owner / Admin override
+          (
+            isVerifiedUser() &&
+            isAdmin()
+          )
+        );
+      allow delete: if isVerifiedUser() &&
+        isValidId(productId) &&
+        (
+          (existing().sellerId == request.auth.uid && isActiveSellerUser(request.auth.uid)) ||
+          isAdmin()
+        );
+    }
+
+    // 8. Marketing Campaigns & Checkout Promo Codes (Website Owner-Managed)
     match /campaigns/{campaignId} {
       allow get: if isValidId(campaignId) && (
         existing().status == 'published' ||
         (isSignedIn() && existing().authorId == request.auth.uid) ||
         isAdmin()
       );
-      // Zero get()/exists() calls in list to prevent O(n) cost explosions
       allow list: if existing().status == 'published' ||
         (isSignedIn() && existing().authorId == request.auth.uid) ||
         isBootstrappedAdmin();
       allow create: if isVerifiedUser() &&
         isValidId(campaignId) &&
         isValidCampaign(incoming()) &&
-        incoming().authorId == request.auth.uid &&
+        (incoming().authorId == request.auth.uid || isBootstrappedAdmin()) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
         isAdmin() &&
-        exists(/databases/$(database)/documents/users/$(incoming().authorId));
-      allow update: if isVerifiedUser() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid));
+      allow update: if isValidCampaign(incoming()) &&
+        isVerifiedUser() &&
         isValidId(campaignId) &&
-        isValidCampaign(incoming()) &&
         incoming().authorId == existing().authorId &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
@@ -709,7 +994,6 @@ service cloud.firestore {
             existing().status != 'archived' &&
             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
           ) ||
-          isBootstrappedAdmin() ||
           isAdmin()
         );
       allow delete: if isVerifiedUser() &&
@@ -717,14 +1001,13 @@ service cloud.firestore {
         isAdmin();
     }
 
-    // 8. Direct Customer Orders & Creator Payout Ledger (Strictly Private PII: Buyer, Seller, and Website Owner)
+    // 9. Direct Customer Orders, Payment Records & Creator Payout Ledger (Strictly Private PII: Buyer, Seller, and Website Owner)
     match /directOrders/{orderId} {
       allow get: if isVerifiedUser() && isValidId(orderId) && (
         existing().buyerId == request.auth.uid ||
         existing().sellerId == request.auth.uid ||
         isAdmin()
       );
-      // Zero get()/exists() calls in list; enforces strict buyer/seller/admin ownership on PII
       allow list: if isVerifiedUser() && (
         existing().buyerId == request.auth.uid ||
         existing().sellerId == request.auth.uid ||
@@ -749,9 +1032,9 @@ service cloud.firestore {
           !exists(/databases/$(database)/documents/siteConfig/main) ||
           get(/databases/$(database)/documents/siteConfig/main).data.storeCheckoutEnabled == true
         );
-      allow update: if isVerifiedUser() &&
+      allow update: if isValidDirectOrder(incoming()) &&
+        isVerifiedUser() &&
         isValidId(orderId) &&
-        isValidDirectOrder(incoming()) &&
         incoming().buyerId == existing().buyerId &&
         incoming().sellerId == existing().sellerId &&
         incoming().orderNumber == existing().orderNumber &&
@@ -759,13 +1042,15 @@ service cloud.firestore {
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         (
-          // Action 1: Creator/Seller advances fulfillment status and tracking/delivery note prior to terminal state
+          // Action 1: Active Seller advances fulfillment status and tracking/delivery note prior to terminal state
           (
             existing().sellerId == request.auth.uid &&
             !(existing().status in ['fulfilled', 'cancelled']) &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'fulfillmentNote', 'sellerPayoutDetails', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'fulfillmentNote', 'sellerPayoutDetails', 'updatedAt'
+            ])
           ) ||
-          // Action 2: Creator/Seller updates payout account details while payout has not yet been disbursed
+          // Action 2: Seller updates payout account details while payout has not yet been disbursed
           (
             existing().sellerId == request.auth.uid &&
             (!('payoutStatus' in existing()) || existing().payoutStatus != 'paid_out') &&
@@ -778,7 +1063,7 @@ service cloud.firestore {
             incoming().status == 'cancelled' &&
             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
           ) ||
-          // Action 4: Website Owner / Creator Admin override (fulfillment & payout disbursement)
+          // Action 4: Website Owner / Admin override (fulfillment, order management & payout disbursement)
           isAdmin()
         );
       allow delete: if isVerifiedUser() &&
@@ -786,7 +1071,7 @@ service cloud.firestore {
         isAdmin();
     }
 
-    // 9. Global Site Configuration Singleton (/siteConfig/main — Website Owner-Managed)
+    // 10. Global Site Configuration Singleton (/siteConfig/main — Website Owner-Managed)
     match /siteConfig/{configId} {
       allow get: if isValidId(configId) && configId == 'main';
       allow list: if false;
@@ -799,10 +1084,10 @@ service cloud.firestore {
         incoming().updatedAt == request.time &&
         isAdmin() &&
         exists(/databases/$(database)/documents/users/$(incoming().updatedBy));
-      allow update: if isVerifiedUser() &&
+      allow update: if isValidSiteConfig(incoming()) &&
+        isVerifiedUser() &&
         isValidId(configId) &&
         configId == 'main' &&
-        isValidSiteConfig(incoming()) &&
         incoming().updatedBy == request.auth.uid &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
@@ -810,8 +1095,11 @@ service cloud.firestore {
           'siteTagline', 'announcementEnabled', 'announcementText',
           'announcementCtaLabel', 'announcementTargetSection',
           'freeShippingThresholdCents', 'flatShippingCents',
-          'defaultDisclosureText', 'storeCheckoutEnabled', 'showStarterSeeds',
-          'hiddenSeedIds', 'updatedBy', 'updatedAt'
+          'defaultDisclosureText', 'storeCheckoutEnabled',
+          'blogEnabled', 'storeEnabled', 'productAffiliateEnabled', 'serviceAffiliateEnabled',
+          'showStarterSeeds', 'hiddenSeedIds',
+          'aboutMission', 'aboutStory', 'contactEmail', 'contactPhone', 'contactLocation', 'privacyPolicySummary',
+          'updatedBy', 'updatedAt'
         ]) &&
         isAdmin();
       allow delete: if isVerifiedUser() &&
@@ -820,14 +1108,13 @@ service cloud.firestore {
         isAdmin();
     }
 
-    // 10. Website Monitoring & Conversion Telemetry (Append-Only; Website Owner-Monitored)
+    // 11. Website Monitoring & Conversion Telemetry (Append-Only; Website Owner-Monitored)
     match /analyticsEvents/{eventId} {
       allow get: if isVerifiedUser() && isValidId(eventId) && (
         existing().actorId == request.auth.uid ||
         existing().targetOwnerId == request.auth.uid ||
         isAdmin()
       );
-      // Zero get()/exists() calls in list; restricts telemetry stream to target creator or bootstrapped admin
       allow list: if isVerifiedUser() && (
         existing().targetOwnerId == request.auth.uid ||
         isBootstrappedAdmin()
@@ -841,6 +1128,58 @@ service cloud.firestore {
       allow update: if false;
       allow delete: if isVerifiedUser() &&
         isValidId(eventId) &&
+        isAdmin();
+    }
+
+    // 12. Confidential Contact Us Inquiries & Private/Data Issue Reports (Restricted Strictly to Sender & Website Owner)
+    match /contactMessages/{messageId} {
+      allow get: if isVerifiedUser() && isValidId(messageId) && (
+        existing().senderId == request.auth.uid ||
+        isAdmin()
+      );
+      allow list: if isVerifiedUser() && (
+        existing().senderId == request.auth.uid ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isValidId(messageId) &&
+        isValidContactMessage(incoming()) &&
+        incoming().status == 'unread' &&
+        incoming().adminNote == '' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (
+          (
+            isVerifiedUser() &&
+            incoming().senderId == request.auth.uid &&
+            exists(/databases/$(database)/documents/users/$(incoming().senderId))
+          ) ||
+          (!isSignedIn() && isGuestBuyerId(incoming().senderId))
+        );
+      allow update: if isValidContactMessage(incoming()) &&
+        isVerifiedUser() &&
+        isValidId(messageId) &&
+        incoming().senderId == existing().senderId &&
+        incoming().senderName == existing().senderName &&
+        incoming().senderEmail == existing().senderEmail &&
+        incoming().category == existing().category &&
+        incoming().orderNumber == existing().orderNumber &&
+        incoming().subject == existing().subject &&
+        incoming().message == existing().message &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          // Action 1: Verified sender closes own open inquiry/private issue prior to terminal resolved state
+          (
+            existing().senderId == request.auth.uid &&
+            existing().status != 'resolved' &&
+            incoming().status == 'resolved' &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          ) ||
+          // Action 2: Website Owner / Admin updates inquiry status and internal resolution note
+          isAdmin()
+        );
+      allow delete: if isVerifiedUser() &&
+        isValidId(messageId) &&
         isAdmin();
     }
   }

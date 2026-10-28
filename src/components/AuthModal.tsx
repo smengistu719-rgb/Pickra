@@ -24,6 +24,8 @@ interface AuthPanelProps {
   subheading?: string;
   onSuccess?: () => void;
   onClose?: () => void;
+  onOpenPrivacy?: () => void;
+  onOpenContact?: () => void;
 }
 
 export const AuthPanel: React.FC<AuthPanelProps> = ({
@@ -33,6 +35,8 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
   subheading,
   onSuccess,
   onClose,
+  onOpenPrivacy,
+  onOpenContact,
 }) => {
   const {
     authBusy,
@@ -534,12 +538,51 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
             </>
           )}
         </button>
+
+        <div className="pt-3 border-t border-stone-200/80 text-[11px] text-stone-500 leading-relaxed flex flex-wrap items-center justify-between gap-2">
+          <span>
+            Account emails and payout credentials are isolated inside your private vault and never displayed publicly.
+          </span>
+          {(onOpenPrivacy || onOpenContact) && (
+            <span className="inline-flex items-center gap-2 shrink-0">
+              {onOpenPrivacy && (
+                <button
+                  type="button"
+                  onClick={onOpenPrivacy}
+                  className="font-medium text-stone-700 hover:text-[#9A3412] underline underline-offset-2 cursor-pointer"
+                >
+                  Privacy &amp; Private Issues
+                </button>
+              )}
+              {onOpenPrivacy && onOpenContact && (
+                <span aria-hidden="true">·</span>
+              )}
+              {onOpenContact && (
+                <button
+                  type="button"
+                  onClick={onOpenContact}
+                  className="font-medium text-stone-700 hover:text-[#9A3412] underline underline-offset-2 cursor-pointer"
+                >
+                  Contact Support
+                </button>
+              )}
+            </span>
+          )}
+        </div>
       </form>
     </div>
   );
 };
 
-export const AuthModal: React.FC = () => {
+interface AuthModalProps {
+  onOpenPrivacy?: () => void;
+  onOpenContact?: () => void;
+}
+
+export const AuthModal: React.FC<AuthModalProps> = ({
+  onOpenPrivacy,
+  onOpenContact,
+}) => {
   const {
     user,
     isAuthModalOpen,
@@ -567,6 +610,22 @@ export const AuthModal: React.FC = () => {
           defaultAsSeller={authModalSellerPreset}
           onSuccess={closeAuthModal}
           onClose={closeAuthModal}
+          onOpenPrivacy={
+            onOpenPrivacy
+              ? () => {
+                  closeAuthModal();
+                  onOpenPrivacy();
+                }
+              : undefined
+          }
+          onOpenContact={
+            onOpenContact
+              ? () => {
+                  closeAuthModal();
+                  onOpenContact();
+                }
+              : undefined
+          }
         />
       </div>
     </div>

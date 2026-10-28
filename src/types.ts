@@ -2,6 +2,17 @@ export type OfferKind = 'physical' | 'digital' | 'service';
 
 export type DirectProductKind = 'physical' | 'digital';
 
+export type SellerAccountStatus = 'inactive' | 'pending' | 'active' | 'suspended';
+
+export type ProductApprovalStatus = 'pending' | 'approved' | 'rejected';
+
+export type CustomerPaymentMethod =
+  | 'Card'
+  | 'Telebirr'
+  | 'CBEBirr'
+  | 'PayPal'
+  | 'BankTransfer';
+
 export type AffiliatePlatform =
   | 'Amazon'
   | 'Digistore24'
@@ -80,6 +91,12 @@ export const DEFAULT_POST_CATEGORIES: string[] = [
   'Digital Systems',
   'Freelance Talent',
   'Field Guides',
+];
+
+export const DEFAULT_BLOG_SAVED_LINKS: string[] = [
+  'Pickra Editorial Guidelines :: https://pickra.studio/editorial-standards',
+  'Creative Commons License Reference :: https://creativecommons.org/licenses/by/4.0/',
+  'MDN Web Documentation :: https://developer.mozilla.org/',
 ];
 
 export type BlogColorTheme =
@@ -168,14 +185,14 @@ export const BLOG_THEME_PALETTES: Record<BlogColorTheme, BlogThemeConfig> = {
 
 export type CampaignChannel =
   | 'Storefront Banner'
-  | 'Blog Callout'
+  | 'Seasonal Offer'
   | 'Social & Email'
   | 'Flash Bundle'
   | (string & {});
 
 export const DEFAULT_CAMPAIGN_CHANNELS: string[] = [
   'Storefront Banner',
-  'Blog Callout',
+  'Seasonal Offer',
   'Social & Email',
   'Flash Bundle',
 ];
@@ -213,6 +230,7 @@ export type DropdownListKey =
   | 'productPlatforms'
   | 'servicePlatforms'
   | 'blogCategories'
+  | 'blogSavedLinks'
   | 'affiliateCategories'
   | 'digitalFormats'
   | 'campaignChannels';
@@ -223,7 +241,10 @@ export type SectionHeaderKey =
   | 'blogAffiliateShowcase'
   | 'storeMasthead'
   | 'productAffiliateMasthead'
-  | 'serviceAffiliateMasthead';
+  | 'serviceAffiliateMasthead'
+  | 'aboutMasthead'
+  | 'contactMasthead'
+  | 'privacyMasthead';
 
 export interface SectionHeaderCopy {
   kicker: string;
@@ -234,8 +255,8 @@ export interface SectionHeaderCopy {
 export const DEFAULT_SECTION_HEADERS: Record<SectionHeaderKey, SectionHeaderCopy> = {
   blogFeed: {
     kicker: 'Editorial Blog',
-    title: 'Latest Blog Stories',
-    subtitle: 'Long-form essays, field reviews, and embedded creator & affiliate picks.',
+    title: 'Latest Blog Dispatches',
+    subtitle: 'Independent long-form essays, field notes, tutorials, and global dispatches.',
   },
   blogStoreShowcase: {
     kicker: 'Creator Store · Direct Checkout',
@@ -248,10 +269,10 @@ export const DEFAULT_SECTION_HEADERS: Record<SectionHeaderKey, SectionHeaderCopy
     subtitle: 'Vetted physical gear, digital software, and specialist services across global partner networks.',
   },
   storeMasthead: {
-    kicker: 'Creator Store · Physical & Digital Products',
-    title: 'Shop Direct from Creators — No Sign-In Needed to Buy',
+    kicker: 'Pickra Store · Physical & Digital Releases',
+    title: 'Shop Direct from Verified Creators — Guest Checkout Supported',
     subtitle:
-      'Browse and purchase physical goods or instant digital downloads (PDFs, ZIPs, Excel tools, eBooks, HTML templates) directly without an account. Creators can register payout accounts (Bank, Telebirr, Stripe, PayPal) and publish products anytime.',
+      'Browse and purchase physical goods or instant digital downloads (PDFs, ZIPs, Excel tools, eBooks, HTML templates) directly without signing in.',
   },
   productAffiliateMasthead: {
     kicker: 'Product Affiliate · Physical & Digital Offers',
@@ -264,6 +285,24 @@ export const DEFAULT_SECTION_HEADERS: Record<SectionHeaderKey, SectionHeaderCopy
     title: 'Commission Vetted Creative & Technical Specialists',
     subtitle:
       'Handpicked designers, engineers, editors, and consultants across Fiverr, Upwork, Toptal, 99designs, and specialist partner platforms.',
+  },
+  aboutMasthead: {
+    kicker: 'About Pickra · Editorial Publication & Creator Commerce',
+    title: 'Independent Publishing, Direct Creator Goods & Vetted Partner Directories',
+    subtitle:
+      'Pickra unites four distinct modules under a single editorial standard: an independent Blog, a verified multi-creator Store, a curated Product Affiliate directory, and a specialist Service Affiliate directory.',
+  },
+  contactMasthead: {
+    kicker: 'Contact Us & Confidential Support',
+    title: 'Reach the Pickra Desk or Report a Private Issue',
+    subtitle:
+      'Questions about a Store order, digital download, creator seller account, affiliate partnership, or a confidential privacy/data matter? Send a direct encrypted inquiry to the Pickra team.',
+  },
+  privacyMasthead: {
+    kicker: 'Privacy, Data Protection & Private Issues',
+    title: 'How Pickra Protects Buyer, Seller & Reader Privacy',
+    subtitle:
+      'Clear, enforceable privacy commitments backed by split-collection Firestore isolation, vaulted digital assets, masked payment references, and confidential private-issue escalation.',
   },
 };
 
@@ -511,6 +550,10 @@ export interface DirectProduct {
   digitalFileUrl?: string;
   digitalFileName?: string;
   digitalFileType?: string;
+  hasDigitalAsset?: boolean;
+  approvalStatus?: ProductApprovalStatus;
+  moderationNote?: string;
+  lastOrderRef?: string;
   summary: string;
   highlights: string[];
   deliveryNote: string;
@@ -519,6 +562,12 @@ export interface DirectProduct {
   isSeed?: boolean;
   createdAtMs: number;
   updatedAtMs: number;
+}
+
+export interface DeliveredDigitalAsset {
+  url: string;
+  fileName: string;
+  fileType: string;
 }
 
 export interface MarketingCampaign {
@@ -548,6 +597,8 @@ export interface DirectOrder {
   buyerName: string;
   buyerEmail: string;
   shippingAddress: string;
+  paymentMethod?: CustomerPaymentMethod;
+  paymentReference?: string;
   productIds: string[];
   itemsSummary: string;
   itemCount: number;
@@ -564,6 +615,7 @@ export interface DirectOrder {
   payoutNote?: string;
   fulfillmentNote: string;
   status: OrderFulfillmentStatus;
+  deliveredDigitalAssets?: Record<string, DeliveredDigitalAsset>;
   createdAtMs: number;
   updatedAtMs: number;
 }
@@ -578,9 +630,75 @@ export interface SiteConfig {
   flatShippingCents: number;
   defaultDisclosureText: string;
   storeCheckoutEnabled: boolean;
+  blogEnabled: boolean;
+  storeEnabled: boolean;
+  productAffiliateEnabled: boolean;
+  serviceAffiliateEnabled: boolean;
   showStarterSeeds: boolean;
   hiddenSeedIds?: string[];
+  aboutMission?: string;
+  aboutStory?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  contactLocation?: string;
+  privacyPolicySummary?: string;
   updatedBy: string;
+  updatedAtMs: number;
+}
+
+export type ContactIssueCategory =
+  | 'general'
+  | 'order_support'
+  | 'seller_payout'
+  | 'affiliate_partnership'
+  | 'privacy_issue';
+
+export type ContactMessageStatus = 'unread' | 'in_review' | 'resolved';
+
+export const CONTACT_CATEGORY_OPTIONS: {
+  value: ContactIssueCategory;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    value: 'general',
+    label: 'General Editorial or Platform Inquiry',
+    hint: 'Questions about Pickra stories, feedback, or general inquiries.',
+  },
+  {
+    value: 'order_support',
+    label: 'Store Order & Digital Download Support',
+    hint: 'Help with a guest or member order, courier tracking, or digital file access.',
+  },
+  {
+    value: 'seller_payout',
+    label: 'Creator Seller Account & Payouts',
+    hint: 'Questions regarding seller onboarding, product moderation, or payout settlement.',
+  },
+  {
+    value: 'affiliate_partnership',
+    label: 'Product / Service Affiliate & Sponsorships',
+    hint: 'Partner listings, brand collaborations, or affiliate link disclosures.',
+  },
+  {
+    value: 'privacy_issue',
+    label: 'Private Issue, Account Security or Data Request',
+    hint: 'Confidential privacy concerns, personal data deletion/access requests, or sensitive account issues.',
+  },
+];
+
+export interface ContactMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderEmail: string;
+  category: ContactIssueCategory;
+  orderNumber: string;
+  subject: string;
+  message: string;
+  status: ContactMessageStatus;
+  adminNote: string;
+  createdAtMs: number;
   updatedAtMs: number;
 }
 
@@ -614,7 +732,10 @@ export interface UserProfile {
   displayName: string;
   bio: string;
   isSeller?: boolean;
+  sellerStatus?: SellerAccountStatus;
   storeName?: string;
+  createdAtMs?: number;
+  updatedAtMs?: number;
 }
 
 export interface UserPrivateInfo {
@@ -633,5 +754,8 @@ export type ActiveSection =
   | 'store'
   | 'products'
   | 'services'
+  | 'about'
+  | 'contact'
+  | 'privacy'
   | 'write'
   | 'studio';

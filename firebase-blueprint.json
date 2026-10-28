@@ -53,7 +53,14 @@
         },
         "isSeller": {
           "type": "boolean",
-          "description": "Whether this user has activated a Creator Store seller account."
+          "description": "Whether this user has registered and activated a Creator Store seller account."
+        },
+        "sellerStatus": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20,
+          "enum": ["inactive", "pending", "active", "suspended"],
+          "description": "Seller account lifecycle status enforced by backend rules."
         },
         "storeName": {
           "type": "string",
@@ -107,6 +114,7 @@
         },
         "payoutMethod": {
           "type": "string",
+          "maxLength": 24,
           "enum": ["None", "Telebirr", "CBEBirr", "MobileMoney", "BankTransfer", "Stripe", "PayPal", "Wise", "Custom"],
           "description": "Preferred payout rail for Creator Store sales."
         },
@@ -135,7 +143,7 @@
     },
     "AffiliateOffer": {
       "title": "AffiliateOffer",
-      "description": "Curated physical product, digital product, or professional service with outbound affiliate link managed by the website owner.",
+      "description": "Curated physical product, digital product, or professional service with outbound affiliate link managed exclusively by the website owner.",
       "type": "object",
       "properties": {
         "authorId": {
@@ -159,8 +167,9 @@
         },
         "kind": {
           "type": "string",
+          "maxLength": 20,
           "enum": ["physical", "digital", "service"],
-          "description": "Offering classification."
+          "description": "Offering classification separating Product Affiliate (physical/digital) from Service Affiliate (service)."
         },
         "platform": {
           "type": "string",
@@ -172,7 +181,7 @@
           "type": "string",
           "minLength": 2,
           "maxLength": 60,
-          "description": "Editorial department or vertical."
+          "description": "Affiliate vertical or category."
         },
         "priceLabel": {
           "type": "string",
@@ -204,7 +213,7 @@
           "type": "string",
           "minLength": 0,
           "maxLength": 250000,
-          "description": "Optional HTTPS video URL (YouTube, Vimeo, Loom, MP4) or compact data:video upload."
+          "description": "Optional HTTPS video URL or compact data:video upload."
         },
         "summary": {
           "type": "string",
@@ -218,6 +227,7 @@
         },
         "status": {
           "type": "string",
+          "maxLength": 20,
           "enum": ["draft", "published", "archived"],
           "description": "Publication lifecycle status with terminal archived state."
         },
@@ -252,7 +262,7 @@
     },
     "BlogPost": {
       "title": "BlogPost",
-      "description": "Medium-style editorial blog article with uploaded images, links, videos, color themes, and embedded commerce.",
+      "description": "Independent Medium-style editorial blog article with uploaded images, hyperlinks, videos, and color themes.",
       "type": "object",
       "properties": {
         "authorId": {
@@ -307,22 +317,23 @@
           "type": "string",
           "minLength": 20,
           "maxLength": 350000,
-          "description": "Long-form rich markdown supporting uploaded images, links, videos, color callouts, [[offer:ID]], and [[product:ID]]."
+          "description": "Long-form rich markdown supporting uploaded images, hyperlinks, videos, and color callouts."
         },
         "theme": {
           "type": "string",
+          "maxLength": 20,
           "enum": ["classic", "midnight", "sage", "terracotta", "slate"],
           "description": "Article reading surface color theme."
         },
         "attachedOfferIds": {
           "type": "array",
-          "description": "Bounded list (max 8) of attached AffiliateOffer IDs."
+          "description": "Legacy bounded array (kept empty for module independence, max 8)."
         },
         "disclosureText": {
           "type": "string",
           "minLength": 10,
           "maxLength": 400,
-          "description": "Explicit affiliate commission disclosure shown on the article."
+          "description": "Editorial note or standard publication footer text."
         },
         "featured": {
           "type": "boolean",
@@ -330,6 +341,7 @@
         },
         "status": {
           "type": "string",
+          "maxLength": 20,
           "enum": ["draft", "published", "archived"],
           "description": "Publication lifecycle status with terminal archived state."
         },
@@ -371,7 +383,7 @@
     },
     "DirectProduct": {
       "title": "DirectProduct",
-      "description": "Creator-published physical or digital product sold directly on the Pickra multi-creator store.",
+      "description": "Seller-published physical or digital product sold directly on the Pickra Store with admin approval moderation and inventory tracking.",
       "type": "object",
       "properties": {
         "sellerId": {
@@ -379,7 +391,7 @@
           "minLength": 1,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$",
-          "description": "Creator seller Firebase Auth UID."
+          "description": "Active creator seller Firebase Auth UID."
         },
         "sellerName": {
           "type": "string",
@@ -401,6 +413,7 @@
         },
         "kind": {
           "type": "string",
+          "maxLength": 20,
           "enum": ["physical", "digital"],
           "description": "Direct product fulfillment format."
         },
@@ -433,7 +446,7 @@
           "type": "string",
           "minLength": 0,
           "maxLength": 40,
-          "description": "Optional editorial marketing kicker."
+          "description": "Optional marketing kicker."
         },
         "imageKey": {
           "type": "string",
@@ -451,19 +464,42 @@
           "type": "string",
           "minLength": 0,
           "maxLength": 560000,
-          "description": "Optional digital deliverable download link (HTTPS) or uploaded PDF/ZIP/Excel/eBook/HTML/Tool data URL."
+          "description": "Kept empty on public listing documents; actual digital payload is vaulted in /productSecrets/{productId}."
         },
         "digitalFileName": {
           "type": "string",
           "minLength": 0,
           "maxLength": 140,
-          "description": "Original filename of uploaded digital deliverable."
+          "description": "Public filename label of the digital deliverable."
         },
         "digitalFileType": {
           "type": "string",
           "minLength": 0,
           "maxLength": 60,
           "description": "Digital deliverable format label (e.g., PDF, ZIP, Excel, HTML, eBook)."
+        },
+        "hasDigitalAsset": {
+          "type": "boolean",
+          "description": "Whether a protected digital file is stored in /productSecrets/{productId}."
+        },
+        "approvalStatus": {
+          "type": "string",
+          "maxLength": 20,
+          "enum": ["pending", "approved", "rejected"],
+          "description": "Admin moderation review status required before seller publication."
+        },
+        "moderationNote": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 300,
+          "description": "Optional admin review or rejection note visible to the seller."
+        },
+        "lastOrderRef": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]*$",
+          "description": "Order ID reference used for atomic checkout stock decrements."
         },
         "summary": {
           "type": "string",
@@ -487,6 +523,7 @@
         },
         "status": {
           "type": "string",
+          "maxLength": 20,
           "enum": ["draft", "published", "archived"],
           "description": "Storefront listing status with terminal archived state."
         },
@@ -519,6 +556,76 @@
         "deliveryNote",
         "featured",
         "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ProductSecret": {
+      "title": "ProductSecret",
+      "description": "Protected digital product file vault isolated from public storefront browsing and unlocked atomically only upon verified order purchase.",
+      "type": "object",
+      "properties": {
+        "productId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Parent DirectProduct document ID."
+        },
+        "sellerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Active creator seller Firebase Auth UID."
+        },
+        "digitalFileUrl": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 560000,
+          "description": "Protected HTTPS download URL or base64 data URI for PDF, ZIP, Excel, eBook, HTML, or digital tool."
+        },
+        "digitalFileName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 140,
+          "description": "Protected deliverable filename."
+        },
+        "digitalFileType": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 60,
+          "description": "Protected deliverable format label."
+        },
+        "lastOrderRef": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]*$",
+          "description": "Verified order ID that unlocked post-purchase digital delivery."
+        },
+        "unlockedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Short-lived server timestamp window unlocked atomically during order purchase."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "productId",
+        "sellerId",
+        "digitalFileUrl",
+        "digitalFileName",
+        "digitalFileType",
         "createdAt",
         "updatedAt"
       ]
@@ -588,6 +695,7 @@
         },
         "status": {
           "type": "string",
+          "maxLength": 20,
           "enum": ["draft", "published", "archived"],
           "description": "Campaign lifecycle status with terminal archived state."
         },
@@ -620,7 +728,7 @@
     },
     "DirectOrder": {
       "title": "DirectOrder",
-      "description": "Private customer order and creator seller payout record for direct physical or digital products purchased on Pickra.",
+      "description": "Private customer order, masked payment record, and creator seller payout record for direct physical or digital products purchased on Pickra.",
       "type": "object",
       "properties": {
         "buyerId": {
@@ -628,7 +736,7 @@
           "minLength": 1,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$",
-          "description": "Verified customer Firebase Auth UID."
+          "description": "Verified customer Firebase Auth UID or guest_* checkout session ID."
         },
         "sellerId": {
           "type": "string",
@@ -669,6 +777,19 @@
           "maxLength": 300,
           "description": "Physical shipping address (empty for digital-only orders)."
         },
+        "paymentMethod": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 24,
+          "enum": ["Card", "Telebirr", "CBEBirr", "PayPal", "BankTransfer"],
+          "description": "Customer checkout payment method."
+        },
+        "paymentReference": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 80,
+          "description": "Masked non-sensitive payment confirmation reference."
+        },
         "productIds": {
           "type": "array",
           "description": "Bounded list (1 to 8) of purchased DirectProduct IDs."
@@ -685,6 +806,7 @@
         },
         "fulfillmentType": {
           "type": "string",
+          "maxLength": 20,
           "enum": ["physical", "digital", "mixed"],
           "description": "Fulfillment mode required for the order."
         },
@@ -720,6 +842,7 @@
         },
         "payoutStatus": {
           "type": "string",
+          "maxLength": 24,
           "enum": ["pending", "paid_out", "not_applicable"],
           "description": "Creator seller payout settlement status."
         },
@@ -743,6 +866,7 @@
         },
         "status": {
           "type": "string",
+          "maxLength": 20,
           "enum": ["paid", "processing", "shipped", "fulfilled", "cancelled"],
           "description": "Order fulfillment status with terminal fulfilled and cancelled states."
         },
@@ -781,7 +905,7 @@
     },
     "SiteConfig": {
       "title": "SiteConfig",
-      "description": "Global site-wide publishing, storefront shipping, announcement ribbon, and catalog configuration managed exclusively by the website owner.",
+      "description": "Global site-wide publishing, module visibility controls, storefront shipping, announcement ribbon, and catalog configuration managed exclusively by the website owner.",
       "type": "object",
       "properties": {
         "siteTagline": {
@@ -808,6 +932,7 @@
         },
         "announcementTargetSection": {
           "type": "string",
+          "maxLength": 20,
           "enum": ["store", "journal", "blog", "products", "services"],
           "description": "Destination section when announcement CTA is clicked."
         },
@@ -829,6 +954,22 @@
           "type": "boolean",
           "description": "Master switch controlling whether Direct Store checkout accepts new orders."
         },
+        "blogEnabled": {
+          "type": "boolean",
+          "description": "Master switch controlling public visibility of the Blog module."
+        },
+        "storeEnabled": {
+          "type": "boolean",
+          "description": "Master switch controlling public visibility of the Store module."
+        },
+        "productAffiliateEnabled": {
+          "type": "boolean",
+          "description": "Master switch controlling public visibility of the Product Affiliate module."
+        },
+        "serviceAffiliateEnabled": {
+          "type": "boolean",
+          "description": "Master switch controlling public visibility of the Service Affiliate module."
+        },
         "showStarterSeeds": {
           "type": "boolean",
           "description": "Whether starter showcase dispatches, direct products, and affiliate picks are shown alongside custom Firestore records."
@@ -836,6 +977,42 @@
         "hiddenSeedIds": {
           "type": "array",
           "description": "Bounded list (max 50) of starter seed IDs deleted or replaced by the website owner."
+        },
+        "aboutMission": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 2500,
+          "description": "Custom About Us mission statement managed by the website owner."
+        },
+        "aboutStory": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 4000,
+          "description": "Custom About Us editorial story and platform architecture overview."
+        },
+        "contactEmail": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 254,
+          "description": "Official support and inquiries email displayed on Contact Us."
+        },
+        "contactPhone": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 80,
+          "description": "Optional support phone, Telegram, or WhatsApp contact channel."
+        },
+        "contactLocation": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 160,
+          "description": "Publication desk location and operating hours."
+        },
+        "privacyPolicySummary": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 5000,
+          "description": "Owner-customizable Privacy, Data Protection & Private Issues policy summary."
         },
         "updatedBy": {
           "type": "string",
@@ -885,6 +1062,7 @@
         },
         "actorScope": {
           "type": "string",
+          "maxLength": 20,
           "enum": ["customer", "creator"],
           "description": "Non-PII actor role classification."
         },
@@ -897,11 +1075,13 @@
         },
         "eventType": {
           "type": "string",
+          "maxLength": 30,
           "enum": ["post_view", "affiliate_click", "product_view", "bag_add", "promo_apply", "order_placed"],
           "description": "Type of monitored website interaction."
         },
         "channel": {
           "type": "string",
+          "maxLength": 20,
           "enum": ["journal", "blog", "store", "affiliate", "services", "campaigns"],
           "description": "Website vertical where the interaction occurred."
         },
@@ -946,6 +1126,92 @@
         "valueCents",
         "createdAt"
       ]
+    },
+    "ContactMessage": {
+      "title": "ContactMessage",
+      "description": "Confidential Contact Us inquiry or Private/Data Issue report submitted by a guest visitor or signed-in member and restricted strictly to the sender and website owner.",
+      "type": "object",
+      "properties": {
+        "senderId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Verified sender Firebase Auth UID or guest_* session identifier."
+        },
+        "senderName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80,
+          "description": "Sender full name."
+        },
+        "senderEmail": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 254,
+          "description": "Sender reply-to email address."
+        },
+        "category": {
+          "type": "string",
+          "maxLength": 32,
+          "enum": ["general", "order_support", "seller_payout", "affiliate_partnership", "privacy_issue"],
+          "description": "Inquiry or private issue classification."
+        },
+        "orderNumber": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 40,
+          "description": "Optional related Pickra order number (e.g., PKR-...)."
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 140,
+          "description": "Concise inquiry or private issue subject line."
+        },
+        "message": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 3000,
+          "description": "Detailed confidential message or private data/account request."
+        },
+        "status": {
+          "type": "string",
+          "maxLength": 20,
+          "enum": ["unread", "in_review", "resolved"],
+          "description": "Inquiry resolution lifecycle status with terminal resolved state."
+        },
+        "adminNote": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 500,
+          "description": "Internal website owner resolution note."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "senderId",
+        "senderName",
+        "senderEmail",
+        "category",
+        "orderNumber",
+        "subject",
+        "message",
+        "status",
+        "adminNote",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -967,11 +1233,15 @@
     },
     "/posts/{postId}": {
       "schema": { "$ref": "#/entities/BlogPost" },
-      "description": "Medium-style editorial blog posts managed by the website owner."
+      "description": "Independent Medium-style editorial blog posts managed by the website owner."
     },
     "/directProducts/{productId}": {
       "schema": { "$ref": "#/entities/DirectProduct" },
-      "description": "Multi-creator physical and digital products sold directly on Pickra."
+      "description": "Multi-creator physical and digital products sold directly on Pickra Store with admin approval moderation."
+    },
+    "/productSecrets/{productId}": {
+      "schema": { "$ref": "#/entities/ProductSecret" },
+      "description": "Vaulted digital deliverables isolated from public storefront queries and unlocked only upon verified purchase."
     },
     "/campaigns/{campaignId}": {
       "schema": { "$ref": "#/entities/MarketingCampaign" },
@@ -979,7 +1249,7 @@
     },
     "/directOrders/{orderId}": {
       "schema": { "$ref": "#/entities/DirectOrder" },
-      "description": "Private customer purchase orders and creator seller payout records restricted to buyer, seller, and website owner."
+      "description": "Private customer purchase orders, masked payment confirmations, and creator seller payout records restricted to buyer, seller, and website owner."
     },
     "/siteConfig/{configId}": {
       "schema": { "$ref": "#/entities/SiteConfig" },
@@ -988,6 +1258,10 @@
     "/analyticsEvents/{eventId}": {
       "schema": { "$ref": "#/entities/AnalyticsEvent" },
       "description": "Immutable non-PII website monitoring and conversion telemetry readable by the website owner."
+    },
+    "/contactMessages/{messageId}": {
+      "schema": { "$ref": "#/entities/ContactMessage" },
+      "description": "Confidential Contact Us inquiries and Private/Data Issue reports restricted strictly to the sender and website owner."
     }
   }
 }

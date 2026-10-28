@@ -201,6 +201,24 @@ export interface UploadedDigitalAsset {
   fileTypeLabel: string;
 }
 
+const BLOCKED_EXECUTABLE_EXTENSIONS = new Set([
+  'exe',
+  'msi',
+  'bat',
+  'cmd',
+  'sh',
+  'ps1',
+  'apk',
+  'dmg',
+  'com',
+  'scr',
+  'vbs',
+  'jar',
+  'js',
+  'ts',
+  'py',
+]);
+
 const DIGITAL_EXT_LABELS: Record<string, string> = {
   pdf: 'PDF Document',
   zip: 'ZIP Archive',
@@ -212,9 +230,6 @@ const DIGITAL_EXT_LABELS: Record<string, string> = {
   html: 'HTML Interactive Tool',
   htm: 'HTML File',
   json: 'Digital Tool (JSON)',
-  js: 'JavaScript Tool',
-  ts: 'TypeScript Tool',
-  py: 'Python Script',
   txt: 'Text Guide',
   md: 'Markdown Guide',
   xml: 'XML Template',
@@ -232,11 +247,18 @@ export async function readDigitalProductFileToDataUrl(
 ): Promise<UploadedDigitalAsset> {
   const cleanName = file.name.trim().slice(0, VALIDATION_LIMITS.DIGITAL_FILE_NAME_MAX) || 'digital-product';
   const ext = (cleanName.split('.').pop() || '').toLowerCase();
+
+  if (BLOCKED_EXECUTABLE_EXTENSIONS.has(ext)) {
+    throw new Error(
+      `Executable or script files (.${ext}) are blocked for security. Package deliverables as a PDF, ZIP archive, Excel workbook, eBook, HTML template, or Office document.`
+    );
+  }
+
   const fileTypeLabel = DIGITAL_EXT_LABELS[ext] || (ext ? `${ext.toUpperCase()} Digital File` : 'Digital Download');
 
   if (!ext || !Object.prototype.hasOwnProperty.call(DIGITAL_EXT_LABELS, ext)) {
     throw new Error(
-      'Supported digital files: PDF, ZIP, Excel (.xlsx/.xls/.csv), eBooks (.epub/.mobi), HTML (.html/.htm), Word/PPTX, and Digital Tools (.json/.js/.py/.txt/.md/.svg).'
+      'Supported digital files: PDF, ZIP, Excel (.xlsx/.xls/.csv), eBooks (.epub/.mobi), HTML (.html/.htm), Word/PPTX, and Digital Assets (.json/.txt/.md/.xml/.svg).'
     );
   }
 

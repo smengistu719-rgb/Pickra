@@ -13,8 +13,6 @@ import {
   StoryBlock,
 } from '../utils/editorialBlocks';
 import { ResilientImage } from './ResilientImage';
-import { OfferCard } from './OfferCard';
-import { DirectProductCard } from './DirectProductCard';
 
 export const CALLOUT_STYLES: Record<
   CalloutColorTheme,
@@ -335,14 +333,12 @@ export const EditorialCalloutBox: React.FC<{
 
 export const StoryBlocksRenderer: React.FC<{
   blocks: StoryBlock[];
-  offersMap: Record<string, AffiliateOffer>;
+  offersMap?: Record<string, AffiliateOffer>;
   directProductsMap?: Record<string, DirectProduct>;
   enableDropCap?: boolean;
   articleTheme?: BlogColorTheme;
 }> = ({
   blocks,
-  offersMap,
-  directProductsMap = {},
   enableDropCap = true,
   articleTheme = 'classic',
 }) => {
@@ -440,29 +436,9 @@ export const StoryBlocksRenderer: React.FC<{
               />
             );
 
-          case 'offer': {
-            const found = offersMap[block.offerId];
-            if (!found) return null;
-            return (
-              <OfferCard
-                key={`${block.offerId}-${index}`}
-                offer={found}
-                variant="inline"
-              />
-            );
-          }
-
-          case 'product': {
-            const foundProd = directProductsMap[block.productId];
-            if (!foundProd) return null;
-            return (
-              <DirectProductCard
-                key={`${block.productId}-${index}`}
-                product={foundProd}
-                variant="inline"
-              />
-            );
-          }
+          case 'offer':
+          case 'product':
+            return null;
 
           case 'paragraph': {
             const isOpening = enableDropCap && !firstParagraphRendered;

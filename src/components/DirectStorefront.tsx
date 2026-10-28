@@ -61,6 +61,8 @@ interface DirectStorefrontProps {
   initialSubView?: StoreSubView;
   initialEditProduct?: DirectProduct | null;
   onConsumeInitialEditProduct?: () => void;
+  onOpenPrivacy?: () => void;
+  onOpenContactSupport?: () => void;
 }
 
 const DIGITAL_FORMAT_PRESETS = [
@@ -92,10 +94,14 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
   initialSubView = 'catalog',
   initialEditProduct = null,
   onConsumeInitialEditProduct,
+  onOpenPrivacy,
+  onOpenContactSupport,
 }) => {
   const {
     user,
     isCreatorAdmin,
+    isActiveSeller,
+    isSellerSuspended,
     profile,
     privateInfo,
     publishedDirectProducts,
@@ -104,6 +110,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
     publishedCampaigns,
     myPurchases,
     mySellerOrders,
+    deliveredDigitalCache,
     cartCount,
     cartTotalCents,
     appliedCampaign,
@@ -118,6 +125,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
     updateDirectProductStatus,
     deleteDirectProduct,
     updateDirectProductImage,
+    fetchProtectedDigitalSecret,
     saveCampaign,
     deleteCampaign,
     dropdownOptions,
@@ -334,19 +342,22 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
 
   function canManageProduct(product: DirectProduct): boolean {
     if (isCreatorAdmin) return true;
-    if (
-      product.isSeed ||
-      product.id.startsWith('seed_') ||
-      product.id.startsWith('local_') ||
-      product.sellerId === 'editorial_desk'
-    ) {
-      return true;
-    }
-    if (!user) return true;
+    if (!user || !isActiveSeller || isSellerSuspended) return false;
+    if (product.isSeed || product.id.startsWith('seed_')) return false;
     return product.sellerId === user.uid;
   }
 
   function openNewProductModal() {
+    if (!isCreatorAdmin && !isActiveSeller) {
+      setSubView('sell');
+      setFeedback({
+        tone: 'err',
+        text: isSellerSuspended
+          ? 'Your seller account is currently suspended by the administrator.'
+          : 'Please register and activate your Seller Account & Payout Details before adding products.',
+      });
+      return;
+    }
     setEditingProductId(undefined);
     setProdTitle('');
     setProdSubtitle('');
@@ -373,13 +384,20 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
   }
 
   useEffect(() => {
-    if (initialEditProduct) {
+    if (initialEditProduct && canManageProduct(initialEditProduct)) {
       openEditProductModal(initialEditProduct);
       onConsumeInitialEditProduct?.();
     }
   }, [initialEditProduct]);
 
   function openEditProductModal(prod: DirectProduct) {
+    if (!canManageProduct(prod)) {
+      setFeedback({
+        tone: 'err',
+        text: 'Only an active seller who owns this listing or the website admin can edit it.',
+      });
+      return;
+    }
     setEditingProductId(prod.id);
     setProdTitle(prod.title);
     setProdSubtitle(prod.subtitle);
@@ -394,15 +412,31 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
     setProdBadge(prod.badgeLabel);
     setProdImageKey(prod.imageKey || 'edition');
     setProdVideoUrl(prod.videoUrl || '');
-    setProdDigitalFileUrl(prod.digitalFileUrl || '');
-    setProdDigitalFileName(prod.digitalFileName || '');
-    setProdDigitalFileType(prod.digitalFileType || '');
+    const cachedSecret = deliveredDigitalCache[prod.id];
+    setProdDigitalFileUrl(prod.digitalFileUrl || cachedSecret?.url || '');
+    setProdDigitalFileName(prod.digitalFileName || cachedSecret?.fileName || '');
+    setProdDigitalFileType(prod.digitalFileType || cachedSecret?.fileType || '');
     setProdDeliveryNote(prod.deliveryNote);
     setProdSummary(prod.summary);
     setProdHighlightsText(prod.highlights.join('\n'));
     setProdFeatured(prod.featured);
     setProdStatus(prod.status);
     setIsProductModalOpen(true);
+
+    if (
+      prod.kind === 'digital' &&
+      !prod.digitalFileUrl &&
+      !cachedSecret?.url &&
+      prod.hasDigitalAsset
+    ) {
+      void fetchProtectedDigitalSecret(prod.id).then((secret) => {
+        if (secret?.url) {
+          setProdDigitalFileUrl(secret.url);
+          if (secret.fileName) setProdDigitalFileName(secret.fileName);
+          if (secret.fileType) setProdDigitalFileType(secret.fileType);
+        }
+      });
+    }
   }
 
   async function handleProdVideoFileUpload(
@@ -511,9 +545,13 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
       setIsProductModalOpen(false);
       setFeedback({
         tone: 'ok',
-        text: editingProductId
-          ? 'Store product updated.'
-          : 'Product published to the Pickra Store.',
+        text: isCreatorAdmin
+          ? editingProductId
+            ? 'Store product updated and live.'
+            : 'Product published to the Pickra Store.'
+          : editingProductId
+          ? 'Product updated and submitted for admin review before public listing.'
+          : 'Product saved and submitted for admin approval before appearing in the public Store.',
       });
     } catch (err) {
       setFeedback({
@@ -832,6 +870,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
           copy={sectionHeaders.storeMasthead}
           onSave={(nextCopy) => saveSectionHeader('storeMasthead', nextCopy)}
           onReset={() => resetSectionHeader('storeMasthead')}
+          canEdit={isCreatorAdmin}
           level="h1"
           className="max-w-3xl"
         />
@@ -851,18 +890,6 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => setSubView('sell')}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                subView === 'sell'
-                  ? 'bg-white text-stone-900 shadow-xs'
-                  : 'text-stone-600 hover:text-stone-900'
-              }`}
-            >
-              My Dashboard &amp; Sell
-              {user ? ` (${mySellerProducts.length})` : ''}
-            </button>
-            <button
-              type="button"
               onClick={() => setSubView('purchases')}
               className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                 subView === 'purchases'
@@ -872,16 +899,29 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
             >
               My Purchases ({myPurchases.length})
             </button>
+            <button
+              type="button"
+              onClick={() => setSubView('sell')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                subView === 'sell'
+                  ? 'bg-white text-stone-900 shadow-xs'
+                  : 'text-stone-600 hover:text-stone-900'
+              }`}
+            >
+              {isCreatorAdmin || isActiveSeller
+                ? `Seller Studio (${mySellerProducts.length})`
+                : 'Sell on Pickra'}
+            </button>
           </div>
 
           {!user ? (
             <button
               type="button"
-              onClick={() => openAuthModal('signup', true)}
+              onClick={() => openAuthModal('signin', false)}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-stone-900 bg-white border border-stone-300 hover:bg-[#F3EFE8] rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
             >
               <UserPlus className="w-3.5 h-3.5 text-[#9A3412]" />
-              <span>Create Account / Sign In</span>
+              <span>Sign In / Register</span>
             </button>
           ) : (
             <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-stone-200 rounded-lg text-xs text-stone-700">
@@ -905,14 +945,16 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
             </div>
           )}
 
-          <button
-            type="button"
-            onClick={openNewProductModal}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Add Product</span>
-          </button>
+          {(isCreatorAdmin || isActiveSeller) && (
+            <button
+              type="button"
+              onClick={openNewProductModal}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Product</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -1037,6 +1079,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                     )}
                   </button>
 
+                  {isCreatorAdmin && (
                     <div className="inline-flex items-center gap-2 pl-2 border-l border-stone-300 text-xs">
                       <button
                         type="button"
@@ -1087,6 +1130,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                         </button>
                       )}
                     </div>
+                  )}
                 </div>
               </div>
 
@@ -1113,7 +1157,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                 </div>
               )}
             </div>
-          ) : (
+          ) : isCreatorAdmin ? (
             <div className="mt-6 flex justify-end">
               <button
                 type="button"
@@ -1124,26 +1168,26 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                 <span>Add Promotional Campaign</span>
               </button>
             </div>
-          )}
+          ) : null}
 
-          {/* Creator Marketplace Callout Bar */}
-          <div className="mt-6 px-5 py-4 bg-white border border-stone-200/90 rounded-xl flex flex-wrap items-center justify-between gap-4">
+          {/* Guest Shopping Promise + Optional Seller Program Link */}
+          <div className="mt-6 px-5 py-3.5 bg-white border border-stone-200/90 rounded-xl flex flex-wrap items-center justify-between gap-4">
             <div className="text-xs text-stone-600">
               <strong className="text-stone-900">
-                Are you an independent creator or maker?
+                Guest Shopping Enabled:
               </strong>{' '}
-              Create a free Pickra Seller Account, publish physical or digital
-              products, and earn 90% net payouts on every sale.
+              Browse product specifications, add items to your bag, and check
+              out directly without creating an account.
             </div>
-            <button
-              type="button"
-              onClick={() => setSubView('sell')}
-              className="text-xs font-semibold text-[#9A3412] hover:text-stone-900 underline underline-offset-4 cursor-pointer whitespace-nowrap shrink-0"
-            >
-              {profile?.isSeller
-                ? 'Open Your Seller Dashboard & Payouts →'
-                : 'Start Selling on Pickra →'}
-            </button>
+            {(isActiveSeller || isCreatorAdmin) && (
+              <button
+                type="button"
+                onClick={() => setSubView('sell')}
+                className="text-xs font-semibold text-[#9A3412] hover:text-stone-900 underline underline-offset-4 cursor-pointer whitespace-nowrap shrink-0"
+              >
+                Open Your Seller Studio &amp; Payouts →
+              </button>
+            )}
           </div>
 
           {/* Filter & Search Bar */}
@@ -1178,6 +1222,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                 options={storeCategoryOptions}
                 prefixOptions={[{ value: 'All', label: 'All Collections' }]}
                 onChange={setCategoryFilter}
+                canEdit={isCreatorAdmin}
                 onAddOption={(opt) => addDropdownOption('storeCategories', opt)}
                 onRenameOption={(oldOpt, nextOpt) => {
                   renameDropdownOption('storeCategories', oldOpt, nextOpt);
@@ -1342,6 +1387,17 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
             </div>
           ) : (
             <>
+              {isSellerSuspended && !isCreatorAdmin && (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-xs text-red-900 leading-relaxed">
+                  <strong className="font-semibold block mb-0.5">
+                    Seller Account Suspended
+                  </strong>
+                  Your seller privileges have been paused by the website
+                  administrator. Adding, editing, or publishing Store products
+                  is currently disabled.
+                </div>
+              )}
+
               <div className="px-5 py-3.5 bg-white border border-stone-200/90 rounded-xl flex flex-wrap items-center justify-between gap-3">
                 <div className="text-xs text-stone-600">
                   Signed in as{' '}
@@ -1354,16 +1410,36 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                       ({user.email})
                     </span>
                   ) : null}
+                  {' · '}
+                  <span
+                    className={`font-semibold ${
+                      isCreatorAdmin || isActiveSeller
+                        ? 'text-emerald-800'
+                        : isSellerSuspended
+                        ? 'text-red-700'
+                        : 'text-amber-800'
+                    }`}
+                  >
+                    {isCreatorAdmin
+                      ? 'Owner Admin'
+                      : isActiveSeller
+                      ? 'Active Seller Account'
+                      : isSellerSuspended
+                      ? 'Suspended Seller'
+                      : 'Buyer Account (Activate Seller Profile Below to Sell)'}
+                  </span>
                 </div>
                 <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={openNewProductModal}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg cursor-pointer whitespace-nowrap"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Publish New Product</span>
-                  </button>
+                  {(isCreatorAdmin || isActiveSeller) && (
+                    <button
+                      type="button"
+                      onClick={openNewProductModal}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg cursor-pointer whitespace-nowrap"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Publish New Product</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => void signOutUser()}
@@ -1689,6 +1765,37 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                         </div>
                       </form>
                     )}
+
+                    <div className="pt-3 border-t border-stone-200/80 text-[11px] text-stone-500 flex flex-wrap items-center justify-between gap-2">
+                      <span>
+                        Payout accounts are stored inside your private seller vault and never shown publicly.
+                      </span>
+                      {(onOpenPrivacy || onOpenContactSupport) && (
+                        <span className="inline-flex items-center gap-2 shrink-0">
+                          {onOpenPrivacy && (
+                            <button
+                              type="button"
+                              onClick={onOpenPrivacy}
+                              className="font-medium text-stone-700 hover:text-[#9A3412] underline underline-offset-2 cursor-pointer"
+                            >
+                              Privacy Policy
+                            </button>
+                          )}
+                          {onOpenPrivacy && onOpenContactSupport && (
+                            <span aria-hidden="true">·</span>
+                          )}
+                          {onOpenContactSupport && (
+                            <button
+                              type="button"
+                              onClick={onOpenContactSupport}
+                              className="font-medium text-stone-700 hover:text-[#9A3412] underline underline-offset-2 cursor-pointer"
+                            >
+                              Report Payout Issue
+                            </button>
+                          )}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {/* Storefront Profile Form */}
@@ -1802,30 +1909,46 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                   <div className="p-6 border-b border-stone-200/80 flex flex-wrap items-center justify-between gap-4">
                     <div>
                       <h2 className="font-serif text-lg font-medium text-stone-900">
-                        Your Published Store Products ({mySellerProducts.length}
-                        )
+                        Your Seller Products ({mySellerProducts.length})
                       </h2>
                       <p className="text-xs text-stone-500">
-                        Add, edit, adjust stock, or remove your physical and
-                        digital products at any time.
+                        {isCreatorAdmin || isActiveSeller
+                          ? 'Manage your physical inventory and digital downloads. Seller submissions are reviewed by the Pickra admin before appearing in the public Store.'
+                          : 'Complete and activate your Seller Storefront & Payout Account on the left before adding or managing Store products.'}
                       </p>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={openNewProductModal}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Publish New Product</span>
-                    </button>
+                    {(isCreatorAdmin || isActiveSeller) && (
+                      <button
+                        type="button"
+                        onClick={openNewProductModal}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Publish New Product</span>
+                      </button>
+                    )}
                   </div>
 
-                  {mySellerProducts.length === 0 ? (
+                  {!isCreatorAdmin && !isActiveSeller ? (
+                    <div className="py-12 px-6 text-center space-y-2.5 bg-[#FBF9F5]">
+                      <Store className="w-6 h-6 text-[#9A3412] mx-auto" />
+                      <h3 className="font-serif text-base font-medium text-stone-900">
+                        {isSellerSuspended
+                          ? 'Seller Privileges Suspended'
+                          : 'Seller Account Activation Required'}
+                      </h3>
+                      <p className="text-xs text-stone-600 max-w-md mx-auto leading-relaxed">
+                        {isSellerSuspended
+                          ? 'Your seller account has been suspended by the site administrator. Contact the website owner for review.'
+                          : 'To protect buyers and ensure reliable payouts, please add your payout account and click "Activate Creator Storefront" in the Storefront Identity panel on the left before listing physical or digital products.'}
+                      </p>
+                    </div>
+                  ) : mySellerProducts.length === 0 ? (
                     <div className="py-12 px-6 text-center space-y-3">
                       <p className="text-sm text-stone-600">
-                        You haven&apos;t published any products under your
-                        creator account yet.
+                        You haven&apos;t added any products under your seller
+                        account yet.
                       </p>
                       <button
                         type="button"
@@ -1833,7 +1956,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                         className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-lg cursor-pointer"
                       >
                         <Plus className="w-3.5 h-3.5" />
-                        <span>Publish Your First Product</span>
+                        <span>Add Your First Product</span>
                       </button>
                     </div>
                   ) : (
@@ -1843,6 +1966,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                           stockDrafts[prod.id] !== undefined
                             ? stockDrafts[prod.id]
                             : String(prod.stockCount);
+                        const approval = prod.approvalStatus || 'approved';
                         return (
                           <div
                             key={prod.id}
@@ -1863,10 +1987,31 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                                 <span className="capitalize text-[#9A3412]">
                                   {prod.status}
                                 </span>
+                                <span aria-hidden="true">·</span>
+                                <span
+                                  className={
+                                    approval === 'approved'
+                                      ? 'font-semibold text-emerald-800'
+                                      : approval === 'rejected'
+                                      ? 'font-semibold text-red-700'
+                                      : 'font-semibold text-amber-800'
+                                  }
+                                >
+                                  {approval === 'approved'
+                                    ? 'Approved & Live'
+                                    : approval === 'rejected'
+                                    ? 'Rejected by Admin'
+                                    : 'Pending Admin Review'}
+                                </span>
                               </div>
                               <h3 className="mt-1 text-sm font-semibold text-stone-900">
                                 {prod.title}
                               </h3>
+                              {prod.moderationNote && (
+                                <p className="mt-1 text-xs text-stone-600">
+                                  Admin note: {prod.moderationNote}
+                                </p>
+                              )}
                             </div>
 
                             <div className="flex flex-wrap items-center gap-2 shrink-0 text-xs">
@@ -2225,9 +2370,15 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
               {myPurchases.map((order) => {
                 const digitalDeliverables = (order.productIds || [])
                   .map((pid) => allAccessibleDirectProductsMap[pid])
-                  .filter(
-                    (p): p is DirectProduct =>
-                      Boolean(p && p.kind === 'digital' && p.digitalFileUrl)
+                  .filter((p): p is DirectProduct =>
+                    Boolean(
+                      p &&
+                        p.kind === 'digital' &&
+                        (p.hasDigitalAsset ||
+                          p.digitalFileUrl ||
+                          order.deliveredDigitalAssets?.[p.id] ||
+                          deliveredDigitalCache[p.id])
+                    )
                   );
                 const isGuestLocalOrder = order.id.startsWith('guest_');
 
@@ -2245,6 +2396,12 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                         <span className="capitalize font-medium text-[#9A3412]">
                           Status: {order.status}
                         </span>
+                        {order.paymentMethod && (
+                          <>
+                            <span aria-hidden="true">·</span>
+                            <span>Paid via {order.paymentMethod}</span>
+                          </>
+                        )}
                         {order.sellerName && (
                           <>
                             <span aria-hidden="true">·</span>
@@ -2291,40 +2448,71 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                       {digitalDeliverables.length > 0 &&
                         order.status !== 'cancelled' && (
                           <div className="pt-2 flex flex-wrap items-center gap-2">
-                            {digitalDeliverables.map((prod) =>
-                              prod.digitalFileUrl?.startsWith('https://') ? (
-                                <a
-                                  key={prod.id}
-                                  href={prod.digitalFileUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg transition-colors whitespace-nowrap"
-                                >
-                                  <ExternalLink className="w-3.5 h-3.5" />
-                                  <span>
-                                    Open {prod.digitalFileName || prod.title}
-                                  </span>
-                                </a>
-                              ) : (
+                            {digitalDeliverables.map((prod) => {
+                              const resolvedAsset =
+                                order.deliveredDigitalAssets?.[prod.id] ||
+                                deliveredDigitalCache[prod.id] ||
+                                (prod.digitalFileUrl
+                                  ? {
+                                      url: prod.digitalFileUrl,
+                                      fileName:
+                                        prod.digitalFileName || prod.title,
+                                      fileType:
+                                        prod.digitalFileType ||
+                                        'Digital Download',
+                                    }
+                                  : null);
+                              const labelName =
+                                resolvedAsset?.fileName ||
+                                prod.digitalFileName ||
+                                prod.title;
+
+                              if (resolvedAsset?.url?.startsWith('https://')) {
+                                return (
+                                  <a
+                                    key={prod.id}
+                                    href={resolvedAsset.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg transition-colors whitespace-nowrap"
+                                  >
+                                    <ExternalLink className="w-3.5 h-3.5" />
+                                    <span>Open {labelName}</span>
+                                  </a>
+                                );
+                              }
+
+                              return (
                                 <button
                                   key={prod.id}
                                   type="button"
-                                  onClick={() =>
-                                    triggerDigitalAssetDownload(
-                                      prod.digitalFileUrl || '',
-                                      prod.digitalFileName || prod.title
-                                    )
-                                  }
+                                  onClick={async () => {
+                                    if (resolvedAsset?.url) {
+                                      triggerDigitalAssetDownload(
+                                        resolvedAsset.url,
+                                        labelName
+                                      );
+                                      return;
+                                    }
+                                    const secret =
+                                      await fetchProtectedDigitalSecret(
+                                        prod.id,
+                                        order.id
+                                      );
+                                    if (secret?.url) {
+                                      triggerDigitalAssetDownload(
+                                        secret.url,
+                                        secret.fileName || labelName
+                                      );
+                                    }
+                                  }}
                                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg transition-colors cursor-pointer whitespace-nowrap"
                                 >
                                   <Download className="w-3.5 h-3.5" />
-                                  <span>
-                                    Download{' '}
-                                    {prod.digitalFileName || prod.title}
-                                  </span>
+                                  <span>Download {labelName}</span>
                                 </button>
-                              )
-                            )}
+                              );
+                            })}
                           </div>
                         )}
                     </div>
@@ -2732,6 +2920,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                   value={prodCategory}
                   options={storeCategoryOptions}
                   onChange={setProdCategory}
+                  canEdit={isCreatorAdmin || isActiveSeller}
                   onAddOption={(opt) => addDropdownOption('storeCategories', opt)}
                   onRenameOption={(oldOpt, nextOpt) =>
                     renameDropdownOption('storeCategories', oldOpt, nextOpt)
@@ -2896,7 +3085,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                       </span>
                       <input
                         type="file"
-                        accept=".pdf,.zip,.xlsx,.xls,.csv,.epub,.mobi,.html,.htm,.json,.js,.ts,.py,.txt,.md,.xml,.svg,.docx,.pptx"
+                        accept=".pdf,.zip,.xlsx,.xls,.csv,.epub,.mobi,.html,.htm,.json,.txt,.md,.xml,.svg,.docx,.pptx"
                         onChange={(e) => void handleDigitalAssetFileUpload(e)}
                         className="hidden"
                       />
@@ -2920,11 +3109,11 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                 {prodDigitalFileUrl.startsWith('data:') ? (
                   <div className="px-3 py-2 bg-white border border-stone-200 rounded-lg flex items-center justify-between gap-2 text-xs">
                     <span className="truncate font-medium text-stone-900">
-                      Attached File: {prodDigitalFileName || 'Digital Asset'}{' '}
+                      Vaulted File: {prodDigitalFileName || 'Digital Asset'}{' '}
                       {prodDigitalFileType ? `(${prodDigitalFileType})` : ''}
                     </span>
                     <span className="text-emerald-800 font-semibold shrink-0">
-                      Ready for Instant Download
+                      Protected in Digital Vault
                     </span>
                   </div>
                 ) : (
@@ -2937,7 +3126,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                         setProdDigitalFileType('HTTPS Link');
                       }
                     }}
-                    placeholder="Or paste HTTPS product link (https://drive.google.com/..., Dropbox, Web App, etc.)"
+                    placeholder="Or paste HTTPS product link (stored privately & unlocked only after purchase)"
                     className="w-full px-3 py-2 text-xs font-mono bg-white border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
                   />
                 )}
@@ -2955,6 +3144,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                         { value: '', label: 'Select format (optional)...' },
                       ]}
                       onChange={setProdDigitalFileType}
+                      canEdit={isCreatorAdmin || isActiveSeller}
                       onAddOption={(opt) =>
                         addDropdownOption('digitalFormats', opt)
                       }
@@ -3059,7 +3249,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                   onChange={(e) => setProdFeatured(e.target.checked)}
                   className="accent-[#9A3412]"
                 />
-                <span>Feature on Blog homepage Store showcase</span>
+                <span>Highlight as Featured Store Release</span>
               </label>
             )}
 
@@ -3080,7 +3270,9 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                   ? 'Saving...'
                   : editingProductId
                   ? 'Save Changes'
-                  : 'Publish Product'}
+                  : isCreatorAdmin
+                  ? 'Publish Product'
+                  : 'Submit Product for Review'}
               </button>
             </div>
           </form>
@@ -3090,7 +3282,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
       {/* =================================================================
           MODAL 3: ADD / EDIT PROMO CAMPAIGN (WEBSITE OWNER)
          ================================================================= */}
-      {isCampaignModalOpen && (
+      {isCampaignModalOpen && isCreatorAdmin && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-stone-950/50 backdrop-blur-[1px]"
           role="dialog"
@@ -3203,6 +3395,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                   value={campChannel}
                   options={dropdownOptions.campaignChannels}
                   onChange={(val) => setCampChannel(val as CampaignChannel)}
+                  canEdit={isCreatorAdmin}
                   onAddOption={(opt) =>
                     addDropdownOption('campaignChannels', opt)
                   }

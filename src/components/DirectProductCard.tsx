@@ -8,6 +8,7 @@ import { useFirebaseApp } from '../context/FirebaseContext';
 interface DirectProductCardProps {
   product: DirectProduct;
   variant?: 'grid' | 'inline' | 'rail';
+  showApprovalBadge?: boolean;
   onInspectProduct?: (product: DirectProduct) => void;
   onEdit?: (product: DirectProduct) => void;
   onDelete?: (product: DirectProduct) => Promise<void> | void;
@@ -29,6 +30,7 @@ function getDirectKindLabel(product: DirectProduct): string {
 export const DirectProductCard: React.FC<DirectProductCardProps> = ({
   product,
   variant = 'grid',
+  showApprovalBadge = false,
   onInspectProduct,
   onEdit,
   onDelete,
@@ -351,6 +353,22 @@ export const DirectProductCard: React.FC<DirectProductCardProps> = ({
               <>
                 <span aria-hidden="true">·</span>
                 <span>Video</span>
+              </>
+            )}
+            {showApprovalBadge && product.approvalStatus && product.approvalStatus !== 'approved' && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span
+                  className={
+                    product.approvalStatus === 'rejected'
+                      ? 'font-semibold text-red-700'
+                      : 'font-semibold text-amber-800'
+                  }
+                >
+                  {product.approvalStatus === 'rejected'
+                    ? 'Changes Requested'
+                    : 'Pending Review'}
+                </span>
               </>
             )}
           </div>

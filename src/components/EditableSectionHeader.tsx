@@ -9,6 +9,7 @@ interface EditableSectionHeaderProps {
   level?: 'h1' | 'h2';
   showSubtitle?: boolean;
   className?: string;
+  canEdit?: boolean;
 }
 
 export const EditableSectionHeader: React.FC<EditableSectionHeaderProps> = ({
@@ -18,6 +19,7 @@ export const EditableSectionHeader: React.FC<EditableSectionHeaderProps> = ({
   level = 'h1',
   showSubtitle = true,
   className = '',
+  canEdit = false,
 }) => {
   const [editing, setEditing] = useState(false);
   const [kicker, setKicker] = useState(copy.kicker);
@@ -30,7 +32,14 @@ export const EditableSectionHeader: React.FC<EditableSectionHeaderProps> = ({
     setSubtitle(copy.subtitle || '');
   }, [copy.kicker, copy.title, copy.subtitle]);
 
+  useEffect(() => {
+    if (!canEdit && editing) {
+      setEditing(false);
+    }
+  }, [canEdit, editing]);
+
   function handleSave() {
+    if (!canEdit) return;
     const cleanTitle = title.trim() || copy.title;
     onSave({
       kicker: kicker.trim(),
@@ -40,7 +49,7 @@ export const EditableSectionHeader: React.FC<EditableSectionHeaderProps> = ({
     setEditing(false);
   }
 
-  if (editing) {
+  if (editing && canEdit) {
     return (
       <div
         className={`p-4 rounded-xl bg-white border border-stone-300 space-y-2.5 max-w-2xl ${className}`}
@@ -119,15 +128,17 @@ export const EditableSectionHeader: React.FC<EditableSectionHeaderProps> = ({
         {copy.kicker && (
           <p className="text-xs font-medium text-[#9A3412]">{copy.kicker}</p>
         )}
-        <button
-          type="button"
-          onClick={() => setEditing(true)}
-          title="Edit section text"
-          className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-stone-500 hover:text-stone-900 bg-[#F3EFE8]/80 hover:bg-stone-200 rounded transition-colors cursor-pointer whitespace-nowrap shrink-0"
-        >
-          <PenLine className="w-3 h-3" />
-          <span>Edit Text</span>
-        </button>
+        {canEdit && (
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            title="Edit section text"
+            className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-stone-500 hover:text-stone-900 bg-[#F3EFE8]/80 hover:bg-stone-200 rounded transition-colors cursor-pointer whitespace-nowrap shrink-0"
+          >
+            <PenLine className="w-3 h-3" />
+            <span>Edit Text</span>
+          </button>
+        )}
       </div>
 
       {level === 'h1' ? (

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Check,
+  CreditCard,
   Download,
   ExternalLink,
   LogIn,
@@ -14,16 +15,63 @@ import {
 } from 'lucide-react';
 import { useFirebaseApp } from '../context/FirebaseContext';
 import { formatPriceCents, triggerDigitalAssetDownload } from '../firebase';
-import { DirectOrder, DirectProduct } from '../types';
+import {
+  CustomerPaymentMethod,
+  DeliveredDigitalAsset,
+  DirectOrder,
+  DirectProduct,
+} from '../types';
 import { AuthPanel } from './AuthModal';
 import { ResilientImage } from './ResilientImage';
 
 interface ShoppingBagDrawerProps {
   onNavigateToPurchases?: () => void;
+  onOpenPrivacy?: () => void;
+  onOpenContactSupport?: () => void;
 }
+
+const CUSTOMER_PAYMENT_OPTIONS: {
+  value: CustomerPaymentMethod;
+  label: string;
+  refLabel: string;
+  placeholder: string;
+}[] = [
+  {
+    value: 'Card',
+    label: 'Debit / Credit Card',
+    refLabel: 'Card Last 4 Digits or Receipt Note (Never enter full card #)',
+    placeholder: 'e.g., Visa ending in 4242',
+  },
+  {
+    value: 'Telebirr',
+    label: 'Telebirr',
+    refLabel: 'Telebirr Transaction Reference / Last 4 Digits',
+    placeholder: 'e.g., TLB-984120',
+  },
+  {
+    value: 'CBEBirr',
+    label: 'CBE Birr',
+    refLabel: 'CBE Birr Transaction Reference',
+    placeholder: 'e.g., CBE-551904',
+  },
+  {
+    value: 'PayPal',
+    label: 'PayPal',
+    refLabel: 'PayPal Receipt ID or Payer Handle',
+    placeholder: 'e.g., PP-804219',
+  },
+  {
+    value: 'BankTransfer',
+    label: 'Bank Transfer',
+    refLabel: 'Bank Transfer Slip / Reference Code',
+    placeholder: 'e.g., FT26298104',
+  },
+];
 
 export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
   onNavigateToPurchases,
+  onOpenPrivacy,
+  onOpenContactSupport,
 }) => {
   const {
     user,
@@ -41,6 +89,8 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
     cartRequiresShipping,
     allAccessibleDirectProductsMap,
     publishedCampaigns,
+    deliveredDigitalCache,
+    fetchProtectedDigitalSecret,
     updateCartQuantity,
     removeFromCart,
     applyPromoCode,
@@ -60,9 +110,15 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
   const [buyerName, setBuyerName] = useState('');
   const [buyerEmail, setBuyerEmail] = useState('');
   const [shippingAddress, setShippingAddress] = useState('');
+  const [paymentMethod, setPaymentMethod] =
+    useState<CustomerPaymentMethod>('Card');
+  const [paymentReference, setPaymentReference] = useState('');
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [confirmedOrder, setConfirmedOrder] = useState<DirectOrder | null>(null);
+  const [downloadingProductId, setDownloadingProductId] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
     if (profile?.displayName && !buyerName) {
@@ -99,10 +155,56 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
   const purchasedDigitalProducts: DirectProduct[] = confirmedOrder
     ? confirmedOrder.productIds
         .map((pid) => allAccessibleDirectProductsMap[pid])
-        .filter(
-          (p): p is DirectProduct => Boolean(p && p.kind === 'digital')
-        )
+        .filter((p): p is DirectProduct => Boolean(p && p.kind === 'digital'))
     : [];
+
+  const activePaymentOption =
+    CUSTOMER_PAYMENT_OPTIONS.find((opt) => opt.value === paymentMethod) ||
+    CUSTOMER_PAYMENT_OPTIONS[0];
+
+  function resolveDigitalAssetForOrder(
+    prod: DirectProduct,
+    order: DirectOrder
+  ): DeliveredDigitalAsset | null {
+    const fromOrder = order.deliveredDigitalAssets?.[prod.id];
+    if (fromOrder?.url) return fromOrder;
+    const fromCache = deliveredDigitalCache[prod.id];
+    if (fromCache?.url) return fromCache;
+    if (prod.digitalFileUrl) {
+      return {
+        url: prod.digitalFileUrl,
+        fileName: prod.digitalFileName || `${prod.sku}.download`,
+        fileType: prod.digitalFileType || 'Digital Download',
+      };
+    }
+    return null;
+  }
+
+  async function handleConfirmedDigitalDownload(
+    prod: DirectProduct,
+    order: DirectOrder
+  ) {
+    const immediate = resolveDigitalAssetForOrder(prod, order);
+    if (immediate?.url) {
+      triggerDigitalAssetDownload(
+        immediate.url,
+        immediate.fileName || prod.digitalFileName || `${prod.sku}.download`
+      );
+      return;
+    }
+    setDownloadingProductId(prod.id);
+    try {
+      const unlocked = await fetchProtectedDigitalSecret(prod.id, order.id);
+      if (unlocked?.url) {
+        triggerDigitalAssetDownload(
+          unlocked.url,
+          unlocked.fileName || prod.digitalFileName || `${prod.sku}.download`
+        );
+      }
+    } finally {
+      setDownloadingProductId(null);
+    }
+  }
 
   function handleClose() {
     setIsCartOpen(false);
@@ -121,12 +223,25 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
   async function handleCompleteOrder(e: React.FormEvent) {
     e.preventDefault();
     setCheckoutError(null);
+
+    // Block accidental full 13-19 digit PAN entry in reference field
+    const digitsOnly = paymentReference.replace(/\D/g, '');
+    if (paymentMethod === 'Card' && digitsOnly.length >= 12) {
+      setCheckoutError(
+        'For security, please enter only the last 4 digits or a short receipt label—never a full card number.'
+      );
+      return;
+    }
+
     setSubmitting(true);
     try {
       const order = await placeDirectOrder({
         buyerName,
         buyerEmail,
         shippingAddress,
+        paymentMethod,
+        paymentReference:
+          paymentReference.trim() || `${paymentMethod} Authorized`,
       });
       setConfirmedOrder(order);
       setStep('confirmed');
@@ -159,7 +274,7 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
               {step === 'confirmed'
                 ? 'Order Confirmed'
                 : step === 'checkout'
-                ? 'Direct Checkout (No Login Required)'
+                ? 'Direct Checkout (Guest Friendly)'
                 : `Shopping Bag (${cartCount})`}
             </h2>
           </div>
@@ -190,7 +305,7 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                   <span className="font-mono font-semibold text-stone-900">
                     {confirmedOrder.orderNumber}
                   </span>{' '}
-                  is confirmed and available under My Purchases.
+                  is confirmed and saved under My Purchases.
                 </p>
 
                 <div className="mt-5 pt-4 border-t border-stone-200 space-y-2 text-xs text-stone-600">
@@ -204,6 +319,15 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                     <span>Receipt Email</span>
                     <span className="font-mono text-stone-900">
                       {confirmedOrder.buyerEmail}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span>Payment Method</span>
+                    <span className="text-stone-900 font-medium text-right">
+                      {confirmedOrder.paymentMethod || 'Card'}
+                      {confirmedOrder.paymentReference
+                        ? ` · ${confirmedOrder.paymentReference}`
+                        : ''}
                     </span>
                   </div>
                   {confirmedOrder.shippingAddress && (
@@ -229,50 +353,68 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                   <div className="text-xs font-semibold text-[#9A3412]">
                     Instant Digital Deliverables Unlocked
                   </div>
-                  {purchasedDigitalProducts.map((prod) => (
-                    <div
-                      key={prod.id}
-                      className="flex flex-wrap items-center justify-between gap-3 p-3 bg-[#FBF9F5] border border-stone-200 rounded-lg"
-                    >
-                      <div className="min-w-0">
-                        <div className="text-xs font-semibold text-stone-900 truncate">
-                          {prod.title}
+                  {purchasedDigitalProducts.map((prod) => {
+                    const resolved = resolveDigitalAssetForOrder(
+                      prod,
+                      confirmedOrder
+                    );
+                    const canFetchVault = Boolean(
+                      resolved?.url || prod.hasDigitalAsset
+                    );
+                    return (
+                      <div
+                        key={prod.id}
+                        className="flex flex-wrap items-center justify-between gap-3 p-3 bg-[#FBF9F5] border border-stone-200 rounded-lg"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold text-stone-900 truncate">
+                            {prod.title}
+                          </div>
+                          <div className="text-[11px] text-stone-500">
+                            {resolved?.fileType ||
+                              prod.digitalFileType ||
+                              'Digital Edition'}
+                            {resolved?.fileName || prod.digitalFileName
+                              ? ` · ${resolved?.fileName || prod.digitalFileName}`
+                              : ''}
+                          </div>
                         </div>
-                        <div className="text-[11px] text-stone-500">
-                          {prod.digitalFileType || 'Digital Edition'}
-                          {prod.digitalFileName ? ` · ${prod.digitalFileName}` : ''}
-                        </div>
+                        {canFetchVault ? (
+                          <button
+                            type="button"
+                            disabled={downloadingProductId === prod.id}
+                            onClick={() =>
+                              void handleConfirmedDigitalDownload(
+                                prod,
+                                confirmedOrder
+                              )
+                            }
+                            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] disabled:bg-stone-400 rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                          >
+                            {resolved?.url?.startsWith('https://') ? (
+                              <>
+                                <ExternalLink className="w-3.5 h-3.5" />
+                                <span>Access Digital Product</span>
+                              </>
+                            ) : (
+                              <>
+                                <Download className="w-3.5 h-3.5" />
+                                <span>
+                                  {downloadingProductId === prod.id
+                                    ? 'Preparing...'
+                                    : 'Download File'}
+                                </span>
+                              </>
+                            )}
+                          </button>
+                        ) : (
+                          <span className="text-[11px] text-emerald-800 font-medium">
+                            Receipt recorded for {confirmedOrder.buyerEmail}
+                          </span>
+                        )}
                       </div>
-                      {prod.digitalFileUrl ? (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            triggerDigitalAssetDownload(
-                              prod.digitalFileUrl || '',
-                              prod.digitalFileName || `${prod.sku}.download`
-                            )
-                          }
-                          className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
-                        >
-                          {prod.digitalFileUrl.startsWith('data:') ? (
-                            <>
-                              <Download className="w-3.5 h-3.5" />
-                              <span>Download File</span>
-                            </>
-                          ) : (
-                            <>
-                              <ExternalLink className="w-3.5 h-3.5" />
-                              <span>Access Digital Product</span>
-                            </>
-                          )}
-                        </button>
-                      ) : (
-                        <span className="text-[11px] text-emerald-800 font-medium">
-                          Sent to {confirmedOrder.buyerEmail}
-                        </span>
-                      )}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 
@@ -305,6 +447,22 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                   Continue Shopping
                 </button>
               </div>
+
+              {onOpenContactSupport && (
+                <div className="text-[11px] text-stone-500 flex items-center justify-between gap-2 pt-1">
+                  <span>Need help with delivery or a private order issue?</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleClose();
+                      onOpenContactSupport();
+                    }}
+                    className="font-medium text-[#9A3412] hover:underline cursor-pointer shrink-0"
+                  >
+                    Contact Order Support →
+                  </button>
+                </div>
+              )}
             </div>
           ) : resolvedCartLines.length === 0 ? (
             <div className="py-16 text-center">
@@ -313,13 +471,15 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                 Your Pickra bag is empty
               </h3>
               <p className="mt-1.5 text-sm text-stone-600 max-w-xs mx-auto leading-relaxed">
-                Browse creator products and purchase physical or digital items directly — no account required.
+                Browse creator products and purchase physical or digital items
+                directly — no account required.
               </p>
 
               {publishedCampaigns.length > 0 && (
                 <div className="mt-8 p-4 bg-white border border-stone-200 rounded-xl text-left">
                   <div className="text-xs font-medium text-[#9A3412]">
-                    Active Storefront Offer · {publishedCampaigns[0].discountPercent}% Off
+                    Active Storefront Offer ·{' '}
+                    {publishedCampaigns[0].discountPercent}% Off
                   </div>
                   <p className="mt-1 text-xs text-stone-700 leading-relaxed">
                     {publishedCampaigns[0].title} — use code{' '}
@@ -335,43 +495,54 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
             <div className="space-y-6">
               {!siteConfig.storeCheckoutEnabled && (
                 <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 leading-relaxed">
-                  Direct Store checkout is temporarily paused by the creator for inventory maintenance. Items remain saved in your bag.
+                  Direct Store checkout is temporarily paused by the creator for
+                  inventory maintenance. Items remain saved in your bag.
                 </div>
               )}
 
               {/* Free shipping threshold progress */}
-              {cartRequiresShipping && siteConfig.freeShippingThresholdCents > 0 && (
-                <div className="p-3.5 bg-[#F5F2EB] border border-stone-200/90 rounded-lg text-xs text-stone-700">
-                  {cartShippingCents === 0 ? (
-                    <span>
-                      Complimentary tracked studio shipping unlocked on this order.
-                    </span>
-                  ) : (
-                    <span>
-                      Add{' '}
-                      <strong className="font-mono text-stone-900 tabular-nums">
-                        {formatPriceCents(
-                          Math.max(
-                            0,
-                            siteConfig.freeShippingThresholdCents -
-                              Math.max(0, cartSubtotalCents - cartDiscountCents)
-                          )
-                        )}
-                      </strong>{' '}
-                      more for complimentary tracked shipping (orders over{' '}
-                      <span className="font-mono tabular-nums">
-                        {formatPriceCents(siteConfig.freeShippingThresholdCents)}
+              {cartRequiresShipping &&
+                siteConfig.freeShippingThresholdCents > 0 && (
+                  <div className="p-3.5 bg-[#F5F2EB] border border-stone-200/90 rounded-lg text-xs text-stone-700">
+                    {cartShippingCents === 0 ? (
+                      <span>
+                        Complimentary tracked studio shipping unlocked on this
+                        order.
                       </span>
-                      ).
-                    </span>
-                  )}
-                </div>
-              )}
+                    ) : (
+                      <span>
+                        Add{' '}
+                        <strong className="font-mono text-stone-900 tabular-nums">
+                          {formatPriceCents(
+                            Math.max(
+                              0,
+                              siteConfig.freeShippingThresholdCents -
+                                Math.max(
+                                  0,
+                                  cartSubtotalCents - cartDiscountCents
+                                )
+                            )
+                          )}
+                        </strong>{' '}
+                        more for complimentary tracked shipping (orders over{' '}
+                        <span className="font-mono tabular-nums">
+                          {formatPriceCents(
+                            siteConfig.freeShippingThresholdCents
+                          )}
+                        </span>
+                        ).
+                      </span>
+                    )}
+                  </div>
+                )}
 
               {/* Line Items */}
               <div className="divide-y divide-stone-200 bg-white border border-stone-200 rounded-xl px-4">
                 {resolvedCartLines.map(({ product, quantity }) => (
-                  <div key={product.id} className="py-4 flex items-start gap-3.5">
+                  <div
+                    key={product.id}
+                    className="py-4 flex items-start gap-3.5"
+                  >
                     <div className="w-16 h-16 rounded-lg overflow-hidden bg-[#F3EFE8] shrink-0">
                       <ResilientImage
                         imageKey={product.imageKey}
@@ -397,7 +568,9 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                           <button
                             type="button"
                             aria-label="Decrease quantity"
-                            onClick={() => updateCartQuantity(product.id, quantity - 1)}
+                            onClick={() =>
+                              updateCartQuantity(product.id, quantity - 1)
+                            }
                             className="p-1.5 text-stone-600 hover:text-stone-900 cursor-pointer"
                           >
                             <Minus className="w-3 h-3" />
@@ -408,7 +581,9 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                           <button
                             type="button"
                             aria-label="Increase quantity"
-                            onClick={() => updateCartQuantity(product.id, quantity + 1)}
+                            onClick={() =>
+                              updateCartQuantity(product.id, quantity + 1)
+                            }
                             className="p-1.5 text-stone-600 hover:text-stone-900 cursor-pointer"
                           >
                             <Plus className="w-3 h-3" />
@@ -456,11 +631,16 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                   )}
                 </div>
 
-                <form onSubmit={handleApplyPromo} className="flex items-center gap-2">
+                <form
+                  onSubmit={handleApplyPromo}
+                  className="flex items-center gap-2"
+                >
                   <input
                     type="text"
                     value={promoInput}
-                    onChange={(e) => setPromoInput(e.target.value.toUpperCase())}
+                    onChange={(e) =>
+                      setPromoInput(e.target.value.toUpperCase())
+                    }
                     placeholder="e.g., PICKRA15"
                     maxLength={24}
                     className="flex-1 px-3 py-2 text-xs font-mono uppercase bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
@@ -560,7 +740,8 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                       <span className="font-semibold text-stone-900">
                         Guest Express Checkout
                       </span>{' '}
-                      — purchase directly without creating an account. Digital downloads unlock immediately upon confirmation.
+                      — purchase directly without creating an account. Digital
+                      downloads unlock immediately upon confirmation.
                     </div>
                   )}
 
@@ -613,9 +794,91 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                     </div>
                   ) : (
                     <div className="p-3 bg-[#F5F2EB] rounded-lg text-xs text-stone-700">
-                      Digital-only order — instant download access unlocks immediately upon confirmation with $0 shipping.
+                      Digital-only order — instant download access unlocks
+                      immediately upon confirmation with $0 shipping.
                     </div>
                   )}
+
+                  {/* Payment Method & Safe Payment Reference */}
+                  <div className="pt-2 border-t border-stone-100 space-y-3">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-stone-800">
+                      <CreditCard className="w-3.5 h-3.5 text-[#9A3412]" />
+                      <span>Payment Method</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {CUSTOMER_PAYMENT_OPTIONS.map((opt) => {
+                        const selected = paymentMethod === opt.value;
+                        return (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => setPaymentMethod(opt.value)}
+                            className={`px-2.5 py-2 text-xs font-medium rounded-lg border text-left transition-colors cursor-pointer ${
+                              selected
+                                ? 'bg-[#FDF3EC] border-[#9A3412] text-[#9A3412] font-semibold'
+                                : 'bg-[#FBF9F5] border-stone-300 text-stone-700 hover:border-stone-400'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-medium text-stone-600 mb-1">
+                        {activePaymentOption.refLabel}
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        minLength={2}
+                        maxLength={80}
+                        value={paymentReference}
+                        onChange={(e) => setPaymentReference(e.target.value)}
+                        placeholder={activePaymentOption.placeholder}
+                        className="w-full px-3 py-2 text-xs font-mono bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                      />
+                    </div>
+
+                    <div className="pt-2 border-t border-stone-100 text-[11px] text-stone-500 leading-relaxed flex flex-wrap items-center justify-between gap-2">
+                      <span>
+                        Receipt email and shipping details are restricted strictly to order fulfillment; payment references are stored in masked form.
+                      </span>
+                      {(onOpenPrivacy || onOpenContactSupport) && (
+                        <span className="inline-flex items-center gap-2 shrink-0">
+                          {onOpenPrivacy && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleClose();
+                                onOpenPrivacy();
+                              }}
+                              className="font-medium text-stone-700 hover:text-[#9A3412] underline underline-offset-2 cursor-pointer"
+                            >
+                              Privacy Policy
+                            </button>
+                          )}
+                          {onOpenPrivacy && onOpenContactSupport && (
+                            <span aria-hidden="true">·</span>
+                          )}
+                          {onOpenContactSupport && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleClose();
+                                onOpenContactSupport();
+                              }}
+                              className="font-medium text-stone-700 hover:text-[#9A3412] underline underline-offset-2 cursor-pointer"
+                            >
+                              Order Help
+                            </button>
+                          )}
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </form>
               )}
             </div>
@@ -645,7 +908,9 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
               )}
               <div className="flex justify-between">
                 <span>
-                  {cartRequiresShipping ? 'Tracked Studio Shipping' : 'Digital Delivery'}
+                  {cartRequiresShipping
+                    ? 'Tracked Studio Shipping'
+                    : 'Digital Delivery'}
                 </span>
                 <span className="font-mono text-stone-900 tabular-nums">
                   {cartShippingCents === 0
@@ -669,7 +934,9 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                 className="w-full py-3 px-4 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] disabled:bg-stone-300 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
               >
                 {siteConfig.storeCheckoutEnabled
-                  ? `Proceed to Direct Checkout · ${formatPriceCents(cartTotalCents)}`
+                  ? `Proceed to Direct Checkout · ${formatPriceCents(
+                      cartTotalCents
+                    )}`
                   : 'Direct Checkout Temporarily Paused'}
               </button>
             ) : !user && showOptionalSignIn ? null : (
@@ -683,7 +950,9 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                   ? 'Direct Checkout Paused'
                   : submitting
                   ? 'Placing Direct Order...'
-                  : `Complete Direct Purchase · ${formatPriceCents(cartTotalCents)}`}
+                  : `Complete Direct Purchase · ${formatPriceCents(
+                      cartTotalCents
+                    )}`}
               </button>
             )}
           </div>

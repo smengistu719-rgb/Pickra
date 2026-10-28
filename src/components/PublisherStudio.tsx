@@ -3,17 +3,19 @@ import {
   Activity,
   BarChart3,
   BookOpen,
+  Briefcase,
   Camera,
   Check,
+  CheckCircle2,
   Copy,
   Download,
   ExternalLink,
   FileDown,
   Link2,
   Lock,
-  LogIn,
   LogOut,
   Megaphone,
+  MessageSquare,
   Package,
   PenSquare,
   Plus,
@@ -23,12 +25,20 @@ import {
   ShoppingBag,
   Trash2,
   Upload,
+  Users,
   Video,
   X,
+  XCircle,
 } from 'lucide-react';
 import {
   BOOTSTRAPPED_ADMIN_EMAIL,
   CampaignDraftInput,
+  DEFAULT_ABOUT_MISSION,
+  DEFAULT_ABOUT_STORY,
+  DEFAULT_CONTACT_EMAIL,
+  DEFAULT_CONTACT_LOCATION,
+  DEFAULT_CONTACT_PHONE,
+  DEFAULT_PRIVACY_POLICY_SUMMARY,
   DirectProductDraftInput,
   OfferDraftInput,
   SiteConfigInput,
@@ -50,13 +60,18 @@ import {
   AnnouncementTargetSection,
   BlogPost,
   CampaignChannel,
+  CONTACT_CATEGORY_OPTIONS,
+  ContactMessageStatus,
   DirectProduct,
   DirectProductKind,
   MarketingCampaign,
   OfferKind,
   OrderFulfillmentStatus,
   PayoutSettlementStatus,
+  ProductApprovalStatus,
+  PRODUCT_AFFILIATE_PLATFORMS,
   PublishStatus,
+  SellerAccountStatus,
   SERVICE_AFFILIATE_PLATFORMS,
 } from '../types';
 import { AuthPanel } from './AuthModal';
@@ -72,18 +87,21 @@ interface PublisherStudioProps {
 
 type BackendView =
   | 'overview'
+  | 'users'
   | 'posts'
   | 'store'
   | 'campaigns'
   | 'orders'
-  | 'offers'
+  | 'product_affiliates'
+  | 'service_affiliates'
+  | 'inquiries'
   | 'settings';
 
 const PLATFORMS: AffiliatePlatform[] = ALL_AFFILIATE_PLATFORMS;
 
 const CAMPAIGN_CHANNELS: CampaignChannel[] = [
   'Storefront Banner',
-  'Blog Callout',
+  'Seasonal Offer',
   'Social & Email',
   'Flash Bundle',
 ];
@@ -128,6 +146,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     isCreatorAdmin,
     adminRoleReady,
     adminRegistry,
+    allUsers,
     siteConfig,
     profile,
     privateInfo,
@@ -150,6 +169,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     resendOwnerVerificationEmail,
     refreshAuthUser,
     signOutUser,
+    moderateUserSellerStatus,
     saveOffer,
     updateOfferStatus,
     updateOfferImage,
@@ -159,8 +179,10 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     deletePost,
     saveDirectProduct,
     updateDirectProductStatus,
+    moderateDirectProduct,
     updateDirectProductImage,
     deleteDirectProduct,
+    fetchProtectedDigitalSecret,
     saveCampaign,
     updateCampaignStatus,
     deleteCampaign,
@@ -169,6 +191,9 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     deleteDirectOrder,
     saveProfileAndAffiliateTags,
     saveSiteConfig,
+    contactMessages,
+    updateContactMessageStatus,
+    deleteContactMessage,
     grantCoAdmin,
     revokeCoAdmin,
     importStarterCatalog,
@@ -190,12 +215,26 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [copiedCampaignId, setCopiedCampaignId] = useState<string | null>(null);
   const [copiedOwnUid, setCopiedOwnUid] = useState(false);
+  const [copiedUserUid, setCopiedUserUid] = useState<string | null>(null);
 
   // Search & Filter states across Backend data views
   const [telemetryTypeFilter, setTelemetryTypeFilter] = useState<
     'all' | AnalyticsEventType
   >('all');
   const [telemetrySearch, setTelemetrySearch] = useState('');
+
+  const [userFilter, setUserFilter] = useState<
+    'all' | 'active_sellers' | 'pending_inactive' | 'suspended'
+  >('all');
+  const [userSearch, setUserSearch] = useState('');
+
+  const [storeApprovalFilter, setStoreApprovalFilter] = useState<
+    'all' | ProductApprovalStatus
+  >('all');
+  const [storeSearch, setStoreSearch] = useState('');
+  const [moderationNotes, setModerationNotes] = useState<
+    Record<string, string>
+  >({});
 
   const [postStatusFilter, setPostStatusFilter] = useState<
     'all' | PublishStatus
@@ -207,10 +246,24 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
   >('all');
   const [orderSearch, setOrderSearch] = useState('');
 
-  const [offerPlatformFilter, setOfferPlatformFilter] = useState<
-    'All' | AffiliatePlatform
-  >('All');
-  const [offerSearch, setOfferSearch] = useState('');
+  const [productAffiliatePlatformFilter, setProductAffiliatePlatformFilter] =
+    useState<'All' | AffiliatePlatform>('All');
+  const [productAffiliateSearch, setProductAffiliateSearch] = useState('');
+
+  const [serviceAffiliatePlatformFilter, setServiceAffiliatePlatformFilter] =
+    useState<'All' | AffiliatePlatform>('All');
+  const [serviceAffiliateSearch, setServiceAffiliateSearch] = useState('');
+
+  const [inquiryFilter, setInquiryFilter] = useState<
+    'all' | 'unread' | 'privacy_issue' | 'order_support' | 'resolved'
+  >('all');
+  const [inquirySearch, setInquirySearch] = useState('');
+  const [inquiryStatusDrafts, setInquiryStatusDrafts] = useState<
+    Record<string, ContactMessageStatus>
+  >({});
+  const [inquiryNoteDrafts, setInquiryNoteDrafts] = useState<
+    Record<string, string>
+  >({});
 
   // Inline stock adjustment drafts per DirectProduct ID
   const [stockDrafts, setStockDrafts] = useState<Record<string, string>>({});
@@ -271,12 +324,12 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     >
   >({});
 
-  // Affiliate Offer Composer State
+  // Product Affiliate Offer Composer State (strictly physical | digital)
   const [editingOfferId, setEditingOfferId] = useState<string | undefined>(
     undefined
   );
   const [offerTitle, setOfferTitle] = useState('');
-  const [offerKind, setOfferKind] = useState<OfferKind>('physical');
+  const [offerKind, setOfferKind] = useState<'physical' | 'digital'>('physical');
   const [offerPlatform, setOfferPlatform] =
     useState<AffiliatePlatform>('Amazon');
   const [offerCategory, setOfferCategory] = useState('Studio Hardware');
@@ -289,6 +342,23 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
   const [offerSummary, setOfferSummary] = useState('');
   const [offerHighlightsText, setOfferHighlightsText] = useState('');
   const [offerStatus, setOfferStatus] = useState<PublishStatus>('published');
+
+  // Service Affiliate Offer Composer State (strictly service)
+  const [editingServiceOfferId, setEditingServiceOfferId] = useState<
+    string | undefined
+  >(undefined);
+  const [svcTitle, setSvcTitle] = useState('');
+  const [svcPlatform, setSvcPlatform] = useState<AffiliatePlatform>('Fiverr');
+  const [svcCategory, setSvcCategory] = useState('Web & Full-Stack Dev');
+  const [svcPrice, setSvcPrice] = useState('From $150');
+  const [svcCommission, setSvcCommission] = useState('');
+  const [svcUrl, setSvcUrl] = useState('');
+  const [svcImageKey, setSvcImageKey] = useState('service');
+  const [svcCustomImageUrl, setSvcCustomImageUrl] = useState('');
+  const [svcVideoUrl, setSvcVideoUrl] = useState('');
+  const [svcSummary, setSvcSummary] = useState('');
+  const [svcHighlightsText, setSvcHighlightsText] = useState('');
+  const [svcStatus, setSvcStatus] = useState<PublishStatus>('published');
 
   // Author Profile & Affiliate IDs State
   const [displayName, setDisplayName] = useState('');
@@ -307,7 +377,23 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
   const [cfgFlatShipUsd, setCfgFlatShipUsd] = useState('9.00');
   const [cfgDefaultDisclosure, setCfgDefaultDisclosure] = useState('');
   const [cfgCheckoutEnabled, setCfgCheckoutEnabled] = useState(true);
+  const [cfgBlogEnabled, setCfgBlogEnabled] = useState(true);
+  const [cfgStoreEnabled, setCfgStoreEnabled] = useState(true);
+  const [cfgProductAffiliateEnabled, setCfgProductAffiliateEnabled] =
+    useState(true);
+  const [cfgServiceAffiliateEnabled, setCfgServiceAffiliateEnabled] =
+    useState(true);
   const [cfgShowStarterSeeds, setCfgShowStarterSeeds] = useState(true);
+  const [cfgAboutMission, setCfgAboutMission] = useState(DEFAULT_ABOUT_MISSION);
+  const [cfgAboutStory, setCfgAboutStory] = useState(DEFAULT_ABOUT_STORY);
+  const [cfgContactEmail, setCfgContactEmail] = useState(DEFAULT_CONTACT_EMAIL);
+  const [cfgContactPhone, setCfgContactPhone] = useState(DEFAULT_CONTACT_PHONE);
+  const [cfgContactLocation, setCfgContactLocation] = useState(
+    DEFAULT_CONTACT_LOCATION
+  );
+  const [cfgPrivacyPolicy, setCfgPrivacyPolicy] = useState(
+    DEFAULT_PRIVACY_POLICY_SUMMARY
+  );
 
   // Co-Admin Grant Input
   const [newCoAdminUid, setNewCoAdminUid] = useState('');
@@ -333,7 +419,25 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     setCfgFlatShipUsd((siteConfig.flatShippingCents / 100).toFixed(2));
     setCfgDefaultDisclosure(siteConfig.defaultDisclosureText);
     setCfgCheckoutEnabled(siteConfig.storeCheckoutEnabled);
+    setCfgBlogEnabled(siteConfig.blogEnabled !== false);
+    setCfgStoreEnabled(siteConfig.storeEnabled !== false);
+    setCfgProductAffiliateEnabled(
+      siteConfig.productAffiliateEnabled !== false
+    );
+    setCfgServiceAffiliateEnabled(
+      siteConfig.serviceAffiliateEnabled !== false
+    );
     setCfgShowStarterSeeds(siteConfig.showStarterSeeds);
+    setCfgAboutMission(siteConfig.aboutMission || DEFAULT_ABOUT_MISSION);
+    setCfgAboutStory(siteConfig.aboutStory || DEFAULT_ABOUT_STORY);
+    setCfgContactEmail(siteConfig.contactEmail || DEFAULT_CONTACT_EMAIL);
+    setCfgContactPhone(siteConfig.contactPhone ?? DEFAULT_CONTACT_PHONE);
+    setCfgContactLocation(
+      siteConfig.contactLocation ?? DEFAULT_CONTACT_LOCATION
+    );
+    setCfgPrivacyPolicy(
+      siteConfig.privacyPolicySummary || DEFAULT_PRIVACY_POLICY_SUMMARY
+    );
   }, [siteConfig]);
 
   function notify(tone: 'ok' | 'err', text: string) {
@@ -376,6 +480,19 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     }
     return Array.from(map.values());
   }, [studioOffers, publishedOffers]);
+
+  const productAffiliateOffers = useMemo(
+    () =>
+      allManageableOffers.filter(
+        (o) => o.kind === 'physical' || o.kind === 'digital'
+      ),
+    [allManageableOffers]
+  );
+
+  const serviceAffiliateOffers = useMemo(
+    () => allManageableOffers.filter((o) => o.kind === 'service'),
+    [allManageableOffers]
+  );
 
   // Real-time Backend Monitoring KPIs
   const monitorStats = useMemo(() => {
@@ -429,7 +546,23 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     const lowStockProducts = allManageableDirectProducts.filter(
       (p) => p.kind === 'physical' && p.stockCount <= 5
     );
+    const pendingApprovalProducts = allManageableDirectProducts.filter(
+      (p) => !p.isSeed && p.approvalStatus === 'pending'
+    );
+    const rejectedProductsCount = allManageableDirectProducts.filter(
+      (p) => !p.isSeed && p.approvalStatus === 'rejected'
+    ).length;
+    const activeSellersCount = allUsers.filter(
+      (u) =>
+        u.sellerStatus === 'active' || (!u.sellerStatus && u.isSeller === true)
+    ).length;
     const draftPosts = allManageablePosts.filter((p) => p.status === 'draft');
+    const unreadInquiriesCount = contactMessages.filter(
+      (m) => m.status === 'unread'
+    ).length;
+    const privacyIssuesCount = contactMessages.filter(
+      (m) => m.category === 'privacy_issue' && m.status !== 'resolved'
+    ).length;
 
     return {
       totalOrders: sellerOrders.length,
@@ -443,7 +576,12 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
       totalOutboundClicks,
       totalBagAdds,
       lowStockProducts,
+      pendingApprovalProducts,
+      rejectedProductsCount,
+      activeSellersCount,
       draftPosts,
+      unreadInquiriesCount,
+      privacyIssuesCount,
       promoRedemptionMap,
     };
   }, [
@@ -453,6 +591,8 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     productBagCounts,
     allManageableDirectProducts,
     allManageablePosts,
+    allUsers,
+    contactMessages,
   ]);
 
   // Multi-Channel & Partner Network Performance Breakdown
@@ -468,9 +608,11 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     }[] = [
       {
         channel: 'Pickra Direct Store',
-        role: 'First-Party Commerce',
+        role: 'Store Marketplace',
         activeItems: allManageableDirectProducts.filter(
-          (p) => p.status === 'published'
+          (p) =>
+            p.status === 'published' &&
+            (p.isSeed || !p.approvalStatus || p.approvalStatus === 'approved')
         ).length,
         interactionsLabel: 'bag adds',
         interactionsCount: monitorStats.totalBagAdds,
@@ -515,8 +657,8 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
           (dropdownOptions.servicePlatforms.includes(plat) ||
             SERVICE_AFFILIATE_PLATFORMS.includes(plat)) &&
           plat !== 'Custom'
-            ? 'Service Affiliate Network'
-            : 'Product Affiliate Network',
+            ? 'Service Affiliate Module'
+            : 'Product Affiliate Module',
         activeItems: publishedPlatCount,
         interactionsLabel: 'outbound clicks',
         interactionsCount: platClicks,
@@ -538,6 +680,22 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     sellerOrders,
   ]);
 
+  // Latest known payout destination summary per seller UID from sellerOrders
+  const sellerPayoutSummaryByUid = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const ord of sellerOrders) {
+      if (ord.sellerId && ord.sellerPayoutDetails && !map[ord.sellerId]) {
+        map[ord.sellerId] = ord.sellerPayoutDetails;
+      }
+    }
+    return map;
+  }, [sellerOrders]);
+
+  const coAdminSet = useMemo(
+    () => new Set(adminRegistry.map((r) => r.uid)),
+    [adminRegistry]
+  );
+
   // Filtered Views
   const filteredEvents = useMemo(() => {
     const q = telemetrySearch.trim().toLowerCase();
@@ -557,6 +715,56 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
       );
     });
   }, [analyticsEvents, telemetryTypeFilter, telemetrySearch]);
+
+  const filteredUsers = useMemo(() => {
+    const q = userSearch.trim().toLowerCase();
+    return allUsers.filter((u) => {
+      const effectiveStatus: SellerAccountStatus =
+        u.sellerStatus || (u.isSeller ? 'active' : 'inactive');
+      if (userFilter === 'active_sellers' && effectiveStatus !== 'active') {
+        return false;
+      }
+      if (
+        userFilter === 'pending_inactive' &&
+        effectiveStatus !== 'pending' &&
+        effectiveStatus !== 'inactive'
+      ) {
+        return false;
+      }
+      if (userFilter === 'suspended' && effectiveStatus !== 'suspended') {
+        return false;
+      }
+      if (!q) return true;
+      return (
+        (u.displayName || '').toLowerCase().includes(q) ||
+        (u.storeName || '').toLowerCase().includes(q) ||
+        u.uid.toLowerCase().includes(q) ||
+        effectiveStatus.toLowerCase().includes(q)
+      );
+    });
+  }, [allUsers, userFilter, userSearch]);
+
+  const filteredDirectProducts = useMemo(() => {
+    const q = storeSearch.trim().toLowerCase();
+    return allManageableDirectProducts.filter((prod) => {
+      const effectiveApproval: ProductApprovalStatus = prod.isSeed
+        ? 'approved'
+        : prod.approvalStatus || 'approved';
+      if (
+        storeApprovalFilter !== 'all' &&
+        effectiveApproval !== storeApprovalFilter
+      ) {
+        return false;
+      }
+      if (!q) return true;
+      return (
+        prod.title.toLowerCase().includes(q) ||
+        prod.sku.toLowerCase().includes(q) ||
+        prod.category.toLowerCase().includes(q) ||
+        (prod.sellerName || '').toLowerCase().includes(q)
+      );
+    });
+  }, [allManageableDirectProducts, storeApprovalFilter, storeSearch]);
 
   const filteredPosts = useMemo(() => {
     const q = postSearch.trim().toLowerCase();
@@ -584,18 +792,21 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
         ord.orderNumber.toLowerCase().includes(q) ||
         ord.buyerName.toLowerCase().includes(q) ||
         ord.buyerEmail.toLowerCase().includes(q) ||
+        (ord.sellerName || '').toLowerCase().includes(q) ||
+        (ord.paymentMethod || '').toLowerCase().includes(q) ||
+        (ord.paymentReference || '').toLowerCase().includes(q) ||
         ord.itemsSummary.toLowerCase().includes(q) ||
         ord.promoCode.toLowerCase().includes(q)
       );
     });
   }, [sellerOrders, orderStatusFilter, orderSearch]);
 
-  const filteredOffers = useMemo(() => {
-    const q = offerSearch.trim().toLowerCase();
-    return allManageableOffers.filter((offer) => {
+  const filteredProductAffiliateOffers = useMemo(() => {
+    const q = productAffiliateSearch.trim().toLowerCase();
+    return productAffiliateOffers.filter((offer) => {
       if (
-        offerPlatformFilter !== 'All' &&
-        offer.platform !== offerPlatformFilter
+        productAffiliatePlatformFilter !== 'All' &&
+        offer.platform !== productAffiliatePlatformFilter
       ) {
         return false;
       }
@@ -607,7 +818,55 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
         offer.priceLabel.toLowerCase().includes(q)
       );
     });
-  }, [allManageableOffers, offerPlatformFilter, offerSearch]);
+  }, [
+    productAffiliateOffers,
+    productAffiliatePlatformFilter,
+    productAffiliateSearch,
+  ]);
+
+  const filteredServiceAffiliateOffers = useMemo(() => {
+    const q = serviceAffiliateSearch.trim().toLowerCase();
+    return serviceAffiliateOffers.filter((offer) => {
+      if (
+        serviceAffiliatePlatformFilter !== 'All' &&
+        offer.platform !== serviceAffiliatePlatformFilter
+      ) {
+        return false;
+      }
+      if (!q) return true;
+      return (
+        offer.title.toLowerCase().includes(q) ||
+        offer.category.toLowerCase().includes(q) ||
+        offer.platform.toLowerCase().includes(q) ||
+        offer.priceLabel.toLowerCase().includes(q)
+      );
+    });
+  }, [
+    serviceAffiliateOffers,
+    serviceAffiliatePlatformFilter,
+    serviceAffiliateSearch,
+  ]);
+
+  const filteredInquiries = useMemo(() => {
+    const q = inquirySearch.trim().toLowerCase();
+    return contactMessages.filter((msg) => {
+      if (inquiryFilter === 'unread' && msg.status !== 'unread') return false;
+      if (inquiryFilter === 'privacy_issue' && msg.category !== 'privacy_issue')
+        return false;
+      if (inquiryFilter === 'order_support' && msg.category !== 'order_support')
+        return false;
+      if (inquiryFilter === 'resolved' && msg.status !== 'resolved')
+        return false;
+      if (!q) return true;
+      return (
+        msg.senderName.toLowerCase().includes(q) ||
+        msg.senderEmail.toLowerCase().includes(q) ||
+        msg.subject.toLowerCase().includes(q) ||
+        msg.message.toLowerCase().includes(q) ||
+        (msg.orderNumber || '').toLowerCase().includes(q)
+      );
+    });
+  }, [contactMessages, inquiryFilter, inquirySearch]);
 
   // Direct Product Composer Helpers
   function resetProductComposer() {
@@ -634,7 +893,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     setProdStatus('published');
   }
 
-  function loadDirectProductIntoComposer(prod: DirectProduct) {
+  async function loadDirectProductIntoComposer(prod: DirectProduct) {
     setEditingProductId(prod.id);
     setProdTitle(prod.title);
     setProdSubtitle(prod.subtitle);
@@ -658,6 +917,20 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     setProdHighlightsText(prod.highlights.join('\n'));
     setProdFeatured(prod.featured);
     setProdStatus(prod.status);
+
+    if (
+      prod.kind === 'digital' &&
+      !prod.isSeed &&
+      !prod.digitalFileUrl &&
+      prod.hasDigitalAsset
+    ) {
+      const secret = await fetchProtectedDigitalSecret(prod.id);
+      if (secret) {
+        setProdDigitalFileUrl(secret.url);
+        setProdDigitalFileName(secret.fileName || prod.digitalFileName || '');
+        setProdDigitalFileType(secret.fileType || prod.digitalFileType || '');
+      }
+    }
   }
 
   async function handleSaveDirectProductSubmit(e: React.FormEvent) {
@@ -720,6 +993,64 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
         err instanceof Error
           ? err.message
           : 'Unable to save Direct Store product.'
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleModerateProductDecision(
+    prod: DirectProduct,
+    decision: ProductApprovalStatus
+  ) {
+    setBusy(true);
+    setFeedbackBanner(null);
+    try {
+      const note =
+        moderationNotes[prod.id] !== undefined
+          ? moderationNotes[prod.id]
+          : prod.moderationNote || '';
+      await moderateDirectProduct(prod.id, decision, note);
+      notify(
+        'ok',
+        decision === 'approved'
+          ? `Approved "${prod.title}" for Storefront publication.`
+          : decision === 'rejected'
+          ? `Marked "${prod.title}" as requiring seller changes.`
+          : `Moved "${prod.title}" back to pending review.`
+      );
+    } catch (err) {
+      notify(
+        'err',
+        err instanceof Error
+          ? err.message
+          : 'Unable to update product approval status.'
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleModerateSellerAccount(
+    targetUid: string,
+    displayLabel: string,
+    nextStatus: SellerAccountStatus,
+    isSellerFlag: boolean
+  ) {
+    setBusy(true);
+    setFeedbackBanner(null);
+    try {
+      await moderateUserSellerStatus(targetUid, nextStatus, isSellerFlag);
+      notify(
+        'ok',
+        `Updated seller status for "${displayLabel}" to "${nextStatus}".`
+      );
+    } catch (err) {
+      notify(
+        'err',
+        err instanceof Error
+          ? err.message
+          : 'Unable to update user seller status.'
       );
     } finally {
       setBusy(false);
@@ -874,8 +1205,8 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     }
   }
 
-  // Affiliate Offer Composer Helpers
-  function resetOfferComposer() {
+  // Product Affiliate Offer Composer Helpers (strictly physical | digital)
+  function resetProductOfferComposer() {
     setEditingOfferId(undefined);
     setOfferTitle('');
     setOfferKind('physical');
@@ -892,10 +1223,10 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     setOfferStatus('published');
   }
 
-  function loadOfferIntoComposer(offer: AffiliateOffer) {
+  function loadProductOfferIntoComposer(offer: AffiliateOffer) {
     setEditingOfferId(offer.id);
     setOfferTitle(offer.title);
-    setOfferKind(offer.kind);
+    setOfferKind(offer.kind === 'digital' ? 'digital' : 'physical');
     setOfferPlatform(offer.platform);
     setOfferCategory(offer.category);
     setOfferPrice(offer.priceLabel);
@@ -909,10 +1240,43 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     setOfferStatus(offer.status);
   }
 
+  // Service Affiliate Offer Composer Helpers (strictly service)
+  function resetServiceOfferComposer() {
+    setEditingServiceOfferId(undefined);
+    setSvcTitle('');
+    setSvcPlatform('Fiverr');
+    setSvcCategory('Web & Full-Stack Dev');
+    setSvcPrice('From $150');
+    setSvcCommission('');
+    setSvcUrl('');
+    setSvcImageKey('service');
+    setSvcCustomImageUrl('');
+    setSvcVideoUrl('');
+    setSvcSummary('');
+    setSvcHighlightsText('');
+    setSvcStatus('published');
+  }
+
+  function loadServiceOfferIntoComposer(offer: AffiliateOffer) {
+    setEditingServiceOfferId(offer.id);
+    setSvcTitle(offer.title);
+    setSvcPlatform(offer.platform);
+    setSvcCategory(offer.category);
+    setSvcPrice(offer.priceLabel);
+    setSvcCommission(offer.commissionNote);
+    setSvcUrl(offer.affiliateUrl);
+    setSvcImageKey(offer.imageKey || 'service');
+    setSvcCustomImageUrl('');
+    setSvcVideoUrl(offer.videoUrl || '');
+    setSvcSummary(offer.summary);
+    setSvcHighlightsText(offer.highlights.join('\n'));
+    setSvcStatus(offer.status);
+  }
+
   function applyDefaultAffiliateIdToUrl() {
     const trimmed = offerUrl.trim();
     if (!trimmed) {
-      notify('err', 'Paste a product or service destination link first.');
+      notify('err', 'Paste a product destination link first.');
       return;
     }
 
@@ -948,7 +1312,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     }
   }
 
-  async function handleSaveOfferSubmit(e: React.FormEvent) {
+  async function handleSaveProductOfferSubmit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setFeedbackBanner(null);
@@ -964,10 +1328,13 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
         .filter(Boolean)
         .slice(0, 4);
 
+      const safeKind: OfferKind =
+        offerKind === 'digital' ? 'digital' : 'physical';
+
       const input: OfferDraftInput = {
         id: editingOfferId,
         title: offerTitle,
-        kind: offerKind,
+        kind: safeKind,
         platform: offerPlatform,
         category: offerCategory,
         priceLabel: offerPrice,
@@ -981,12 +1348,59 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
       };
 
       await saveOffer(input);
-      resetOfferComposer();
-      notify('ok', 'Affiliate product or service saved to catalog.');
+      resetProductOfferComposer();
+      notify('ok', 'Product Affiliate listing saved to catalog.');
     } catch (err) {
       notify(
         'err',
-        err instanceof Error ? err.message : 'Unable to save offering.'
+        err instanceof Error
+          ? err.message
+          : 'Unable to save Product Affiliate listing.'
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSaveServiceOfferSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setFeedbackBanner(null);
+
+    try {
+      const resolvedImage =
+        svcImageKey === 'custom' ? svcCustomImageUrl.trim() : svcImageKey;
+      const highlights = svcHighlightsText
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .slice(0, 4);
+
+      const input: OfferDraftInput = {
+        id: editingServiceOfferId,
+        title: svcTitle,
+        kind: 'service',
+        platform: svcPlatform,
+        category: svcCategory,
+        priceLabel: svcPrice,
+        commissionNote: svcCommission,
+        affiliateUrl: svcUrl,
+        imageKey: resolvedImage || 'service',
+        videoUrl: svcVideoUrl,
+        summary: svcSummary,
+        highlights,
+        status: svcStatus,
+      };
+
+      await saveOffer(input);
+      resetServiceOfferComposer();
+      notify('ok', 'Service Affiliate listing saved to catalog.');
+    } catch (err) {
+      notify(
+        'err',
+        err instanceof Error
+          ? err.message
+          : 'Unable to save Service Affiliate listing.'
       );
     } finally {
       setBusy(false);
@@ -1016,7 +1430,17 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
             : 900,
         defaultDisclosureText: cfgDefaultDisclosure,
         storeCheckoutEnabled: cfgCheckoutEnabled,
+        blogEnabled: cfgBlogEnabled,
+        storeEnabled: cfgStoreEnabled,
+        productAffiliateEnabled: cfgProductAffiliateEnabled,
+        serviceAffiliateEnabled: cfgServiceAffiliateEnabled,
         showStarterSeeds: cfgShowStarterSeeds,
+        aboutMission: cfgAboutMission,
+        aboutStory: cfgAboutStory,
+        contactEmail: cfgContactEmail,
+        contactPhone: cfgContactPhone,
+        contactLocation: cfgContactLocation,
+        privacyPolicySummary: cfgPrivacyPolicy,
       };
       await saveSiteConfig(payload);
       notify('ok', 'Global Pickra site configuration saved and published live.');
@@ -1026,6 +1450,33 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
         err instanceof Error
           ? err.message
           : 'Failed to save global site settings.'
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSaveInquiryResponse(
+    messageId: string,
+    fallbackStatus: ContactMessageStatus,
+    fallbackNote: string
+  ) {
+    setBusy(true);
+    setFeedbackBanner(null);
+    try {
+      const nextStatus = inquiryStatusDrafts[messageId] || fallbackStatus;
+      const nextNote =
+        inquiryNoteDrafts[messageId] !== undefined
+          ? inquiryNoteDrafts[messageId]
+          : fallbackNote;
+      await updateContactMessageStatus(messageId, nextStatus, nextNote);
+      notify('ok', 'Inquiry status and confidential desk response saved.');
+    } catch (err) {
+      notify(
+        'err',
+        err instanceof Error
+          ? err.message
+          : 'Failed to update inquiry response.'
       );
     } finally {
       setBusy(false);
@@ -1126,6 +1577,9 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
         'Status',
         'Buyer Name',
         'Buyer Email',
+        'Payment Method',
+        'Payment Reference',
+        'Seller Name',
         'Fulfillment Type',
         'Items',
         'Promo Code',
@@ -1133,23 +1587,36 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
         'Discount USD',
         'Shipping USD',
         'Total USD',
+        'Seller Payout USD',
+        'Payout Status',
         'Shipping Address',
       ],
-      filteredOrders.map((o) => [
-        o.orderNumber,
-        new Date(o.createdAtMs).toISOString(),
-        o.status,
-        o.buyerName,
-        o.buyerEmail,
-        o.fulfillmentType,
-        o.itemsSummary,
-        o.promoCode,
-        (o.subtotalCents / 100).toFixed(2),
-        (o.discountCents / 100).toFixed(2),
-        (o.shippingCents / 100).toFixed(2),
-        (o.totalCents / 100).toFixed(2),
-        o.shippingAddress,
-      ])
+      filteredOrders.map((o) => {
+        const netPayout =
+          typeof o.sellerPayoutCents === 'number'
+            ? o.sellerPayoutCents
+            : Math.round(o.totalCents * 0.9);
+        return [
+          o.orderNumber,
+          new Date(o.createdAtMs).toISOString(),
+          o.status,
+          o.buyerName,
+          o.buyerEmail,
+          o.paymentMethod || 'Card',
+          o.paymentReference || '—',
+          o.sellerName || 'Pickra Studio',
+          o.fulfillmentType,
+          o.itemsSummary,
+          o.promoCode,
+          (o.subtotalCents / 100).toFixed(2),
+          (o.discountCents / 100).toFixed(2),
+          (o.shippingCents / 100).toFixed(2),
+          (o.totalCents / 100).toFixed(2),
+          (netPayout / 100).toFixed(2),
+          o.payoutStatus || 'pending',
+          o.shippingAddress,
+        ];
+      })
     );
   }
 
@@ -1159,18 +1626,22 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
       [
         'SKU',
         'Title',
+        'Seller',
         'Format',
         'Category',
-        'Status',
+        'Approval Status',
+        'Publish Status',
         'Price USD',
         'Stock Count',
         'Bag Additions',
       ],
-      allManageableDirectProducts.map((p) => [
+      filteredDirectProducts.map((p) => [
         p.sku,
         p.title,
+        p.sellerName || 'Pickra Studio',
         p.kind,
         p.category,
+        p.isSeed ? 'approved' : p.approvalStatus || 'approved',
         p.isSeed ? 'starter-seed' : p.status,
         (p.priceCents / 100).toFixed(2),
         p.stockCount,
@@ -1179,9 +1650,9 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     );
   }
 
-  function handleExportAffiliateCsv() {
+  function handleExportProductAffiliateCsv() {
     downloadCsvFile(
-      `pickra-affiliate-clicks-${new Date().toISOString().slice(0, 10)}.csv`,
+      `pickra-product-affiliates-${new Date().toISOString().slice(0, 10)}.csv`,
       [
         'Title',
         'Platform',
@@ -1192,7 +1663,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
         'Tracked Clicks',
         'Destination URL',
       ],
-      filteredOffers.map((o) => [
+      filteredProductAffiliateOffers.map((o) => [
         o.title,
         o.platform,
         o.kind,
@@ -1201,6 +1672,60 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
         o.isSeed ? 'starter-seed' : o.status,
         clickCounts[o.id] || 0,
         o.affiliateUrl,
+      ])
+    );
+  }
+
+  function handleExportServiceAffiliateCsv() {
+    downloadCsvFile(
+      `pickra-service-affiliates-${new Date().toISOString().slice(0, 10)}.csv`,
+      [
+        'Title',
+        'Platform',
+        'Kind',
+        'Category',
+        'Price Label',
+        'Status',
+        'Tracked Clicks',
+        'Destination URL',
+      ],
+      filteredServiceAffiliateOffers.map((o) => [
+        o.title,
+        o.platform,
+        o.kind,
+        o.category,
+        o.priceLabel,
+        o.isSeed ? 'starter-seed' : o.status,
+        clickCounts[o.id] || 0,
+        o.affiliateUrl,
+      ])
+    );
+  }
+
+  function handleExportInquiriesCsv() {
+    downloadCsvFile(
+      `pickra-inquiries-${new Date().toISOString().slice(0, 10)}.csv`,
+      [
+        'Created At',
+        'Status',
+        'Category',
+        'Sender Name',
+        'Sender Email',
+        'Order Ref',
+        'Subject',
+        'Message',
+        'Admin Note',
+      ],
+      filteredInquiries.map((m) => [
+        new Date(m.createdAtMs).toISOString(),
+        m.status,
+        m.category,
+        m.senderName,
+        m.senderEmail,
+        m.orderNumber || '—',
+        m.subject,
+        m.message,
+        m.adminNote || '',
       ])
     );
   }
@@ -1220,41 +1745,39 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
               </h1>
               <p className="mt-4 text-sm sm:text-base text-stone-600 leading-relaxed">
                 Sign in with your verified Website Owner account to monitor
-                real-time traffic, outbound affiliate clicks, multi-creator
-                store revenue, customer orders, creator payouts, promotional
-                campaigns, and global site settings.
+                users and sellers, approve marketplace products, manage customer
+                orders and transactions, and govern all four independent
+                modules.
               </p>
             </div>
 
             <div className="space-y-5 pt-6 border-t border-stone-200/80">
               <div>
                 <h3 className="text-sm font-semibold text-stone-900">
-                  01. Live Traffic &amp; Revenue Monitor
+                  01. Live Traffic, Users &amp; Seller Governance
                 </h3>
                 <p className="mt-1 text-xs text-stone-600 leading-relaxed">
-                  Track blog reads, Amazon/Digistore24/Upwork/Fiverr clicks, bag
-                  additions, promo redemptions, and net store sales in real
-                  time.
+                  Monitor registered accounts, activate or suspend sellers, and
+                  review seller products before Storefront publication.
                 </p>
               </div>
               <div>
                 <h3 className="text-sm font-semibold text-stone-900">
-                  02. Unified CMS, Store &amp; Creator Payouts
+                  02. Four Independent Modules
                 </h3>
                 <p className="mt-1 text-xs text-stone-600 leading-relaxed">
-                  Publish Medium-style rich blogs, manage physical and digital
-                  SKUs, settle 90% creator payouts, and update customer order
-                  tracking.
-                </p>
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-stone-900">
-                  03. Site-Wide Governance &amp; Access
-                </h3>
-                <p className="mt-1 text-xs text-stone-600 leading-relaxed">
-                  Control site-wide announcement banners, shipping thresholds,
-                  checkout master switch, FTC disclosures, and Co-Admin
+                  Manage Blog, Store, Product Affiliate, and Service Affiliate
+                  as dedicated, isolated workflows with full edit and removal
                   permissions.
+                </p>
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-stone-900">
+                  03. Orders, Transactions &amp; Site Controls
+                </h3>
+                <p className="mt-1 text-xs text-stone-600 leading-relaxed">
+                  Audit customer payment methods and references, settle 90%
+                  creator payouts, and control global module visibility.
                 </p>
               </div>
             </div>
@@ -1326,7 +1849,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
             <span className="font-mono text-stone-900">{user.email}</span>.{' '}
             {isUnverifiedOwnerEmail
               ? 'For zero-trust security, owner privileges require a verified email token. Click the verification link sent to your inbox and press "Refresh Verification Status", or sign in directly with Google.'
-              : 'Creator Seller and Customer accounts can publish products and get paid under Store -> Sell on Pickra, or track orders under Store -> My Purchases, while site-wide Backend governance is reserved for the website owner.'}
+              : 'Creator Seller and Customer accounts can publish products and get paid under Store -> Seller Studio, or track orders under Store -> My Purchases, while site-wide Backend governance is reserved for the website owner.'}
           </p>
 
           {feedbackBanner && (
@@ -1468,34 +1991,58 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
       icon: Activity,
     },
     {
-      key: 'posts',
-      label: 'Editorial CMS',
-      countLabel: String(allManageablePosts.length),
-      icon: BookOpen,
+      key: 'users',
+      label: 'Users & Sellers',
+      countLabel: String(allUsers.length),
+      icon: Users,
     },
     {
       key: 'store',
-      label: 'Direct Inventory',
-      countLabel: String(allManageableDirectProducts.length),
+      label: 'Store & Approvals',
+      countLabel:
+        monitorStats.pendingApprovalProducts.length > 0
+          ? `${monitorStats.pendingApprovalProducts.length} pending`
+          : String(allManageableDirectProducts.length),
       icon: ShoppingBag,
     },
     {
-      key: 'campaigns',
-      label: 'Promo Campaigns',
-      countLabel: String(allManageableCampaigns.length),
-      icon: Megaphone,
-    },
-    {
       key: 'orders',
-      label: 'Customer Orders',
+      label: 'Orders & Transactions',
       countLabel: String(sellerOrders.length),
       icon: Package,
     },
     {
-      key: 'offers',
-      label: 'Affiliate Catalog',
-      countLabel: String(allManageableOffers.length),
+      key: 'campaigns',
+      label: 'Store Promos',
+      countLabel: String(allManageableCampaigns.length),
+      icon: Megaphone,
+    },
+    {
+      key: 'posts',
+      label: 'Blog Module',
+      countLabel: String(allManageablePosts.length),
+      icon: BookOpen,
+    },
+    {
+      key: 'product_affiliates',
+      label: 'Product Affiliate',
+      countLabel: String(productAffiliateOffers.length),
       icon: Link2,
+    },
+    {
+      key: 'service_affiliates',
+      label: 'Service Affiliate',
+      countLabel: String(serviceAffiliateOffers.length),
+      icon: Briefcase,
+    },
+    {
+      key: 'inquiries',
+      label: 'Inquiries & Privacy',
+      countLabel:
+        monitorStats.unreadInquiriesCount > 0
+          ? `${monitorStats.unreadInquiriesCount} new`
+          : String(contactMessages.length),
+      icon: MessageSquare,
     },
     {
       key: 'settings',
@@ -1597,7 +2144,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
           <div className="bg-white border border-stone-200/90 rounded-xl px-5 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-4">
             <div className="min-w-0">
               <div className="flex items-center gap-2 text-xs text-stone-500">
-                <span>Pickra Backend</span>
+                <span>Pickra Admin</span>
                 <span aria-hidden="true">/</span>
                 <span className="font-medium text-stone-900">
                   {activeNavMeta.label}
@@ -1619,18 +2166,24 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
               <h1 className="mt-1 font-serif text-xl sm:text-2xl font-medium text-stone-900">
                 {activeView === 'overview' &&
                   'Website Monitoring, Revenue & Channel Telemetry'}
+                {activeView === 'users' &&
+                  'Registered Users, Seller Activation & Account Governance'}
                 {activeView === 'posts' &&
-                  'Editorial Blog Dispatches & Block Stories'}
+                  'Blog Module — Editorial Dispatches & Block Stories'}
                 {activeView === 'store' &&
-                  'Direct Store Products & Stock Control'}
+                  'Store Module — Product Approvals, Inventory & Digital Vault'}
                 {activeView === 'campaigns' &&
-                  'Promotional Campaigns & Discount Codes'}
+                  'Store Promotional Campaigns & Discount Codes'}
                 {activeView === 'orders' &&
-                  'Direct Customer Orders & Fulfillment Queue'}
-                {activeView === 'offers' &&
-                  'Multi-Platform Affiliate Products & Services'}
+                  'Customer Orders, Payment Transactions & Seller Payouts'}
+                {activeView === 'product_affiliates' &&
+                  'Product Affiliate Module — Physical & Digital Partner Links'}
+                {activeView === 'service_affiliates' &&
+                  'Service Affiliate Module — Specialist & Freelance Partner Links'}
+                {activeView === 'inquiries' &&
+                  'Confidential Contact Us Inbox & Private Issue Escalations'}
                 {activeView === 'settings' &&
-                  'Global Site Settings, Access Control & Tracking IDs'}
+                  'Global Website Settings, Module Controls & Access Registry'}
               </h1>
             </div>
 
@@ -1695,7 +2248,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
              ========================================================= */}
           {activeView === 'overview' && (
             <div className="space-y-6">
-              {/* 5-Column Tabular KPI Strip (Single elevation panel with vertical dividers) */}
+              {/* 5-Column Tabular KPI Strip */}
               <div className="bg-white border border-stone-200/90 rounded-xl grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 divide-y sm:divide-y-0 sm:divide-x divide-stone-200/80">
                 <div className="p-5">
                   <div className="text-xs text-stone-500">
@@ -1712,23 +2265,44 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
 
                 <div className="p-5">
                   <div className="text-xs text-stone-500">
-                    Pending Fulfillment
+                    Product Approvals
                   </div>
                   <div className="mt-1.5 font-mono text-2xl font-semibold text-stone-900 tabular-nums">
-                    {monitorStats.pendingOrdersCount}
+                    {monitorStats.pendingApprovalProducts.length}
                   </div>
                   <div className="mt-1 text-[11px] text-stone-500">
-                    {monitorStats.pendingOrdersCount > 0 ? (
+                    {monitorStats.pendingApprovalProducts.length > 0 ? (
                       <button
                         type="button"
-                        onClick={() => setActiveView('orders')}
+                        onClick={() => {
+                          setStoreApprovalFilter('pending');
+                          setActiveView('store');
+                        }}
                         className="text-[#9A3412] hover:underline cursor-pointer"
                       >
-                        Review open orders →
+                        Review pending SKUs →
                       </button>
                     ) : (
-                      'All paid orders dispatched'
+                      'All seller SKUs reviewed'
                     )}
+                  </div>
+                </div>
+
+                <div className="p-5">
+                  <div className="text-xs text-stone-500">
+                    Registered Accounts
+                  </div>
+                  <div className="mt-1.5 font-mono text-2xl font-semibold text-stone-900 tabular-nums">
+                    {allUsers.length}
+                  </div>
+                  <div className="mt-1 text-[11px] text-stone-500">
+                    <button
+                      type="button"
+                      onClick={() => setActiveView('users')}
+                      className="text-stone-700 hover:text-[#9A3412] hover:underline cursor-pointer"
+                    >
+                      {monitorStats.activeSellersCount} active sellers →
+                    </button>
                   </div>
                 </div>
 
@@ -1746,7 +2320,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                   </div>
                 </div>
 
-                <div className="p-5">
+                <div className="p-5 col-span-2 sm:col-span-1">
                   <div className="text-xs text-stone-500">
                     Affiliate Outbound Clicks
                   </div>
@@ -1754,29 +2328,8 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                     {monitorStats.totalOutboundClicks}
                   </div>
                   <div className="mt-1 text-[11px] text-stone-500 font-mono tabular-nums">
-                    {
-                      allManageableOffers.filter(
-                        (o) => o.status === 'published'
-                      ).length
-                    }{' '}
-                    partner links
-                  </div>
-                </div>
-
-                <div className="p-5 col-span-2 sm:col-span-1">
-                  <div className="text-xs text-stone-500">
-                    Store Bag Additions
-                  </div>
-                  <div className="mt-1.5 font-mono text-2xl font-semibold text-stone-900 tabular-nums">
-                    {monitorStats.totalBagAdds}
-                  </div>
-                  <div className="mt-1 text-[11px] text-stone-500 font-mono tabular-nums">
-                    {
-                      allManageableCampaigns.filter(
-                        (c) => c.status === 'published'
-                      ).length
-                    }{' '}
-                    active promos
+                    {productAffiliateOffers.length} products ·{' '}
+                    {serviceAffiliateOffers.length} services
                   </div>
                 </div>
               </div>
@@ -1788,10 +2341,10 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                   <div className="px-6 py-4 border-b border-stone-200/80 flex items-center justify-between gap-4">
                     <div>
                       <h2 className="font-serif text-lg font-medium text-stone-900">
-                        Commerce &amp; Partner Network Performance
+                        Module &amp; Partner Network Performance
                       </h2>
                       <p className="text-xs text-stone-500">
-                        Unified monitoring across Pickra Direct Store, product affiliate networks, and freelance marketplaces.
+                        Independent monitoring across Store, Product Affiliate networks, and Service Affiliate marketplaces.
                       </p>
                     </div>
                     <BarChart3 className="w-4 h-4 text-stone-400 shrink-0" />
@@ -1802,7 +2355,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                       <thead>
                         <tr className="border-b border-stone-200/80 text-[11px] font-medium text-stone-500 bg-[#FBF9F5]">
                           <th className="py-2.5 px-5">Platform / Channel</th>
-                          <th className="py-2.5 px-4">Model</th>
+                          <th className="py-2.5 px-4">Module</th>
                           <th className="py-2.5 px-4 text-right">
                             Live Listings
                           </th>
@@ -1849,10 +2402,10 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                 <div className="xl:col-span-4 bg-white border border-stone-200/90 rounded-xl p-6 space-y-4">
                   <div className="pb-3 border-b border-stone-200/80">
                     <h2 className="font-serif text-lg font-medium text-stone-900">
-                      Creator Action Queue
+                      Admin Action Queue
                     </h2>
                     <p className="text-xs text-stone-500">
-                      Operational items requiring your review.
+                      Operational items across modules requiring review.
                     </p>
                   </div>
 
@@ -1860,10 +2413,31 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                     <div className="py-3 first:pt-0 flex items-center justify-between gap-3">
                       <div>
                         <div className="font-medium text-stone-900">
-                          Unshipped Direct Orders
+                          Seller Products Pending Approval
                         </div>
                         <div className="text-stone-500">
-                          Paid or processing customer orders
+                          Awaiting moderation before public display
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStoreApprovalFilter('pending');
+                          setActiveView('store');
+                        }}
+                        className="font-mono font-semibold text-[#9A3412] hover:underline tabular-nums cursor-pointer whitespace-nowrap shrink-0"
+                      >
+                        {monitorStats.pendingApprovalProducts.length} pending →
+                      </button>
+                    </div>
+
+                    <div className="py-3 flex items-center justify-between gap-3">
+                      <div>
+                        <div className="font-medium text-stone-900">
+                          Unshipped Customer Orders
+                        </div>
+                        <div className="text-stone-500">
+                          Paid or processing Store orders
                         </div>
                       </div>
                       <button
@@ -1886,7 +2460,10 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                       </div>
                       <button
                         type="button"
-                        onClick={() => setActiveView('store')}
+                        onClick={() => {
+                          setStoreApprovalFilter('all');
+                          setActiveView('store');
+                        }}
                         className="font-mono font-semibold text-stone-900 hover:text-[#9A3412] hover:underline tabular-nums cursor-pointer whitespace-nowrap shrink-0"
                       >
                         {monitorStats.lowStockProducts.length} SKUs →
@@ -1896,7 +2473,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                     <div className="py-3 flex items-center justify-between gap-3">
                       <div>
                         <div className="font-medium text-stone-900">
-                          Unpublished Story Drafts
+                          Unpublished Blog Drafts
                         </div>
                         <div className="text-stone-500">
                           Dispatches saved as working drafts
@@ -1911,13 +2488,35 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                       </button>
                     </div>
 
+                    <div className="py-3 flex items-center justify-between gap-3">
+                      <div>
+                        <div className="font-medium text-stone-900">
+                          Inquiries &amp; Private Issues
+                        </div>
+                        <div className="text-stone-500">
+                          {monitorStats.privacyIssuesCount > 0
+                            ? `${monitorStats.privacyIssuesCount} open privacy/data request(s)`
+                            : 'Contact Us messages & confidential tickets'}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setActiveView('inquiries')}
+                        className="font-mono font-semibold text-[#9A3412] hover:underline tabular-nums cursor-pointer whitespace-nowrap shrink-0"
+                      >
+                        {monitorStats.unreadInquiriesCount > 0
+                          ? `${monitorStats.unreadInquiriesCount} unread →`
+                          : `${contactMessages.length} total →`}
+                      </button>
+                    </div>
+
                     <div className="py-3 last:pb-0 flex items-center justify-between gap-3">
                       <div>
                         <div className="font-medium text-stone-900">
-                          Announcement Ribbon
+                          Module Switches &amp; Ribbon
                         </div>
                         <div className="text-stone-500">
-                          Top-of-site promotional bar
+                          Configure visibility across all 4 modules
                         </div>
                       </div>
                       <button
@@ -1925,7 +2524,6 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                         onClick={() => setActiveView('settings')}
                         className="font-medium text-stone-700 hover:text-[#9A3412] hover:underline cursor-pointer whitespace-nowrap shrink-0"
                       >
-                        {siteConfig.announcementEnabled ? 'Enabled' : 'Off'} ·
                         Configure →
                       </button>
                     </div>
@@ -1938,10 +2536,10 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                 <div className="p-5 sm:p-6 border-b border-stone-200/80 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                   <div>
                     <h2 className="font-serif text-lg font-medium text-stone-900">
-                      Real-Time Telemetry &amp; Conversion Log
+                      Real-Time Activity &amp; Conversion Log
                     </h2>
                     <p className="text-xs text-stone-500">
-                      Authenticated visitor and customer interactions synced to Firestore, including article reads, partner clicks, bag additions, and direct orders.
+                      Visitor and customer interactions synced to Firestore across Blog reads, Store orders, and Affiliate clicks.
                     </p>
                   </div>
 
@@ -2001,10 +2599,10 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                 {filteredEvents.length === 0 ? (
                   <div className="py-12 px-6 text-center">
                     <p className="text-sm text-stone-600">
-                      No matching telemetry events recorded yet.
+                      No matching activity events recorded yet.
                     </p>
                     <p className="mt-1 text-xs text-stone-500">
-                      Open any article, inspect a Direct Store edition, click a partner offer, or place a test order to see live events stream here.
+                      Open any article, inspect a Store product, click an affiliate offer, or place a test order to see live events stream here.
                     </p>
                   </div>
                 ) : (
@@ -2071,17 +2669,271 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
           )}
 
           {/* =========================================================
-              VIEW 2: EDITORIAL CMS — STORIES & BLOCK EDITOR
+              VIEW 2: USERS & SELLERS GOVERNANCE
+             ========================================================= */}
+          {activeView === 'users' && (
+            <div className="bg-white border border-stone-200/90 rounded-xl overflow-hidden">
+              <div className="p-6 border-b border-stone-200/80 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div>
+                  <h2 className="font-serif text-xl font-medium text-stone-900">
+                    Registered Users &amp; Seller Account Governance ({filteredUsers.length})
+                  </h2>
+                  <p className="mt-1 text-xs text-stone-500">
+                    Monitor registered Pickra accounts, activate or suspend seller privileges (enforced in both UI and Firestore security rules), and manage Co-Admin access.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <div className="inline-flex items-center gap-1 p-1 bg-[#F3EFE8] rounded-lg">
+                    {(
+                      [
+                        ['all', 'All Users'],
+                        ['active_sellers', 'Active Sellers'],
+                        ['pending_inactive', 'Buyers / Pending'],
+                        ['suspended', 'Suspended'],
+                      ] as const
+                    ).map(([st, label]) => (
+                      <button
+                        key={st}
+                        type="button"
+                        onClick={() => setUserFilter(st)}
+                        className={`px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                          userFilter === st
+                            ? 'bg-white text-stone-900 shadow-xs'
+                            : 'text-stone-600 hover:text-stone-900'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="relative w-full sm:w-56">
+                    <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="search"
+                      value={userSearch}
+                      onChange={(e) => setUserSearch(e.target.value)}
+                      placeholder="Name, store, or UID..."
+                      className="w-full pl-8 pr-7 py-2 text-xs bg-[#FBF9F5] border border-stone-200 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {filteredUsers.length === 0 ? (
+                <div className="py-14 px-6 text-center">
+                  <Users className="w-7 h-7 text-stone-300 mx-auto" />
+                  <p className="mt-3 text-sm text-stone-600">
+                    No registered user profiles match your filter.
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y divide-stone-200/80 px-6">
+                  {filteredUsers.map((acct) => {
+                    const effectiveStatus: SellerAccountStatus =
+                      acct.sellerStatus ||
+                      (acct.isSeller ? 'active' : 'inactive');
+                    const sellerSkuCount = allManageableDirectProducts.filter(
+                      (p) => !p.isSeed && p.sellerId === acct.uid
+                    ).length;
+                    const isSelf = acct.uid === user.uid;
+                    const isCoAdmin = coAdminSet.has(acct.uid);
+                    const payoutSummary =
+                      sellerPayoutSummaryByUid[acct.uid] || '';
+
+                    return (
+                      <div
+                        key={acct.uid}
+                        className="py-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+                      >
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="flex flex-wrap items-center gap-2 text-xs">
+                            <span className="font-semibold text-sm text-stone-900">
+                              {acct.displayName || 'Pickra Member'}
+                            </span>
+                            {acct.storeName && (
+                              <span className="px-2 py-0.5 text-[11px] font-medium bg-[#F3EFE8] text-stone-800 rounded">
+                                Store: {acct.storeName}
+                              </span>
+                            )}
+                            <span
+                              className={`px-2 py-0.5 text-[11px] font-medium rounded capitalize ${
+                                effectiveStatus === 'active'
+                                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                                  : effectiveStatus === 'suspended'
+                                  ? 'bg-red-50 text-red-800 border border-red-200'
+                                  : effectiveStatus === 'pending'
+                                  ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                                  : 'bg-stone-100 text-stone-600 border border-stone-200'
+                              }`}
+                            >
+                              Seller: {effectiveStatus}
+                            </span>
+                            {isSelf && (
+                              <span className="px-2 py-0.5 text-[11px] font-semibold bg-[#1C1917] text-white rounded">
+                                Owner (You)
+                              </span>
+                            )}
+                            {!isSelf && isCoAdmin && (
+                              <span className="px-2 py-0.5 text-[11px] font-semibold bg-[#9A3412]/10 text-[#9A3412] rounded">
+                                Co-Admin
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
+                            <span className="font-mono text-[11px] text-stone-600">
+                              UID: {acct.uid}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  await navigator.clipboard.writeText(acct.uid);
+                                  setCopiedUserUid(acct.uid);
+                                  window.setTimeout(
+                                    () => setCopiedUserUid(null),
+                                    1600
+                                  );
+                                } catch {
+                                  // ignore clipboard
+                                }
+                              }}
+                              className="inline-flex items-center gap-1 text-[11px] text-[#9A3412] hover:underline cursor-pointer"
+                            >
+                              {copiedUserUid === acct.uid ? (
+                                <>
+                                  <Check className="w-3 h-3 text-emerald-700" />
+                                  <span>Copied</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="w-3 h-3" />
+                                  <span>Copy UID</span>
+                                </>
+                              )}
+                            </button>
+                            <span aria-hidden="true">·</span>
+                            <span className="font-mono tabular-nums">
+                              {sellerSkuCount} Store{' '}
+                              {sellerSkuCount === 1 ? 'listing' : 'listings'}
+                            </span>
+                            {acct.createdAtMs ? (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span>
+                                  Joined {formatShortTimestamp(acct.createdAtMs)}
+                                </span>
+                              </>
+                            ) : null}
+                          </div>
+
+                          {payoutSummary && (
+                            <div className="text-xs font-mono text-stone-600">
+                              Latest Order Payout Destination: {payoutSummary}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 shrink-0 text-xs">
+                          {effectiveStatus !== 'active' && (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() =>
+                                void handleModerateSellerAccount(
+                                  acct.uid,
+                                  acct.storeName || acct.displayName || acct.uid,
+                                  'active',
+                                  true
+                                )
+                              }
+                              className="inline-flex items-center gap-1 px-3 py-1.5 font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg cursor-pointer whitespace-nowrap"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Activate Seller</span>
+                            </button>
+                          )}
+
+                          {effectiveStatus !== 'suspended' && !isSelf && (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() =>
+                                void handleModerateSellerAccount(
+                                  acct.uid,
+                                  acct.storeName || acct.displayName || acct.uid,
+                                  'suspended',
+                                  false
+                                )
+                              }
+                              className="inline-flex items-center gap-1 px-3 py-1.5 font-medium text-red-800 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg cursor-pointer whitespace-nowrap"
+                            >
+                              <XCircle className="w-3.5 h-3.5" />
+                              <span>Suspend Seller</span>
+                            </button>
+                          )}
+
+                          {effectiveStatus !== 'inactive' && !isSelf && (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() =>
+                                void handleModerateSellerAccount(
+                                  acct.uid,
+                                  acct.storeName || acct.displayName || acct.uid,
+                                  'inactive',
+                                  false
+                                )
+                              }
+                              className="px-3 py-1.5 font-medium text-stone-700 bg-[#F3EFE8] hover:bg-stone-200 rounded-lg cursor-pointer whitespace-nowrap"
+                            >
+                              Set Buyer Only
+                            </button>
+                          )}
+
+                          {!isSelf &&
+                            (isCoAdmin ? (
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void revokeCoAdmin(acct.uid)}
+                                className="px-3 py-1.5 font-medium text-stone-700 border border-stone-300 hover:border-red-400 hover:text-red-700 rounded-lg cursor-pointer whitespace-nowrap"
+                              >
+                                Revoke Co-Admin
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void grantCoAdmin(acct.uid)}
+                                className="px-3 py-1.5 font-medium text-stone-800 border border-stone-300 hover:border-stone-500 rounded-lg cursor-pointer whitespace-nowrap"
+                              >
+                                Make Co-Admin
+                              </button>
+                            ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* =========================================================
+              VIEW 3: BLOG MODULE — STORIES & BLOCK EDITOR
              ========================================================= */}
           {activeView === 'posts' && (
             <div className="bg-white border border-stone-200/90 rounded-xl overflow-hidden">
               <div className="p-6 border-b border-stone-200/80 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div>
                   <h2 className="font-serif text-xl font-medium text-stone-900">
-                    Published Stories, Working Drafts &amp; Readership
+                    Blog Module — Published Stories &amp; Working Drafts
                   </h2>
                   <p className="mt-1 text-xs text-stone-500">
-                    Control publication status directly or open any dispatch in the Medium-style Block Editor to embed links, images, videos, Direct Store editions, and affiliate picks.
+                    Manage your independent editorial blog. Open any story in the Medium-style Block Editor to format prose, upload images, embed videos, apply color themes, and insert clean hyperlinks.
                   </p>
                 </div>
 
@@ -2147,7 +2999,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
                           <span className="font-medium text-stone-800 capitalize">
-                            {post.isSeed ? 'Starter Showcase' : post.status}
+                            {post.isSeed ? 'Starter Story' : post.status}
                           </span>
                           <span aria-hidden="true">·</span>
                           <span>{post.category}</span>
@@ -2156,10 +3008,6 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                           <span aria-hidden="true">·</span>
                           <span className="font-mono tabular-nums">
                             {postViewCounts[post.id] || 0} reads
-                          </span>
-                          <span aria-hidden="true">·</span>
-                          <span className="font-mono tabular-nums">
-                            {post.attachedOfferIds.length} partner links
                           </span>
                         </div>
 
@@ -2281,7 +3129,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
           )}
 
           {/* =========================================================
-              VIEW 3: DIRECT STORE CATALOG & STOCK MANAGEMENT
+              VIEW 4: STORE MODULE — PRODUCT APPROVALS & STOCK CONTROL
              ========================================================= */}
           {activeView === 'store' && (
             <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
@@ -2294,11 +3142,11 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                   <div>
                     <h2 className="font-serif text-lg font-medium text-stone-900">
                       {editingProductId
-                        ? 'Edit Direct Store SKU'
-                        : 'Add Direct Store Product'}
+                        ? 'Edit Store Product SKU'
+                        : 'Add Store Product'}
                     </h2>
                     <p className="mt-0.5 text-xs text-stone-500">
-                      First-party physical editions and instant digital toolkits.
+                      Physical goods and vaulted digital downloads (auto-approved when published by Admin).
                     </p>
                   </div>
                   {editingProductId && (
@@ -2356,7 +3204,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                         setProdKind(nextKind);
                         if (nextKind === 'digital') {
                           setProdDeliveryNote(
-                            'Instant digital download unlocked immediately'
+                            'Instant digital download unlocked immediately after checkout'
                           );
                           setProdStock('999');
                         } else {
@@ -2377,6 +3225,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                       Category
                     </label>
                     <EditableDropdownSelect
+                      canEdit={true}
                       ariaLabel="Category"
                       value={prodCategory}
                       options={dropdownOptions.storeCategories}
@@ -2552,19 +3401,19 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                   )}
                 </div>
 
-                {/* Digital Deliverable Upload / Link */}
+                {/* Vaulted Digital Deliverable Upload / Link */}
                 {prodKind === 'digital' && (
                   <div className="p-3 bg-[#FBF9F5] border border-stone-200 rounded-lg space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs font-medium text-stone-700">
-                        Digital Product Upload / Download Link
+                        Vaulted Digital Asset / Download Link
                       </span>
                       <label className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded cursor-pointer">
                         <Upload className="w-3 h-3" />
                         <span>Upload PDF / ZIP / Excel / HTML / eBook</span>
                         <input
                           type="file"
-                          accept=".pdf,.zip,.xlsx,.xls,.csv,.epub,.mobi,.html,.htm,.json,.js,.ts,.py,.txt,.md,.xml,.svg,.docx,.pptx"
+                          accept=".pdf,.zip,.xlsx,.xls,.csv,.epub,.mobi,.html,.htm,.json,.txt,.md,.xml,.svg,.docx,.pptx"
                           onChange={async (e) => {
                             const f = e.target.files?.[0];
                             if (!f) return;
@@ -2604,15 +3453,16 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                       }}
                       placeholder={
                         prodDigitalFileUrl.startsWith('data:')
-                          ? `Uploaded: ${prodDigitalFileName} (${prodDigitalFileType})`
-                          : 'Or paste HTTPS download link (Google Drive, Dropbox, OneDrive...)'
+                          ? `Vaulted File: ${prodDigitalFileName} (${prodDigitalFileType})`
+                          : 'Or paste HTTPS download link (stored in protected /productSecrets vault)...'
                       }
                       className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded"
                     />
                     {prodDigitalFileUrl && (
                       <div className="flex items-center justify-between text-[11px] text-stone-600">
                         <span className="truncate">
-                          Active: {prodDigitalFileName || 'Direct Link'} (
+                          Protected Asset:{' '}
+                          {prodDigitalFileName || 'Vaulted Download Link'} (
                           {prodDigitalFileType || 'Digital Asset'})
                         </span>
                         <button
@@ -2686,7 +3536,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                     onChange={(e) => setProdFeatured(e.target.checked)}
                     className="rounded border-stone-300"
                   />
-                  <span>Feature on Journal homepage showcase</span>
+                  <span>Feature as Spotlight Product on Storefront</span>
                 </label>
 
                 <button
@@ -2697,20 +3547,21 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                   {busy
                     ? 'Saving Product...'
                     : editingProductId
-                    ? 'Update Direct Store Product'
-                    : 'Publish Direct Store Product'}
+                    ? 'Update Store Product'
+                    : 'Publish Store Product'}
                 </button>
               </form>
 
-              {/* Right 7 cols: Live Inventory & Stock Table */}
+              {/* Right 7 cols: Live Inventory, Seller Approvals & Stock Table */}
               <div className="xl:col-span-7 bg-white border border-stone-200/90 rounded-xl overflow-hidden">
                 <div className="p-6 border-b border-stone-200/80 flex flex-wrap items-center justify-between gap-4">
                   <div>
                     <h3 className="font-serif text-lg font-medium text-stone-900">
-                      Direct Store Inventory ({allManageableDirectProducts.length})
+                      Store Inventory &amp; Product Moderation (
+                      {filteredDirectProducts.length})
                     </h3>
                     <p className="text-xs text-stone-500">
-                      Adjust live stock counts and visibility directly from the table.
+                      Review seller submissions (Approve / Request Changes), adjust physical stock, or edit/remove any Store listing.
                     </p>
                   </div>
 
@@ -2724,183 +3575,319 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                   </button>
                 </div>
 
-                <div className="divide-y divide-stone-200/80 px-6">
-                  {allManageableDirectProducts.map((prod) => {
-                    const draftStock =
-                      stockDrafts[prod.id] !== undefined
-                        ? stockDrafts[prod.id]
-                        : String(prod.stockCount);
-                    return (
-                      <div
-                        key={prod.id}
-                        className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                {/* Approval Filter Bar */}
+                <div className="px-6 py-3 bg-[#FBF9F5] border-b border-stone-200/80 flex flex-wrap items-center justify-between gap-3">
+                  <div className="inline-flex items-center gap-1 p-1 bg-[#F3EFE8] rounded-lg">
+                    {(
+                      [
+                        ['all', `All (${allManageableDirectProducts.length})`],
+                        [
+                          'pending',
+                          `Pending (${monitorStats.pendingApprovalProducts.length})`,
+                        ],
+                        ['approved', 'Approved'],
+                        [
+                          'rejected',
+                          `Rejected (${monitorStats.rejectedProductsCount})`,
+                        ],
+                      ] as const
+                    ).map(([st, label]) => (
+                      <button
+                        key={st}
+                        type="button"
+                        onClick={() => setStoreApprovalFilter(st)}
+                        className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                          storeApprovalFilter === st
+                            ? 'bg-white text-stone-900 shadow-xs'
+                            : 'text-stone-600 hover:text-stone-900'
+                        }`}
                       >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
-                            <span className="font-mono font-semibold text-stone-800">
-                              {prod.sku}
-                            </span>
-                            <span aria-hidden="true">·</span>
-                            <span className="capitalize">
-                              {prod.isSeed ? 'Starter Edition' : prod.status}
-                            </span>
-                            <span aria-hidden="true">·</span>
-                            <span>
-                              {prod.kind === 'digital' ? 'Digital' : 'Physical'}
-                            </span>
-                            <span aria-hidden="true">·</span>
-                            <span className="font-mono font-semibold text-stone-900 tabular-nums">
-                              {formatPriceCents(prod.priceCents)}
-                            </span>
-                            <span aria-hidden="true">·</span>
-                            <span>
-                              By {prod.sellerName || 'Pickra Studio'}
-                            </span>
-                            <span aria-hidden="true">·</span>
-                            <span className="font-mono tabular-nums">
-                              {productBagCounts[prod.id] || 0} bag adds
-                            </span>
-                          </div>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
 
-                          <h4 className="mt-1 text-sm font-semibold text-stone-900">
-                            {prod.title}
-                          </h4>
-                        </div>
+                  <div className="relative w-full sm:w-52">
+                    <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="search"
+                      value={storeSearch}
+                      onChange={(e) => setStoreSearch(e.target.value)}
+                      placeholder="SKU, title, seller..."
+                      className="w-full pl-8 pr-7 py-1.5 text-xs bg-white border border-stone-200 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                    />
+                  </div>
+                </div>
 
-                        <div className="flex flex-wrap items-center gap-2 shrink-0 text-xs">
-                          {!prod.isSeed ? (
-                            <>
-                              <div className="inline-flex items-center gap-1">
-                                <label
-                                  htmlFor={`stock-${prod.id}`}
-                                  className="text-[11px] text-stone-500"
-                                >
-                                  Stock:
-                                </label>
-                                <input
-                                  id={`stock-${prod.id}`}
-                                  type="number"
-                                  min="0"
-                                  max="100000"
-                                  value={draftStock}
-                                  onChange={(e) =>
-                                    setStockDrafts((prev) => ({
-                                      ...prev,
-                                      [prod.id]: e.target.value,
-                                    }))
-                                  }
-                                  onBlur={() => {
-                                    const parsed = Math.max(
-                                      0,
-                                      Number.parseInt(draftStock || '0', 10) ||
-                                        0
-                                    );
-                                    if (parsed !== prod.stockCount) {
-                                      void updateDirectProductStatus(
-                                        prod.id,
-                                        prod.status,
-                                        parsed
-                                      );
-                                    }
-                                  }}
-                                  className="w-16 px-2 py-1.5 text-xs font-mono tabular-nums bg-[#FBF9F5] border border-stone-300 rounded-lg text-right"
-                                />
+                <div className="divide-y divide-stone-200/80 px-6">
+                  {filteredDirectProducts.length === 0 ? (
+                    <div className="py-12 text-center text-xs text-stone-500">
+                      No Store products match this moderation filter.
+                    </div>
+                  ) : (
+                    filteredDirectProducts.map((prod) => {
+                      const draftStock =
+                        stockDrafts[prod.id] !== undefined
+                          ? stockDrafts[prod.id]
+                          : String(prod.stockCount);
+                      const approval: ProductApprovalStatus = prod.isSeed
+                        ? 'approved'
+                        : prod.approvalStatus || 'approved';
+                      const noteDraft =
+                        moderationNotes[prod.id] !== undefined
+                          ? moderationNotes[prod.id]
+                          : prod.moderationNote || '';
+
+                      return (
+                        <div key={prod.id} className="py-4 space-y-3">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
+                                <span className="font-mono font-semibold text-stone-800">
+                                  {prod.sku}
+                                </span>
+                                <span aria-hidden="true">·</span>
+                                <span className="capitalize">
+                                  {prod.isSeed ? 'Starter Edition' : prod.status}
+                                </span>
+                                {!prod.isSeed && (
+                                  <span
+                                    className={`px-2 py-0.5 text-[11px] font-medium rounded capitalize ${
+                                      approval === 'approved'
+                                        ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                                        : approval === 'pending'
+                                        ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                                        : 'bg-red-50 text-red-800 border border-red-200'
+                                    }`}
+                                  >
+                                    {approval === 'approved'
+                                      ? 'Approved'
+                                      : approval === 'pending'
+                                      ? 'Pending Review'
+                                      : 'Changes Requested'}
+                                  </span>
+                                )}
+                                <span aria-hidden="true">·</span>
+                                <span>
+                                  {prod.kind === 'digital'
+                                    ? 'Digital'
+                                    : 'Physical'}
+                                </span>
+                                <span aria-hidden="true">·</span>
+                                <span className="font-mono font-semibold text-stone-900 tabular-nums">
+                                  {formatPriceCents(prod.priceCents)}
+                                </span>
+                                <span aria-hidden="true">·</span>
+                                <span>
+                                  By {prod.sellerName || 'Pickra Studio'}
+                                </span>
+                                <span aria-hidden="true">·</span>
+                                <span className="font-mono tabular-nums">
+                                  {productBagCounts[prod.id] || 0} bag adds
+                                </span>
                               </div>
 
-                              <select
-                                aria-label={`Status for ${prod.title}`}
-                                value={prod.status}
-                                onChange={(e) =>
-                                  void updateDirectProductStatus(
-                                    prod.id,
-                                    e.target.value as PublishStatus,
-                                    prod.stockCount
-                                  )
+                              <h4 className="mt-1 text-sm font-semibold text-stone-900">
+                                {prod.title}
+                              </h4>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2 shrink-0 text-xs">
+                              {!prod.isSeed ? (
+                                <>
+                                  <div className="inline-flex items-center gap-1">
+                                    <label
+                                      htmlFor={`stock-${prod.id}`}
+                                      className="text-[11px] text-stone-500"
+                                    >
+                                      Stock:
+                                    </label>
+                                    <input
+                                      id={`stock-${prod.id}`}
+                                      type="number"
+                                      min="0"
+                                      max="100000"
+                                      value={draftStock}
+                                      onChange={(e) =>
+                                        setStockDrafts((prev) => ({
+                                          ...prev,
+                                          [prod.id]: e.target.value,
+                                        }))
+                                      }
+                                      onBlur={() => {
+                                        const parsed = Math.max(
+                                          0,
+                                          Number.parseInt(
+                                            draftStock || '0',
+                                            10
+                                          ) || 0
+                                        );
+                                        if (parsed !== prod.stockCount) {
+                                          void updateDirectProductStatus(
+                                            prod.id,
+                                            prod.status,
+                                            parsed
+                                          );
+                                        }
+                                      }}
+                                      className="w-16 px-2 py-1.5 text-xs font-mono tabular-nums bg-[#FBF9F5] border border-stone-300 rounded-lg text-right"
+                                    />
+                                  </div>
+
+                                  <select
+                                    aria-label={`Status for ${prod.title}`}
+                                    value={prod.status}
+                                    onChange={(e) =>
+                                      void updateDirectProductStatus(
+                                        prod.id,
+                                        e.target.value as PublishStatus,
+                                        prod.stockCount
+                                      )
+                                    }
+                                    className="px-2.5 py-1.5 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg capitalize"
+                                  >
+                                    {PUBLISH_STATUSES.map((st) => (
+                                      <option key={st} value={st}>
+                                        {st}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </>
+                              ) : (
+                                <span className="font-mono text-xs text-stone-500 tabular-nums">
+                                  Stock: {prod.stockCount}
+                                </span>
+                              )}
+
+                              <label className="inline-flex items-center gap-1 px-2.5 py-1.5 font-medium text-stone-700 bg-[#FBF9F5] hover:bg-stone-100 border border-stone-200 rounded-lg cursor-pointer whitespace-nowrap">
+                                <Camera className="w-3.5 h-3.5 text-[#9A3412]" />
+                                <span>Photo</span>
+                                <input
+                                  type="file"
+                                  accept="image/jpeg,image/png,image/webp,image/gif"
+                                  onChange={async (e) => {
+                                    const f = e.target.files?.[0];
+                                    if (!f) return;
+                                    try {
+                                      const dataUrl =
+                                        await compressImageFileToDataUrl(f);
+                                      await updateDirectProductImage(
+                                        prod.id,
+                                        dataUrl
+                                      );
+                                      notify('ok', 'Product photo updated.');
+                                    } catch (err) {
+                                      notify(
+                                        'err',
+                                        err instanceof Error
+                                          ? err.message
+                                          : 'Failed to update product photo.'
+                                      );
+                                    } finally {
+                                      e.target.value = '';
+                                    }
+                                  }}
+                                  className="hidden"
+                                />
+                              </label>
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void loadDirectProductIntoComposer(prod)
                                 }
-                                className="px-2.5 py-1.5 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg capitalize"
+                                className="px-3 py-1.5 font-medium text-stone-800 bg-[#F3EFE8] hover:bg-stone-200 rounded-lg cursor-pointer whitespace-nowrap"
                               >
-                                {PUBLISH_STATUSES.map((st) => (
-                                  <option key={st} value={st}>
-                                    {st}
-                                  </option>
-                                ))}
-                              </select>
-                            </>
-                          ) : (
-                            <span className="font-mono text-xs text-stone-500 tabular-nums">
-                              Stock: {prod.stockCount}
-                            </span>
-                          )}
+                                Edit
+                              </button>
 
-                          <label className="inline-flex items-center gap-1 px-2.5 py-1.5 font-medium text-stone-700 bg-[#FBF9F5] hover:bg-stone-100 border border-stone-200 rounded-lg cursor-pointer whitespace-nowrap">
-                            <Camera className="w-3.5 h-3.5 text-[#9A3412]" />
-                            <span>Photo</span>
-                            <input
-                              type="file"
-                              accept="image/jpeg,image/png,image/webp,image/gif"
-                              onChange={async (e) => {
-                                const f = e.target.files?.[0];
-                                if (!f) return;
-                                try {
-                                  const dataUrl =
-                                    await compressImageFileToDataUrl(f);
-                                  await updateDirectProductImage(prod.id, dataUrl);
-                                  notify('ok', 'Product photo updated.');
-                                } catch (err) {
-                                  notify(
-                                    'err',
-                                    err instanceof Error
-                                      ? err.message
-                                      : 'Failed to update product photo.'
-                                  );
-                                } finally {
-                                  e.target.value = '';
+                              {confirmDeleteId === prod.id ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    void deleteDirectProduct(prod.id);
+                                    setConfirmDeleteId(null);
+                                  }}
+                                  className="text-red-700 font-semibold hover:underline cursor-pointer"
+                                >
+                                  Confirm
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteId(prod.id)}
+                                  className="p-1.5 text-stone-400 hover:text-red-700 cursor-pointer"
+                                  aria-label={`Delete ${prod.title}`}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Seller Moderation Bar for Non-Seed Store Products */}
+                          {!prod.isSeed && (
+                            <div className="p-2.5 bg-[#FBF9F5] border border-stone-200/80 rounded-lg flex flex-col sm:flex-row sm:items-center gap-2">
+                              <input
+                                type="text"
+                                maxLength={240}
+                                value={noteDraft}
+                                onChange={(e) =>
+                                  setModerationNotes((prev) => ({
+                                    ...prev,
+                                    [prod.id]: e.target.value,
+                                  }))
                                 }
-                              }}
-                              className="hidden"
-                            />
-                          </label>
-
-                          <button
-                            type="button"
-                            onClick={() => loadDirectProductIntoComposer(prod)}
-                            className="px-3 py-1.5 font-medium text-stone-800 bg-[#F3EFE8] hover:bg-stone-200 rounded-lg cursor-pointer whitespace-nowrap"
-                          >
-                            Edit
-                          </button>
-
-                          {confirmDeleteId === prod.id ? (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                void deleteDirectProduct(prod.id);
-                                setConfirmDeleteId(null);
-                              }}
-                              className="text-red-700 font-semibold hover:underline cursor-pointer"
-                            >
-                              Confirm
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => setConfirmDeleteId(prod.id)}
-                              className="p-1.5 text-stone-400 hover:text-red-700 cursor-pointer"
-                              aria-label={`Delete ${prod.title}`}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                                placeholder="Optional moderation note to seller (e.g., verify file format or pricing)..."
+                                className="flex-1 px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded-md focus:outline-none focus:border-[#9A3412]"
+                              />
+                              <div className="flex items-center gap-2 shrink-0">
+                                {approval !== 'approved' && (
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() =>
+                                      void handleModerateProductDecision(
+                                        prod,
+                                        'approved'
+                                      )
+                                    }
+                                    className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-md cursor-pointer whitespace-nowrap"
+                                  >
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                    <span>Approve &amp; Publish</span>
+                                  </button>
+                                )}
+                                {approval !== 'rejected' && (
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() =>
+                                      void handleModerateProductDecision(
+                                        prod,
+                                        'rejected'
+                                      )
+                                    }
+                                    className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-red-800 bg-red-50 hover:bg-red-100 border border-red-200 rounded-md cursor-pointer whitespace-nowrap"
+                                  >
+                                    <XCircle className="w-3.5 h-3.5" />
+                                    <span>Reject</span>
+                                  </button>
+                                )}
+                              </div>
+                            </div>
                           )}
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })
+                  )}
                 </div>
               </div>
             </div>
           )}
 
           {/* =========================================================
-              VIEW 4: MARKETING CAMPAIGNS & PROMO CODES
+              VIEW 5: STORE PROMOTIONAL CAMPAIGNS & PROMO CODES
              ========================================================= */}
           {activeView === 'campaigns' && (
             <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
@@ -2913,8 +3900,8 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                   <div>
                     <h2 className="font-serif text-lg font-medium text-stone-900">
                       {editingCampaignId
-                        ? 'Edit Promo Campaign'
-                        : 'Launch Promo Campaign'}
+                        ? 'Edit Store Promo Campaign'
+                        : 'Launch Store Promo Campaign'}
                     </h2>
                     <p className="mt-0.5 text-xs text-stone-500">
                       Create percentage promo codes and shareable auto-apply Storefront links.
@@ -3015,6 +4002,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                       Placement Channel
                     </label>
                     <EditableDropdownSelect
+                      canEdit={true}
                       ariaLabel="Placement Channel"
                       value={campChannel}
                       options={
@@ -3119,11 +4107,11 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
               <div className="xl:col-span-7 bg-white border border-stone-200/90 rounded-xl overflow-hidden">
                 <div className="p-6 border-b border-stone-200/80">
                   <h3 className="font-serif text-lg font-medium text-stone-900">
-                    Marketing Campaigns &amp; Promo Redemptions (
+                    Store Promo Campaigns &amp; Redemptions (
                     {allManageableCampaigns.length})
                   </h3>
                   <p className="text-xs text-stone-500">
-                    Copy shareable promo URLs to attach inside blog stories, newsletters, or social bio links.
+                    Copy shareable Storefront promo URLs for external newsletters or social announcements.
                   </p>
                 </div>
 
@@ -3246,7 +4234,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
           )}
 
           {/* =========================================================
-              VIEW 5: CUSTOMER ORDERS & FULFILLMENT LEDGER
+              VIEW 6: CUSTOMER ORDERS, TRANSACTIONS & PAYOUT LEDGER
              ========================================================= */}
           {activeView === 'orders' && (
             <div className="space-y-6">
@@ -3296,10 +4284,10 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                 <div className="p-6 border-b border-stone-200/80 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                   <div>
                     <h2 className="font-serif text-lg font-medium text-stone-900">
-                      Customer Orders, Fulfillment &amp; Creator Payouts
+                      Customer Orders, Payment Transactions &amp; Seller Payouts
                     </h2>
                     <p className="text-xs text-stone-500">
-                      Monitor all marketplace orders, update courier tracking, and settle 90% net payouts to third-party creator sellers.
+                      Monitor guest and member transactions, inspect masked payment references, update fulfillment tracking, and settle 90% net payouts to sellers.
                     </p>
                   </div>
 
@@ -3328,7 +4316,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                         type="search"
                         value={orderSearch}
                         onChange={(e) => setOrderSearch(e.target.value)}
-                        placeholder="Order #, buyer, seller..."
+                        placeholder="Order #, buyer, payment ref..."
                         className="w-full pl-8 pr-7 py-2 text-xs bg-[#FBF9F5] border border-stone-200 rounded-lg focus:outline-none focus:border-[#9A3412]"
                       />
                     </div>
@@ -3407,6 +4395,23 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                             <h3 className="text-sm font-semibold text-stone-900">
                               {order.itemsSummary}
                             </h3>
+
+                            <div className="text-xs text-stone-700">
+                              Transaction:{' '}
+                              <span className="font-semibold text-stone-900">
+                                {order.paymentMethod || 'Card'}
+                              </span>{' '}
+                              · Ref:{' '}
+                              <span className="font-mono text-stone-800">
+                                {order.paymentReference || 'Verified Checkout'}
+                              </span>{' '}
+                              ·{' '}
+                              <span className="text-stone-500">
+                                {order.buyerId === 'guest'
+                                  ? 'Guest Checkout'
+                                  : 'Signed-In Buyer'}
+                              </span>
+                            </div>
 
                             <div className="text-xs text-stone-600">
                               Seller:{' '}
@@ -3594,7 +4599,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                                     },
                                   }))
                                 }
-                                placeholder="Payout transaction reference (e.g., Stripe tr_... or PayPal TXN)..."
+                                placeholder="Payout transaction reference (e.g., Telebirr / Bank / PayPal TXN)..."
                                 className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
                               />
                             </div>
@@ -3609,30 +4614,30 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
           )}
 
           {/* =========================================================
-              VIEW 6: AFFILIATE PRODUCTS & FREELANCE SERVICES CATALOG
+              VIEW 7: PRODUCT AFFILIATE MODULE (PHYSICAL & DIGITAL ONLY)
              ========================================================= */}
-          {activeView === 'offers' && (
+          {activeView === 'product_affiliates' && (
             <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-              {/* Left 5 cols: Multi-Platform Affiliate Composer */}
+              {/* Left 5 cols: Product Affiliate Composer */}
               <form
-                onSubmit={(e) => void handleSaveOfferSubmit(e)}
+                onSubmit={(e) => void handleSaveProductOfferSubmit(e)}
                 className="xl:col-span-5 bg-white border border-stone-200/90 rounded-xl p-6 space-y-4"
               >
                 <div className="pb-4 border-b border-stone-200/80 flex items-center justify-between gap-2">
                   <div>
                     <h2 className="font-serif text-lg font-medium text-stone-900">
                       {editingOfferId
-                        ? 'Edit Affiliate Link'
-                        : 'Add Affiliate Product or Service'}
+                        ? 'Edit Product Affiliate Link'
+                        : 'Add Product Affiliate Link'}
                     </h2>
                     <p className="mt-0.5 text-xs text-stone-500">
-                      Amazon, Digistore24, Gumroad, ClickBank, Upwork &amp; Fiverr.
+                      Physical &amp; digital products across Amazon, Digistore24, ClickBank, Gumroad &amp; partner platforms.
                     </p>
                   </div>
                   {editingOfferId && (
                     <button
                       type="button"
-                      onClick={resetOfferComposer}
+                      onClick={resetProductOfferComposer}
                       className="text-xs font-medium text-stone-600 hover:text-stone-900 underline cursor-pointer shrink-0"
                     >
                       New Form
@@ -3642,7 +4647,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
 
                 <div>
                   <label className="block text-xs font-medium text-stone-700 mb-1">
-                    Offering Title
+                    Product Title
                   </label>
                   <input
                     type="text"
@@ -3651,7 +4656,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                     maxLength={140}
                     value={offerTitle}
                     onChange={(e) => setOfferTitle(e.target.value)}
-                    placeholder="e.g., Keychron Q1 Max or Upwork SaaS Architect"
+                    placeholder="e.g., Keychron Q1 Max or Digistore24 Automation Suite"
                     className="w-full px-3 py-2 text-sm bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
                   />
                 </div>
@@ -3659,18 +4664,19 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                 <div className="grid grid-cols-3 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-stone-700 mb-1">
-                      Type
+                      Product Type
                     </label>
                     <select
                       value={offerKind}
                       onChange={(e) =>
-                        setOfferKind(e.target.value as OfferKind)
+                        setOfferKind(
+                          e.target.value === 'digital' ? 'digital' : 'physical'
+                        )
                       }
                       className="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
                     >
                       <option value="physical">Physical</option>
                       <option value="digital">Digital</option>
-                      <option value="service">Service</option>
                     </select>
                   </div>
 
@@ -3679,40 +4685,25 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                       Platform
                     </label>
                     <EditableDropdownSelect
-                      ariaLabel="Platform"
+                      canEdit={true}
+                      ariaLabel="Product Affiliate Platform"
                       value={offerPlatform}
-                      options={
-                        offerKind === 'service'
-                          ? dropdownOptions.servicePlatforms
-                          : dropdownOptions.productPlatforms
-                      }
+                      options={dropdownOptions.productPlatforms}
                       onChange={(val) =>
                         setOfferPlatform(val as AffiliatePlatform)
                       }
                       onAddOption={(opt) =>
-                        addDropdownOption(
-                          offerKind === 'service'
-                            ? 'servicePlatforms'
-                            : 'productPlatforms',
-                          opt
-                        )
+                        addDropdownOption('productPlatforms', opt)
                       }
                       onRenameOption={(oldOpt, newOpt) =>
                         renameDropdownOption(
-                          offerKind === 'service'
-                            ? 'servicePlatforms'
-                            : 'productPlatforms',
+                          'productPlatforms',
                           oldOpt,
                           newOpt
                         )
                       }
                       onDeleteOption={(opt) =>
-                        deleteDropdownOption(
-                          offerKind === 'service'
-                            ? 'servicePlatforms'
-                            : 'productPlatforms',
-                          opt
-                        )
+                        deleteDropdownOption('productPlatforms', opt)
                       }
                       selectClassName="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
                       placeholder="New platform..."
@@ -3742,7 +4733,8 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                       Department / Category
                     </label>
                     <EditableDropdownSelect
-                      ariaLabel="Department or Category"
+                      canEdit={true}
+                      ariaLabel="Product Affiliate Category"
                       value={offerCategory}
                       options={dropdownOptions.affiliateCategories}
                       onChange={setOfferCategory}
@@ -3766,7 +4758,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-stone-700 mb-1">
-                      Editorial Tagline (Optional)
+                      Tagline (Optional)
                     </label>
                     <input
                       type="text"
@@ -3782,7 +4774,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                 <div>
                   <div className="flex items-center justify-between gap-2 mb-1">
                     <label className="text-xs font-medium text-stone-700">
-                      Affiliate Destination URL (HTTPS)
+                      Product Affiliate Destination URL (HTTPS)
                     </label>
                     {(offerPlatform === 'Amazon' ||
                       offerPlatform === 'Digistore24') && (
@@ -3800,13 +4792,13 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                     required
                     value={offerUrl}
                     onChange={(e) => setOfferUrl(e.target.value)}
-                    placeholder="https://www.amazon.com/dp/..."
+                    placeholder="https://www.amazon.com/dp/... or https://www.digistore24.com/..."
                     className="w-full px-3 py-2 text-xs font-mono bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
                   />
                 </div>
 
                 <ImageUploadPicker
-                  label="Visual / Thumbnail (Upload Photo, Paste URL, or Studio Preset)"
+                  label="Product Visual / Thumbnail (Upload Photo, Paste URL, or Preset)"
                   value={offerImageKey}
                   onChange={setOfferImageKey}
                   previewAspectClass="aspect-[16/9]"
@@ -3817,7 +4809,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs font-medium text-stone-700 inline-flex items-center gap-1">
                       <Video className="w-3.5 h-3.5 text-[#9A3412]" />
-                      <span>Video Attachment (Optional)</span>
+                      <span>Product Video Attachment (Optional)</span>
                     </span>
                     <div className="flex items-center gap-2">
                       <label className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-white bg-[#1C1917] hover:bg-[#9A3412] rounded cursor-pointer">
@@ -3892,7 +4884,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
 
                 <div>
                   <label className="block text-xs font-medium text-stone-700 mb-1">
-                    Description &amp; Affiliate Links (supports [Label](https://...) &amp; pasted URLs)
+                    Description &amp; Product Links (supports [Label](https://...) &amp; pasted URLs)
                   </label>
                   <textarea
                     rows={4}
@@ -3901,7 +4893,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                     maxLength={2500}
                     value={offerSummary}
                     onChange={(e) => setOfferSummary(e.target.value)}
-                    placeholder="Write description and paste digital/physical product or service affiliate links..."
+                    placeholder="Write product description and paste physical or digital affiliate links..."
                     className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
                   />
                 </div>
@@ -3929,50 +4921,49 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                   {busy
                     ? 'Saving Link...'
                     : editingOfferId
-                    ? 'Update Affiliate Offering'
-                    : 'Save to Affiliate Catalog'}
+                    ? 'Update Product Affiliate Listing'
+                    : 'Save to Product Affiliate Catalog'}
                 </button>
               </form>
 
-              {/* Right 7 cols: Affiliate Catalog & Outbound Click Monitor */}
+              {/* Right 7 cols: Product Affiliate Catalog & Outbound Click Monitor */}
               <div className="xl:col-span-7 bg-white border border-stone-200/90 rounded-xl overflow-hidden">
                 <div className="p-6 border-b border-stone-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
                     <h3 className="font-serif text-lg font-medium text-stone-900">
-                      Affiliate Links &amp; Outbound Clicks ({filteredOffers.length})
+                      Product Affiliate Listings ({filteredProductAffiliateOffers.length})
                     </h3>
                     <p className="text-xs text-stone-500">
-                      Monitor partner click performance across products and freelance services.
+                      Dedicated physical and digital product affiliate offers (never mixed with freelance services).
                     </p>
                   </div>
 
                   <button
                     type="button"
-                    onClick={handleExportAffiliateCsv}
+                    onClick={handleExportProductAffiliateCsv}
                     className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-stone-800 bg-[#F3EFE8] hover:bg-stone-200 rounded-lg cursor-pointer whitespace-nowrap shrink-0"
                   >
                     <FileDown className="w-3.5 h-3.5" />
-                    <span>Export Clicks CSV</span>
+                    <span>Export Product Clicks CSV</span>
                   </button>
                 </div>
 
                 <div className="px-6 py-3 bg-[#FBF9F5] border-b border-stone-200/80 flex flex-wrap items-center justify-between gap-3">
                   <select
-                    aria-label="Filter affiliate links by platform"
-                    value={offerPlatformFilter}
+                    aria-label="Filter product affiliate links by platform"
+                    value={productAffiliatePlatformFilter}
                     onChange={(e) =>
-                      setOfferPlatformFilter(
+                      setProductAffiliatePlatformFilter(
                         e.target.value as 'All' | AffiliatePlatform
                       )
                     }
                     className="px-3 py-1.5 text-xs bg-white border border-stone-200 rounded-lg text-stone-700"
                   >
-                    <option value="All">All Networks</option>
+                    <option value="All">All Product Networks</option>
                     {Array.from(
                       new Set([
                         ...dropdownOptions.productPlatforms,
-                        ...dropdownOptions.servicePlatforms,
-                        ...PLATFORMS,
+                        ...PRODUCT_AFFILIATE_PLATFORMS,
                       ])
                     ).map((p) => (
                       <option key={p} value={p}>
@@ -3985,130 +4976,885 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                     <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
                       type="search"
-                      value={offerSearch}
-                      onChange={(e) => setOfferSearch(e.target.value)}
-                      placeholder="Search partner offers..."
+                      value={productAffiliateSearch}
+                      onChange={(e) => setProductAffiliateSearch(e.target.value)}
+                      placeholder="Search product affiliates..."
                       className="w-full pl-8 pr-7 py-1.5 text-xs bg-white border border-stone-200 rounded-lg focus:outline-none focus:border-[#9A3412]"
                     />
                   </div>
                 </div>
 
                 <div className="divide-y divide-stone-200/80 px-6">
-                  {filteredOffers.map((offer) => (
-                    <div
-                      key={offer.id}
-                      className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
-                          <span className="font-medium text-[#9A3412]">
-                            {offer.platform}
-                          </span>
-                          <span aria-hidden="true">·</span>
-                          <span className="capitalize">{offer.kind}</span>
-                          <span aria-hidden="true">·</span>
-                          <span className="font-mono text-stone-800">
-                            {offer.priceLabel}
-                          </span>
-                          <span aria-hidden="true">·</span>
-                          <span className="font-mono font-semibold text-stone-900 tabular-nums">
-                            {clickCounts[offer.id] || 0} clicks
-                          </span>
-                        </div>
-                        <h4 className="mt-1 text-sm font-semibold text-stone-900">
-                          {offer.title}
-                        </h4>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-2.5 shrink-0 text-xs">
-                        {!offer.isSeed && (
-                          <select
-                            aria-label={`Status for ${offer.title}`}
-                            value={offer.status}
-                            onChange={(e) =>
-                              void updateOfferStatus(
-                                offer.id,
-                                e.target.value as PublishStatus
-                              )
-                            }
-                            className="px-2.5 py-1.5 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg capitalize"
-                          >
-                            {PUBLISH_STATUSES.map((st) => (
-                              <option key={st} value={st}>
-                                {st}
-                              </option>
-                            ))}
-                          </select>
-                        )}
-
-                        <label className="inline-flex items-center gap-1 px-2.5 py-1.5 font-medium text-stone-700 bg-[#FBF9F5] hover:bg-stone-100 border border-stone-200 rounded-lg cursor-pointer whitespace-nowrap">
-                          <Camera className="w-3.5 h-3.5 text-[#9A3412]" />
-                          <span>Photo</span>
-                          <input
-                            type="file"
-                            accept="image/jpeg,image/png,image/webp,image/gif"
-                            onChange={async (e) => {
-                              const f = e.target.files?.[0];
-                              if (!f) return;
-                              try {
-                                const dataUrl =
-                                  await compressImageFileToDataUrl(f);
-                                await updateOfferImage(offer.id, dataUrl);
-                                notify('ok', 'Affiliate offer photo updated.');
-                              } catch (err) {
-                                notify(
-                                  'err',
-                                  err instanceof Error
-                                    ? err.message
-                                    : 'Failed to update offer photo.'
-                                );
-                              } finally {
-                                e.target.value = '';
-                              }
-                            }}
-                            className="hidden"
-                          />
-                        </label>
-
-                        <button
-                          type="button"
-                          onClick={() => loadOfferIntoComposer(offer)}
-                          className="px-3 py-1.5 font-medium text-stone-800 bg-[#F3EFE8] hover:bg-stone-200 rounded-lg cursor-pointer whitespace-nowrap"
-                        >
-                          Edit
-                        </button>
-
-                        {confirmDeleteId === offer.id ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void deleteOffer(offer.id);
-                              setConfirmDeleteId(null);
-                            }}
-                            className="text-red-700 font-semibold hover:underline cursor-pointer"
-                          >
-                            Confirm
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeleteId(offer.id)}
-                            className="p-1.5 text-stone-400 hover:text-red-700 cursor-pointer"
-                            aria-label={`Delete ${offer.title}`}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
+                  {filteredProductAffiliateOffers.length === 0 ? (
+                    <div className="py-12 text-center text-xs text-stone-500">
+                      No Product Affiliate listings match your filter.
                     </div>
-                  ))}
+                  ) : (
+                    filteredProductAffiliateOffers.map((offer) => (
+                      <div
+                        key={offer.id}
+                        className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
+                            <span className="font-medium text-[#9A3412]">
+                              {offer.platform}
+                            </span>
+                            <span aria-hidden="true">·</span>
+                            <span className="capitalize">{offer.kind}</span>
+                            <span aria-hidden="true">·</span>
+                            <span className="font-mono text-stone-800">
+                              {offer.priceLabel}
+                            </span>
+                            <span aria-hidden="true">·</span>
+                            <span className="font-mono font-semibold text-stone-900 tabular-nums">
+                              {clickCounts[offer.id] || 0} clicks
+                            </span>
+                          </div>
+                          <h4 className="mt-1 text-sm font-semibold text-stone-900">
+                            {offer.title}
+                          </h4>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2.5 shrink-0 text-xs">
+                          {!offer.isSeed && (
+                            <select
+                              aria-label={`Status for ${offer.title}`}
+                              value={offer.status}
+                              onChange={(e) =>
+                                void updateOfferStatus(
+                                  offer.id,
+                                  e.target.value as PublishStatus
+                                )
+                              }
+                              className="px-2.5 py-1.5 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg capitalize"
+                            >
+                              {PUBLISH_STATUSES.map((st) => (
+                                <option key={st} value={st}>
+                                  {st}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+
+                          <label className="inline-flex items-center gap-1 px-2.5 py-1.5 font-medium text-stone-700 bg-[#FBF9F5] hover:bg-stone-100 border border-stone-200 rounded-lg cursor-pointer whitespace-nowrap">
+                            <Camera className="w-3.5 h-3.5 text-[#9A3412]" />
+                            <span>Photo</span>
+                            <input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp,image/gif"
+                              onChange={async (e) => {
+                                const f = e.target.files?.[0];
+                                if (!f) return;
+                                try {
+                                  const dataUrl =
+                                    await compressImageFileToDataUrl(f);
+                                  await updateOfferImage(offer.id, dataUrl);
+                                  notify(
+                                    'ok',
+                                    'Product Affiliate photo updated.'
+                                  );
+                                } catch (err) {
+                                  notify(
+                                    'err',
+                                    err instanceof Error
+                                      ? err.message
+                                      : 'Failed to update offer photo.'
+                                  );
+                                } finally {
+                                  e.target.value = '';
+                                }
+                              }}
+                              className="hidden"
+                            />
+                          </label>
+
+                          <button
+                            type="button"
+                            onClick={() => loadProductOfferIntoComposer(offer)}
+                            className="px-3 py-1.5 font-medium text-stone-800 bg-[#F3EFE8] hover:bg-stone-200 rounded-lg cursor-pointer whitespace-nowrap"
+                          >
+                            Edit
+                          </button>
+
+                          {confirmDeleteId === offer.id ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void deleteOffer(offer.id);
+                                setConfirmDeleteId(null);
+                              }}
+                              className="text-red-700 font-semibold hover:underline cursor-pointer"
+                            >
+                              Confirm
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteId(offer.id)}
+                              className="p-1.5 text-stone-400 hover:text-red-700 cursor-pointer"
+                              aria-label={`Delete ${offer.title}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             </div>
           )}
 
           {/* =========================================================
-              VIEW 7: GLOBAL SITE SETTINGS, ACCESS REGISTRY & AFFILIATE IDS
+              VIEW 8: SERVICE AFFILIATE MODULE (FREELANCE SERVICES ONLY)
+             ========================================================= */}
+          {activeView === 'service_affiliates' && (
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+              {/* Left 5 cols: Service Affiliate Composer */}
+              <form
+                onSubmit={(e) => void handleSaveServiceOfferSubmit(e)}
+                className="xl:col-span-5 bg-white border border-stone-200/90 rounded-xl p-6 space-y-4"
+              >
+                <div className="pb-4 border-b border-stone-200/80 flex items-center justify-between gap-2">
+                  <div>
+                    <h2 className="font-serif text-lg font-medium text-stone-900">
+                      {editingServiceOfferId
+                        ? 'Edit Service Affiliate Link'
+                        : 'Add Service Affiliate Link'}
+                    </h2>
+                    <p className="mt-0.5 text-xs text-stone-500">
+                      Professional &amp; freelance services across Fiverr, Upwork, Toptal, 99designs &amp; partner marketplaces.
+                    </p>
+                  </div>
+                  {editingServiceOfferId && (
+                    <button
+                      type="button"
+                      onClick={resetServiceOfferComposer}
+                      className="text-xs font-medium text-stone-600 hover:text-stone-900 underline cursor-pointer shrink-0"
+                    >
+                      New Form
+                    </button>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-stone-700 mb-1">
+                    Service Title
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    minLength={2}
+                    maxLength={140}
+                    value={svcTitle}
+                    onChange={(e) => setSvcTitle(e.target.value)}
+                    placeholder="e.g., Fiverr Pro Brand Identity Studio or Upwork SaaS Architect"
+                    className="w-full px-3 py-2 text-sm bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-stone-700 mb-1">
+                      Service Marketplace
+                    </label>
+                    <EditableDropdownSelect
+                      canEdit={true}
+                      ariaLabel="Service Affiliate Platform"
+                      value={svcPlatform}
+                      options={dropdownOptions.servicePlatforms}
+                      onChange={(val) =>
+                        setSvcPlatform(val as AffiliatePlatform)
+                      }
+                      onAddOption={(opt) =>
+                        addDropdownOption('servicePlatforms', opt)
+                      }
+                      onRenameOption={(oldOpt, newOpt) =>
+                        renameDropdownOption(
+                          'servicePlatforms',
+                          oldOpt,
+                          newOpt
+                        )
+                      }
+                      onDeleteOption={(opt) =>
+                        deleteDropdownOption('servicePlatforms', opt)
+                      }
+                      selectClassName="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                      placeholder="New marketplace..."
+                      compact
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-stone-700 mb-1">
+                      Rate / Starting Price
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      maxLength={40}
+                      value={svcPrice}
+                      onChange={(e) => setSvcPrice(e.target.value)}
+                      placeholder="From $150 or $85/hr"
+                      className="w-full px-2.5 py-2 text-xs font-mono bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-stone-700 mb-1">
+                      Service Specialty
+                    </label>
+                    <EditableDropdownSelect
+                      canEdit={true}
+                      ariaLabel="Service Specialty Category"
+                      value={svcCategory}
+                      options={dropdownOptions.affiliateCategories}
+                      onChange={setSvcCategory}
+                      onAddOption={(opt) =>
+                        addDropdownOption('affiliateCategories', opt)
+                      }
+                      onRenameOption={(oldOpt, newOpt) =>
+                        renameDropdownOption(
+                          'affiliateCategories',
+                          oldOpt,
+                          newOpt
+                        )
+                      }
+                      onDeleteOption={(opt) =>
+                        deleteDropdownOption('affiliateCategories', opt)
+                      }
+                      selectClassName="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                      placeholder="New specialty..."
+                      compact
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-stone-700 mb-1">
+                      Turnaround / Badge (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={80}
+                      value={svcCommission}
+                      onChange={(e) => setSvcCommission(e.target.value)}
+                      placeholder="Vetted Pro · 5-Day Delivery"
+                      className="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-stone-700 mb-1">
+                    Service Seller Affiliate URL (HTTPS)
+                  </label>
+                  <input
+                    type="url"
+                    required
+                    value={svcUrl}
+                    onChange={(e) => setSvcUrl(e.target.value)}
+                    placeholder="https://go.fiverr.com/visit/... or https://www.upwork.com/..."
+                    className="w-full px-3 py-2 text-xs font-mono bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                  />
+                </div>
+
+                <ImageUploadPicker
+                  label="Service Visual / Portfolio Thumbnail (Upload Photo, Paste URL, or Preset)"
+                  value={svcImageKey}
+                  onChange={setSvcImageKey}
+                  previewAspectClass="aspect-[16/9]"
+                  compact
+                />
+
+                <div className="p-3 bg-[#FBF9F5] border border-stone-200 rounded-lg space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-stone-700 inline-flex items-center gap-1">
+                      <Video className="w-3.5 h-3.5 text-[#9A3412]" />
+                      <span>Service Intro / Demo Video (Optional)</span>
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <label className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-white bg-[#1C1917] hover:bg-[#9A3412] rounded cursor-pointer">
+                        <Upload className="w-3 h-3" />
+                        <span>Upload Video</span>
+                        <input
+                          type="file"
+                          accept="video/mp4,video/webm,video/quicktime"
+                          onChange={async (e) => {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            try {
+                              const url = await readCompactVideoFileToDataUrl(f);
+                              setSvcVideoUrl(url);
+                            } catch (err) {
+                              notify(
+                                'err',
+                                err instanceof Error
+                                  ? err.message
+                                  : 'Video upload failed.'
+                              );
+                            } finally {
+                              e.target.value = '';
+                            }
+                          }}
+                          className="hidden"
+                        />
+                      </label>
+                      {svcVideoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setSvcVideoUrl('')}
+                          className="text-[11px] text-red-700 hover:underline cursor-pointer"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <input
+                    type="url"
+                    value={
+                      svcVideoUrl.startsWith('data:video/') ? '' : svcVideoUrl
+                    }
+                    onChange={(e) => setSvcVideoUrl(e.target.value)}
+                    placeholder="https://www.youtube.com/watch?v=... or Vimeo / .mp4"
+                    className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded"
+                  />
+                  {svcVideoUrl && (
+                    <VideoEmbedFigure url={svcVideoUrl} compact />
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-stone-700 mb-1">
+                    Status
+                  </label>
+                  <select
+                    value={svcStatus}
+                    onChange={(e) =>
+                      setSvcStatus(e.target.value as PublishStatus)
+                    }
+                    className="w-full px-2.5 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                  >
+                    <option value="published">Published</option>
+                    <option value="draft">Draft</option>
+                    <option value="archived">Archived</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-stone-700 mb-1">
+                    Service Scope &amp; Seller Links (supports [Label](https://...) &amp; pasted URLs)
+                  </label>
+                  <textarea
+                    rows={4}
+                    required
+                    minLength={10}
+                    maxLength={2500}
+                    value={svcSummary}
+                    onChange={(e) => setSvcSummary(e.target.value)}
+                    placeholder="Describe deliverables, turnaround, and paste service seller affiliate links..."
+                    className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-stone-700 mb-1">
+                    Deliverable Highlights (up to 4 lines)
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={svcHighlightsText}
+                    onChange={(e) => setSvcHighlightsText(e.target.value)}
+                    placeholder={
+                      'Dedicated technical discovery call\nSource files & commercial license included'
+                    }
+                    className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="w-full py-2.5 px-4 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] disabled:bg-stone-300 rounded-lg transition-colors cursor-pointer"
+                >
+                  {busy
+                    ? 'Saving Service...'
+                    : editingServiceOfferId
+                    ? 'Update Service Affiliate Listing'
+                    : 'Save to Service Affiliate Catalog'}
+                </button>
+              </form>
+
+              {/* Right 7 cols: Service Affiliate Catalog & Outbound Click Monitor */}
+              <div className="xl:col-span-7 bg-white border border-stone-200/90 rounded-xl overflow-hidden">
+                <div className="p-6 border-b border-stone-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="font-serif text-lg font-medium text-stone-900">
+                      Service Affiliate Listings ({filteredServiceAffiliateOffers.length})
+                    </h3>
+                    <p className="text-xs text-stone-500">
+                      Dedicated professional and freelance service referrals (never mixed with physical/digital products).
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleExportServiceAffiliateCsv}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-stone-800 bg-[#F3EFE8] hover:bg-stone-200 rounded-lg cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    <FileDown className="w-3.5 h-3.5" />
+                    <span>Export Service Clicks CSV</span>
+                  </button>
+                </div>
+
+                <div className="px-6 py-3 bg-[#FBF9F5] border-b border-stone-200/80 flex flex-wrap items-center justify-between gap-3">
+                  <select
+                    aria-label="Filter service affiliate links by marketplace"
+                    value={serviceAffiliatePlatformFilter}
+                    onChange={(e) =>
+                      setServiceAffiliatePlatformFilter(
+                        e.target.value as 'All' | AffiliatePlatform
+                      )
+                    }
+                    className="px-3 py-1.5 text-xs bg-white border border-stone-200 rounded-lg text-stone-700"
+                  >
+                    <option value="All">All Service Marketplaces</option>
+                    {Array.from(
+                      new Set([
+                        ...dropdownOptions.servicePlatforms,
+                        ...SERVICE_AFFILIATE_PLATFORMS,
+                      ])
+                    ).map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="relative w-full sm:w-56">
+                    <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="search"
+                      value={serviceAffiliateSearch}
+                      onChange={(e) => setServiceAffiliateSearch(e.target.value)}
+                      placeholder="Search service affiliates..."
+                      className="w-full pl-8 pr-7 py-1.5 text-xs bg-white border border-stone-200 rounded-lg focus:outline-none focus:border-[#9A3412]"
+                    />
+                  </div>
+                </div>
+
+                <div className="divide-y divide-stone-200/80 px-6">
+                  {filteredServiceAffiliateOffers.length === 0 ? (
+                    <div className="py-12 text-center text-xs text-stone-500">
+                      No Service Affiliate listings match your filter.
+                    </div>
+                  ) : (
+                    filteredServiceAffiliateOffers.map((offer) => (
+                      <div
+                        key={offer.id}
+                        className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
+                            <span className="font-medium text-[#9A3412]">
+                              {offer.platform}
+                            </span>
+                            <span aria-hidden="true">·</span>
+                            <span>{offer.category}</span>
+                            <span aria-hidden="true">·</span>
+                            <span className="font-mono text-stone-800">
+                              {offer.priceLabel}
+                            </span>
+                            <span aria-hidden="true">·</span>
+                            <span className="font-mono font-semibold text-stone-900 tabular-nums">
+                              {clickCounts[offer.id] || 0} clicks
+                            </span>
+                          </div>
+                          <h4 className="mt-1 text-sm font-semibold text-stone-900">
+                            {offer.title}
+                          </h4>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2.5 shrink-0 text-xs">
+                          {!offer.isSeed && (
+                            <select
+                              aria-label={`Status for ${offer.title}`}
+                              value={offer.status}
+                              onChange={(e) =>
+                                void updateOfferStatus(
+                                  offer.id,
+                                  e.target.value as PublishStatus
+                                )
+                              }
+                              className="px-2.5 py-1.5 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg capitalize"
+                            >
+                              {PUBLISH_STATUSES.map((st) => (
+                                <option key={st} value={st}>
+                                  {st}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+
+                          <label className="inline-flex items-center gap-1 px-2.5 py-1.5 font-medium text-stone-700 bg-[#FBF9F5] hover:bg-stone-100 border border-stone-200 rounded-lg cursor-pointer whitespace-nowrap">
+                            <Camera className="w-3.5 h-3.5 text-[#9A3412]" />
+                            <span>Photo</span>
+                            <input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp,image/gif"
+                              onChange={async (e) => {
+                                const f = e.target.files?.[0];
+                                if (!f) return;
+                                try {
+                                  const dataUrl =
+                                    await compressImageFileToDataUrl(f);
+                                  await updateOfferImage(offer.id, dataUrl);
+                                  notify(
+                                    'ok',
+                                    'Service Affiliate photo updated.'
+                                  );
+                                } catch (err) {
+                                  notify(
+                                    'err',
+                                    err instanceof Error
+                                      ? err.message
+                                      : 'Failed to update service photo.'
+                                  );
+                                } finally {
+                                  e.target.value = '';
+                                }
+                              }}
+                              className="hidden"
+                            />
+                          </label>
+
+                          <button
+                            type="button"
+                            onClick={() => loadServiceOfferIntoComposer(offer)}
+                            className="px-3 py-1.5 font-medium text-stone-800 bg-[#F3EFE8] hover:bg-stone-200 rounded-lg cursor-pointer whitespace-nowrap"
+                          >
+                            Edit
+                          </button>
+
+                          {confirmDeleteId === offer.id ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void deleteOffer(offer.id);
+                                setConfirmDeleteId(null);
+                              }}
+                              className="text-red-700 font-semibold hover:underline cursor-pointer"
+                            >
+                              Confirm
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteId(offer.id)}
+                              className="p-1.5 text-stone-400 hover:text-red-700 cursor-pointer"
+                              aria-label={`Delete ${offer.title}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* =========================================================
+              VIEW 9: INQUIRIES, CONTACT US & PRIVATE ISSUES INBOX
+             ========================================================= */}
+          {activeView === 'inquiries' && (
+            <div className="space-y-6">
+              <div className="bg-white border border-stone-200/90 rounded-xl p-5 sm:p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="flex flex-wrap items-center gap-1 p-1 bg-[#F3EFE8] rounded-lg">
+                  {(
+                    [
+                      { key: 'all', label: `All (${contactMessages.length})` },
+                      {
+                        key: 'unread',
+                        label: `Unread (${monitorStats.unreadInquiriesCount})`,
+                      },
+                      {
+                        key: 'privacy_issue',
+                        label: `Private / Data Issues (${
+                          contactMessages.filter(
+                            (m) => m.category === 'privacy_issue'
+                          ).length
+                        })`,
+                      },
+                      {
+                        key: 'order_support',
+                        label: `Order Support (${
+                          contactMessages.filter(
+                            (m) => m.category === 'order_support'
+                          ).length
+                        })`,
+                      },
+                      {
+                        key: 'resolved',
+                        label: `Resolved (${
+                          contactMessages.filter((m) => m.status === 'resolved')
+                            .length
+                        })`,
+                      },
+                    ] as const
+                  ).map((tab) => (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => setInquiryFilter(tab.key)}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap ${
+                        inquiryFilter === tab.key
+                          ? 'bg-white text-stone-900 shadow-xs'
+                          : 'text-stone-600 hover:text-stone-900'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="search"
+                      value={inquirySearch}
+                      onChange={(e) => setInquirySearch(e.target.value)}
+                      placeholder="Search sender, email, order #, subject..."
+                      className="pl-8 pr-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg w-64 focus:outline-none focus:border-[#9A3412]"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleExportInquiriesCsv}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-stone-800 bg-[#FBF9F5] border border-stone-300 hover:border-stone-400 rounded-lg cursor-pointer whitespace-nowrap"
+                  >
+                    <FileDown className="w-3.5 h-3.5 text-[#9A3412]" />
+                    <span>Export CSV</span>
+                  </button>
+                </div>
+              </div>
+
+              {!isBootstrappedCreator ? (
+                <div className="bg-white border border-stone-200/90 rounded-xl p-8 text-center space-y-2">
+                  <Lock className="w-5 h-5 text-[#9A3412] mx-auto" />
+                  <h2 className="font-serif text-lg font-medium text-stone-900">
+                    Restricted Owner-Only Privacy Vault
+                  </h2>
+                  <p className="text-xs text-stone-600 max-w-md mx-auto">
+                    Customer Contact Us submissions and confidential Private Issue escalations are encrypted in transit and restricted strictly to the verified primary website owner ({BOOTSTRAPPED_ADMIN_EMAIL}).
+                  </p>
+                </div>
+              ) : filteredInquiries.length === 0 ? (
+                <div className="bg-white border border-stone-200/90 rounded-xl p-10 text-center space-y-2">
+                  <MessageSquare className="w-5 h-5 text-stone-400 mx-auto" />
+                  <h2 className="font-serif text-lg font-medium text-stone-900">
+                    No matching Contact Us or Private Issue messages
+                  </h2>
+                  <p className="text-xs text-stone-500 max-w-md mx-auto">
+                    Messages submitted by guests, buyers, and sellers on the Contact Us &amp; Private Issues page appear here in real time.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {filteredInquiries.map((msg) => {
+                    const categoryLabel =
+                      CONTACT_CATEGORY_OPTIONS.find(
+                        (c) => c.value === msg.category
+                      )?.label || msg.category;
+                    const draftStatus =
+                      inquiryStatusDrafts[msg.id] || msg.status;
+                    const draftNote =
+                      inquiryNoteDrafts[msg.id] !== undefined
+                        ? inquiryNoteDrafts[msg.id]
+                        : msg.adminNote || '';
+
+                    return (
+                      <div
+                        key={msg.id}
+                        className="bg-white border border-stone-200/90 rounded-xl p-5 sm:p-6 space-y-4"
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 pb-3.5 border-b border-stone-200/80">
+                          <div className="space-y-1 min-w-0">
+                            <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
+                              <span
+                                className={
+                                  msg.category === 'privacy_issue'
+                                    ? 'font-semibold text-[#9A3412]'
+                                    : 'font-medium text-stone-800'
+                                }
+                              >
+                                {categoryLabel}
+                              </span>
+                              <span aria-hidden="true">·</span>
+                              <span>
+                                Status:{' '}
+                                <strong className="text-stone-900">
+                                  {msg.status === 'resolved'
+                                    ? 'Resolved'
+                                    : msg.status === 'in_review'
+                                    ? 'In Review'
+                                    : 'Unread'}
+                                </strong>
+                              </span>
+                              {msg.orderNumber && (
+                                <>
+                                  <span aria-hidden="true">·</span>
+                                  <span className="font-mono text-stone-800">
+                                    Ref: {msg.orderNumber}
+                                  </span>
+                                </>
+                              )}
+                              <span aria-hidden="true">·</span>
+                              <span className="font-mono">
+                                {formatShortTimestamp(msg.createdAtMs)}
+                              </span>
+                            </div>
+
+                            <h3 className="font-serif text-lg font-medium text-stone-900">
+                              {msg.subject}
+                            </h3>
+
+                            <div className="flex flex-wrap items-center gap-2 text-xs text-stone-600">
+                              <span className="font-medium text-stone-900">
+                                {msg.senderName}
+                              </span>
+                              <span aria-hidden="true">·</span>
+                              <a
+                                href={`mailto:${msg.senderEmail}?subject=${encodeURIComponent(
+                                  `Re: ${msg.subject}`
+                                )}`}
+                                className="font-mono text-[#9A3412] hover:underline"
+                              >
+                                {msg.senderEmail}
+                              </a>
+                              <span aria-hidden="true">·</span>
+                              <span className="font-mono text-[11px] text-stone-400">
+                                {msg.senderId.startsWith('guest_')
+                                  ? 'Guest Visitor'
+                                  : `Member UID: ${msg.senderId.slice(0, 10)}…`}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            {confirmDeleteId === `inq_${msg.id}` ? (
+                              <div className="flex items-center gap-2 text-xs">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    void deleteContactMessage(msg.id);
+                                    setConfirmDeleteId(null);
+                                  }}
+                                  className="px-2.5 py-1 text-white bg-red-700 hover:bg-red-800 rounded-md font-semibold cursor-pointer"
+                                >
+                                  Confirm Delete
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteId(null)}
+                                  className="text-stone-500 hover:text-stone-800 cursor-pointer"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setConfirmDeleteId(`inq_${msg.id}`)
+                                }
+                                className="p-1.5 text-stone-400 hover:text-red-700 cursor-pointer"
+                                aria-label={`Delete message ${msg.subject}`}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        <p className="text-xs sm:text-sm text-stone-800 whitespace-pre-line leading-relaxed bg-[#FBF9F5] border border-stone-200/80 rounded-lg p-4">
+                          {msg.message}
+                        </p>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-end pt-1">
+                          <div className="lg:col-span-3">
+                            <label className="block text-[11px] font-medium text-stone-600 mb-1">
+                              Resolution Status
+                            </label>
+                            <select
+                              value={draftStatus}
+                              onChange={(e) =>
+                                setInquiryStatusDrafts((prev) => ({
+                                  ...prev,
+                                  [msg.id]: e.target
+                                    .value as ContactMessageStatus,
+                                }))
+                              }
+                              className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                            >
+                              <option value="unread">Unread</option>
+                              <option value="in_review">In Review</option>
+                              <option value="resolved">Resolved</option>
+                            </select>
+                          </div>
+
+                          <div className="lg:col-span-6">
+                            <label className="block text-[11px] font-medium text-stone-600 mb-1">
+                              Desk Response / Resolution Note (Visible privately to sender)
+                            </label>
+                            <input
+                              type="text"
+                              maxLength={2000}
+                              value={draftNote}
+                              onChange={(e) =>
+                                setInquiryNoteDrafts((prev) => ({
+                                  ...prev,
+                                  [msg.id]: e.target.value,
+                                }))
+                              }
+                              placeholder="Write a resolution note or reply summary..."
+                              className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                            />
+                          </div>
+
+                          <div className="lg:col-span-3 flex justify-end">
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() =>
+                                void handleSaveInquiryResponse(
+                                  msg.id,
+                                  msg.status,
+                                  msg.adminNote || ''
+                                )
+                              }
+                              className="w-full px-4 py-2 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] disabled:bg-stone-300 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+                            >
+                              Save Status &amp; Reply
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* =========================================================
+              VIEW 10: GLOBAL SITE SETTINGS, MODULE CONTROLS & ACCESS
              ========================================================= */}
           {activeView === 'settings' && (
             <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
@@ -4119,11 +5865,69 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
               >
                 <div className="pb-4 border-b border-stone-200/80">
                   <h2 className="font-serif text-xl font-medium text-stone-900">
-                    Global Website &amp; Commerce Configuration
+                    Global Website, Module Visibility &amp; Commerce Configuration
                   </h2>
                   <p className="mt-1 text-xs text-stone-500">
-                    Changes saved here update the live Pickra masthead, announcement ribbon, Direct Store shipping rules, and checkout master switch immediately for all visitors.
+                    Changes saved here update the live Pickra masthead, independent module switches, announcement ribbon, shipping thresholds, and checkout master switch immediately.
                   </p>
+                </div>
+
+                {/* Four Independent Module Visibility Controls */}
+                <div className="p-4 bg-[#FBF9F5] border border-stone-200 rounded-xl space-y-3">
+                  <div>
+                    <div className="text-xs font-semibold text-stone-900">
+                      Independent Module Visibility Switches
+                    </div>
+                    <div className="text-[11px] text-stone-500">
+                      Enable or pause any of Pickra&apos;s four standalone modules across public navigation.
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs text-stone-800">
+                    <label className="flex items-center gap-2 p-2.5 bg-white border border-stone-200 rounded-lg cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={cfgBlogEnabled}
+                        onChange={(e) => setCfgBlogEnabled(e.target.checked)}
+                        className="accent-[#9A3412]"
+                      />
+                      <span className="font-medium">Blog Module Enabled</span>
+                    </label>
+                    <label className="flex items-center gap-2 p-2.5 bg-white border border-stone-200 rounded-lg cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={cfgStoreEnabled}
+                        onChange={(e) => setCfgStoreEnabled(e.target.checked)}
+                        className="accent-[#9A3412]"
+                      />
+                      <span className="font-medium">Store Module Enabled</span>
+                    </label>
+                    <label className="flex items-center gap-2 p-2.5 bg-white border border-stone-200 rounded-lg cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={cfgProductAffiliateEnabled}
+                        onChange={(e) =>
+                          setCfgProductAffiliateEnabled(e.target.checked)
+                        }
+                        className="accent-[#9A3412]"
+                      />
+                      <span className="font-medium">
+                        Product Affiliate Enabled
+                      </span>
+                    </label>
+                    <label className="flex items-center gap-2 p-2.5 bg-white border border-stone-200 rounded-lg cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={cfgServiceAffiliateEnabled}
+                        onChange={(e) =>
+                          setCfgServiceAffiliateEnabled(e.target.checked)
+                        }
+                        className="accent-[#9A3412]"
+                      />
+                      <span className="font-medium">
+                        Service Affiliate Enabled
+                      </span>
+                    </label>
+                  </div>
                 </div>
 
                 <div>
@@ -4191,7 +5995,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-stone-700 mb-1">
-                        Ribbon Destination Section
+                        Ribbon Destination Module
                       </label>
                       <select
                         value={cfgAnnouncementTarget}
@@ -4203,9 +6007,11 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                         className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
                       >
                         <option value="blog">Blog</option>
-                        <option value="store">Store (Creators&apos; Marketplace)</option>
-                        <option value="products">Affiliate Products</option>
-                        <option value="services">Affiliate Services</option>
+                        <option value="store">
+                          Store (Creators&apos; Marketplace)
+                        </option>
+                        <option value="products">Product Affiliate</option>
+                        <option value="services">Service Affiliate</option>
                       </select>
                     </div>
                   </div>
@@ -4264,9 +6070,98 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                       className="mt-0.5 accent-[#9A3412]"
                     />
                     <span>
-                      <strong>Display Starter Editorial &amp; Store Showcase Items</strong> — uncheck when you want Pickra to display only your own saved Firestore posts, products, and links.
+                      <strong>Display Starter Showcase Items</strong> — uncheck when you want Pickra to display only your own saved Firestore posts, products, and affiliate links.
                     </span>
                   </label>
+                </div>
+
+                <div className="pt-3 border-t border-stone-200/80 space-y-4">
+                  <div>
+                    <div className="text-xs font-semibold text-stone-900">
+                      About Us, Contact Desk &amp; Privacy Policy Copy
+                    </div>
+                    <div className="text-[11px] text-stone-500">
+                      Manage the public copy shown on About Us, Contact Us, and Privacy &amp; Private Issues pages (also editable inline on each page).
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-stone-700 mb-1">
+                        Public Contact Email
+                      </label>
+                      <input
+                        type="email"
+                        maxLength={254}
+                        value={cfgContactEmail}
+                        onChange={(e) => setCfgContactEmail(e.target.value)}
+                        className="w-full px-3 py-2 text-xs font-mono bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-stone-700 mb-1">
+                        Support Desk / Hours
+                      </label>
+                      <input
+                        type="text"
+                        maxLength={80}
+                        value={cfgContactPhone}
+                        onChange={(e) => setCfgContactPhone(e.target.value)}
+                        className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-stone-700 mb-1">
+                        Location / Operating Base
+                      </label>
+                      <input
+                        type="text"
+                        maxLength={160}
+                        value={cfgContactLocation}
+                        onChange={(e) => setCfgContactLocation(e.target.value)}
+                        className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-stone-700 mb-1">
+                      About Us — Editorial Mission Statement
+                    </label>
+                    <textarea
+                      rows={2}
+                      maxLength={800}
+                      value={cfgAboutMission}
+                      onChange={(e) => setCfgAboutMission(e.target.value)}
+                      className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-stone-700 mb-1">
+                      About Us — Full Publication &amp; Marketplace Story
+                    </label>
+                    <textarea
+                      rows={4}
+                      maxLength={3000}
+                      value={cfgAboutStory}
+                      onChange={(e) => setCfgAboutStory(e.target.value)}
+                      className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-stone-700 mb-1">
+                      Privacy, Data Protection &amp; Private Issues Summary
+                    </label>
+                    <textarea
+                      rows={3}
+                      maxLength={3000}
+                      value={cfgPrivacyPolicy}
+                      onChange={(e) => setCfgPrivacyPolicy(e.target.value)}
+                      className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
+                    />
+                  </div>
                 </div>
 
                 <div className="pt-3 border-t border-stone-200/80">
@@ -4382,7 +6277,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                         Creator &amp; Co-Admin Access Registry
                       </h3>
                       <p className="mt-0.5 text-xs text-stone-500">
-                        Manage who can access this Pickra Backend and publish content.
+                        Manage who can access this Pickra Admin dashboard and publish global content.
                       </p>
                     </div>
                     <ShieldCheck className="w-4 h-4 text-[#9A3412] shrink-0" />
