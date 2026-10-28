@@ -22,6 +22,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   query,
   serverTimestamp,
@@ -255,6 +256,11 @@ interface FirebaseContextValue {
   user: User | null;
   authReady: boolean;
   loadingData: boolean;
+  loadingPosts: boolean;
+  loadingProducts: boolean;
+  loadingOffers: boolean;
+  publicDataError: string | null;
+  retryPublicData: () => void;
   // Website Owner RBAC & Backend Governance
   isBootstrappedCreator: boolean;
   isCreatorAdmin: boolean;
@@ -302,7 +308,10 @@ interface FirebaseContextValue {
   cartRequiresShipping: boolean;
   isCartOpen: boolean;
   setIsCartOpen: (open: boolean) => void;
+  cartInitialStep: 'bag' | 'checkout';
+  setCartInitialStep: (step: 'bag' | 'checkout') => void;
   addToCart: (productId: string, quantity?: number, openDrawer?: boolean) => void;
+  buyNowProduct: (productId: string, quantity?: number) => void;
   updateCartQuantity: (productId: string, quantity: number) => void;
   removeFromCart: (productId: string) => void;
   clearCart: () => void;
@@ -710,7 +719,10 @@ function parsePostDoc(id: string, data: Record<string, unknown>): BlogPost {
       : [],
     disclosureText: String(data.disclosureText || DEFAULT_DISCLOSURE),
     featured: Boolean(data.featured),
-    status: (data.status as PublishStatus) || 'draft',
+    status:
+      data.status === 'active'
+        ? 'published'
+        : (data.status as PublishStatus) || 'draft',
     publishedLabel: String(data.publishedLabel || 'Recent Dispatch'),
     isSeed: false,
     createdAtMs: timestampToMs(data.createdAt),
@@ -722,13 +734,17 @@ function parseDirectProductDoc(
   id: string,
   data: Record<string, unknown>
 ): DirectProduct {
+  const normalizedStatus: PublishStatus =
+    data.status === 'active'
+      ? 'published'
+      : (data.status as PublishStatus) || 'draft';
   const rawApproval = String(data.approvalStatus || '');
   const approvalStatus: ProductApprovalStatus =
     rawApproval === 'pending' ||
     rawApproval === 'approved' ||
     rawApproval === 'rejected'
       ? rawApproval
-      : data.status === 'published'
+      : normalizedStatus === 'published'
       ? 'approved'
       : 'pending';
 
@@ -770,7 +786,7 @@ function parseDirectProductDoc(
       : [],
     deliveryNote: String(data.deliveryNote || 'Direct creator fulfillment'),
     featured: Boolean(data.featured),
-    status: (data.status as PublishStatus) || 'draft',
+    status: normalizedStatus,
     isSeed: false,
     createdAtMs: timestampToMs(data.createdAt),
     updatedAtMs: timestampToMs(data.updatedAt),
@@ -1056,7 +1072,12 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<AuthModalMode>('signup');
   const [authModalSellerPreset, setAuthModalSellerPreset] = useState(false);
-  const [loadingData, setLoadingData] = useState(true);
+  const [loadingPosts, setLoadingPosts] = useState(true);
+  const [loadingProducts, setLoadingProducts] = useState(true);
+  const [loadingOffers, setLoadingOffers] = useState(true);
+  const [publicDataError, setPublicDataError] = useState<string | null>(null);
+  const [publicRetryTick, setPublicRetryTick] = useState(0);
+  const loadingData = loadingPosts || loadingProducts || loadingOffers;
 
   const [isCoAdmin, setIsCoAdmin] = useState(false);
   const [adminRoleReady, setAdminRoleReady] = useState(false);
@@ -1130,6 +1151,9 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   >([]);
 
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [cartInitialStep, setCartInitialStep] = useState<'bag' | 'checkout'>(
+    'bag'
+  );
 
   const sessionSeenViewsRef = useRef<Set<string>>(new Set());
 
@@ -1289,7 +1313,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       storeEnabled: true,
       productAffiliateEnabled: true,
       serviceAffiliateEnabled: true,
-      showStarterSeeds: !hideSeeds,
+      showStarterSeeds: false,
       hiddenSeedIds: mergedHidden,
       aboutMission: DEFAULT_ABOUT_MISSION,
       aboutStory: DEFAULT_ABOUT_STORY,
@@ -1300,7 +1324,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       updatedBy: '',
       updatedAtMs: 0,
     };
-  }, [firestoreSiteConfig, hideSeeds, localHiddenSeedIds, isCreatorAdmin]);
+  }, [firestoreSiteConfig, localHiddenSeedIds, isCreatorAdmin]);
 
   const hiddenSeedSet = useMemo(
     () => new Set(siteConfig.hiddenSeedIds || []),
@@ -1704,12 +1728,19 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     };
   }, [authReady, user]);
 
-  // Public listeners: SiteConfig singleton, Published Offers, Posts, Direct Products, & Campaigns
-  useEffect(() => {
-    if (!authReady) return;
+  function retryPublicData() {
+    setPublicDataError(null);
+    setLoadingPosts(true);
+    setLoadingProducts(true);
+    setLoadingOffers(true);
+    setPublicRetryTick((prev) => prev + 1);
+  }
 
-    let offersLoaded = false;
-    let postsLoaded = false;
+  // Public listeners: SiteConfig singleton, Published Offers, Posts, Direct Products, & Campaigns
+  // Runs immediately on mount for all public visitors without waiting on Firebase Auth initialization.
+  useEffect(() => {
+    let cancelled = false;
+    setPublicDataError(null);
 
     const siteConfigRef = doc(db, 'siteConfig', 'main');
     const publishedOffersQuery = query(
@@ -1718,82 +1749,153 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     );
     const publishedPostsQuery = query(
       collection(db, 'posts'),
-      where('status', '==', 'published')
+      where('status', 'in', ['published', 'active'])
     );
     const publishedProductsQuery = query(
       collection(db, 'directProducts'),
-      where('status', '==', 'published')
+      where('status', 'in', ['published', 'active'])
     );
     const publishedCampaignsQuery = query(
       collection(db, 'campaigns'),
       where('status', '==', 'published')
     );
 
+    const formatPublicListenerError = (label: string, err: unknown) => {
+      console.error(`Public Firestore read warning (${label}):`, err);
+      return `Unable to load ${label} from the Pickra database right now. Please check your connection and retry.`;
+    };
+
     const unsubSiteConfig = onSnapshot(
       siteConfigRef,
       (snap) => {
+        if (cancelled) return;
         if (snap.exists()) {
           setFirestoreSiteConfig(
-            parseSiteConfigDoc(snap.data() as Record<string, unknown>, !hideSeeds)
+            parseSiteConfigDoc(snap.data() as Record<string, unknown>, false)
           );
         } else {
           setFirestoreSiteConfig(null);
         }
       },
       (err) => {
-        handleFirestoreError(err, OperationType.GET, 'siteConfig/main');
+        console.error('Public siteConfig listener warning:', err);
+        void getDoc(siteConfigRef)
+          .then((snap) => {
+            if (cancelled) return;
+            if (snap.exists()) {
+              setFirestoreSiteConfig(
+                parseSiteConfigDoc(snap.data() as Record<string, unknown>, false)
+              );
+            } else {
+              setFirestoreSiteConfig(null);
+            }
+          })
+          .catch(() => {
+            // keep default site configuration if unreachable
+          });
       }
     );
 
     const unsubOffers = onSnapshot(
       publishedOffersQuery,
       (snap) => {
+        if (cancelled) return;
         const items = snap.docs.map((d) =>
           parseOfferDoc(d.id, d.data() as Record<string, unknown>)
         );
         items.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
         setPublicFirestoreOffers(items);
-        offersLoaded = true;
-        if (postsLoaded) setLoadingData(false);
+        setLoadingOffers(false);
       },
       (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'offers');
+        void getDocs(publishedOffersQuery)
+          .then((snap) => {
+            if (cancelled) return;
+            const items = snap.docs.map((d) =>
+              parseOfferDoc(d.id, d.data() as Record<string, unknown>)
+            );
+            items.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+            setPublicFirestoreOffers(items);
+            setLoadingOffers(false);
+          })
+          .catch((fallbackErr) => {
+            if (cancelled) return;
+            setPublicDataError(
+              formatPublicListenerError('partner offers', fallbackErr || err)
+            );
+            setLoadingOffers(false);
+          });
       }
     );
 
     const unsubPosts = onSnapshot(
       publishedPostsQuery,
       (snap) => {
+        if (cancelled) return;
         const items = snap.docs.map((d) =>
           parsePostDoc(d.id, d.data() as Record<string, unknown>)
         );
         items.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
         setPublicFirestorePosts(items);
-        postsLoaded = true;
-        if (offersLoaded) setLoadingData(false);
+        setLoadingPosts(false);
       },
       (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'posts');
+        void getDocs(publishedPostsQuery)
+          .then((snap) => {
+            if (cancelled) return;
+            const items = snap.docs.map((d) =>
+              parsePostDoc(d.id, d.data() as Record<string, unknown>)
+            );
+            items.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+            setPublicFirestorePosts(items);
+            setLoadingPosts(false);
+          })
+          .catch((fallbackErr) => {
+            if (cancelled) return;
+            setPublicDataError(
+              formatPublicListenerError('blog articles', fallbackErr || err)
+            );
+            setLoadingPosts(false);
+          });
       }
     );
 
     const unsubProducts = onSnapshot(
       publishedProductsQuery,
       (snap) => {
+        if (cancelled) return;
         const items = snap.docs.map((d) =>
           parseDirectProductDoc(d.id, d.data() as Record<string, unknown>)
         );
         items.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
         setPublicFirestoreProducts(items);
+        setLoadingProducts(false);
       },
       (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'directProducts');
+        void getDocs(publishedProductsQuery)
+          .then((snap) => {
+            if (cancelled) return;
+            const items = snap.docs.map((d) =>
+              parseDirectProductDoc(d.id, d.data() as Record<string, unknown>)
+            );
+            items.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+            setPublicFirestoreProducts(items);
+            setLoadingProducts(false);
+          })
+          .catch((fallbackErr) => {
+            if (cancelled) return;
+            setPublicDataError(
+              formatPublicListenerError('store products', fallbackErr || err)
+            );
+            setLoadingProducts(false);
+          });
       }
     );
 
     const unsubCampaigns = onSnapshot(
       publishedCampaignsQuery,
       (snap) => {
+        if (cancelled) return;
         const items = snap.docs.map((d) =>
           parseCampaignDoc(d.id, d.data() as Record<string, unknown>)
         );
@@ -1801,18 +1903,31 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         setPublicFirestoreCampaigns(items);
       },
       (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'campaigns');
+        void getDocs(publishedCampaignsQuery)
+          .then((snap) => {
+            if (cancelled) return;
+            const items = snap.docs.map((d) =>
+              parseCampaignDoc(d.id, d.data() as Record<string, unknown>)
+            );
+            items.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+            setPublicFirestoreCampaigns(items);
+          })
+          .catch(() => {
+            // campaigns are optional promotional banners
+          });
+        console.warn('Public campaigns listener warning:', err);
       }
     );
 
     return () => {
+      cancelled = true;
       unsubSiteConfig();
       unsubOffers();
       unsubPosts();
       unsubProducts();
       unsubCampaigns();
     };
-  }, [authReady, hideSeeds]);
+  }, [publicRetryTick]);
 
   // Authenticated Customer Purchases + Creator Seller Hub + Website Owner Backend Listeners
   useEffect(() => {
@@ -2595,6 +2710,13 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     if (openDrawer) {
       setIsCartOpen(true);
     }
+  }
+
+  function buyNowProduct(productId: string, quantity = 1) {
+    const product = allAccessibleDirectProductsMap[productId];
+    if (!product || product.stockCount <= 0 || product.status !== 'published') return;
+    setCartInitialStep('checkout');
+    addToCart(productId, quantity, true);
   }
 
   function updateCartQuantity(productId: string, quantity: number) {
@@ -5325,6 +5447,11 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         user,
         authReady,
         loadingData,
+        loadingPosts,
+        loadingProducts,
+        loadingOffers,
+        publicDataError,
+        retryPublicData,
         isBootstrappedCreator,
         isCreatorAdmin,
         adminRoleReady,
@@ -5367,7 +5494,10 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         cartRequiresShipping,
         isCartOpen,
         setIsCartOpen,
+        cartInitialStep,
+        setCartInitialStep,
         addToCart,
+        buyNowProduct,
         updateCartQuantity,
         removeFromCart,
         clearCart,

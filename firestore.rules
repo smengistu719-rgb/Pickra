@@ -246,7 +246,7 @@ service cloud.firestore {
         isValidOfferIdList(data.attachedOfferIds) &&
         data.disclosureText is string && data.disclosureText.size() >= 10 && data.disclosureText.size() <= 400 &&
         data.featured is bool &&
-        data.status is string && data.status.size() <= 20 && data.status in ['draft', 'published', 'archived'] &&
+        data.status is string && data.status.size() <= 20 && data.status in ['draft', 'published', 'active', 'archived'] &&
         data.publishedLabel is string && data.publishedLabel.size() >= 3 && data.publishedLabel.size() <= 40 &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
@@ -304,7 +304,7 @@ service cloud.firestore {
         isValidHighlightsList(data.highlights) &&
         data.deliveryNote is string && data.deliveryNote.size() >= 2 && data.deliveryNote.size() <= 200 &&
         data.featured is bool &&
-        data.status is string && data.status.size() <= 20 && data.status in ['draft', 'published', 'archived'] &&
+        data.status is string && data.status.size() <= 20 && data.status in ['draft', 'published', 'active', 'archived'] &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
     }
@@ -720,11 +720,11 @@ service cloud.firestore {
     // 5. Independent Medium-Style Editorial Blog Posts (Website Owner-Managed)
     match /posts/{postId} {
       allow get: if isValidId(postId) && (
-        existing().status == 'published' ||
+        existing().status in ['published', 'active'] ||
         (isSignedIn() && existing().authorId == request.auth.uid) ||
         isAdmin()
       );
-      allow list: if existing().status == 'published' ||
+      allow list: if existing().status in ['published', 'active'] ||
         (isSignedIn() && existing().authorId == request.auth.uid) ||
         isBootstrappedAdmin();
       allow create: if isVerifiedUser() &&
@@ -767,11 +767,11 @@ service cloud.firestore {
     // 6. Storefront Products (Active Sellers Manage Own Listings Subject to Admin Approval; Atomic Checkout Stock Decrements)
     match /directProducts/{productId} {
       allow get: if isValidId(productId) && (
-        existing().status == 'published' ||
+        existing().status in ['published', 'active'] ||
         (isSignedIn() && existing().sellerId == request.auth.uid) ||
         isAdmin()
       );
-      allow list: if existing().status == 'published' ||
+      allow list: if existing().status in ['published', 'active'] ||
         (isSignedIn() && existing().sellerId == request.auth.uid) ||
         isBootstrappedAdmin();
       allow create: if isVerifiedUser() &&

@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  AlertCircle,
   ArrowRight,
+  BookOpen,
   Camera,
   Edit3,
   Link2,
   Lock,
   PenSquare,
   Plus,
+  RefreshCw,
   Search,
   ShoppingBag,
   Trash2,
@@ -59,11 +62,19 @@ import {
 function resolveInitialSection(): ActiveSection {
   try {
     const params = new URLSearchParams(window.location.search);
-    const sec = params.get('section');
+    if (params.get('post')) {
+      return 'blog';
+    }
+    const pathSegment = window.location.pathname
+      .replace(/^\/+|\/+$/g, '')
+      .split('/')[0]
+      ?.toLowerCase();
+    const sec = (params.get('section') || pathSegment || '').toLowerCase();
     if (
       sec === 'blog' ||
       sec === 'journal' ||
       sec === 'store' ||
+      sec === 'shop' ||
       sec === 'products' ||
       sec === 'services' ||
       sec === 'about' ||
@@ -72,7 +83,9 @@ function resolveInitialSection(): ActiveSection {
       sec === 'write' ||
       sec === 'studio'
     ) {
-      return sec === 'journal' ? 'blog' : sec;
+      if (sec === 'journal') return 'blog';
+      if (sec === 'shop') return 'store';
+      return sec as ActiveSection;
     }
     if (params.get('promo')) {
       return 'store';
@@ -83,12 +96,25 @@ function resolveInitialSection(): ActiveSection {
   return 'blog';
 }
 
+function resolveInitialPostRef(): string | null {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const postParam = params.get('post')?.trim();
+    return postParam || null;
+  } catch {
+    return null;
+  }
+}
+
 function PickraShell() {
   const {
     user,
     authReady,
     adminRoleReady,
-    loadingData,
+    loadingPosts,
+    loadingOffers,
+    publicDataError,
+    retryPublicData,
     isCreatorAdmin,
     isActiveSeller,
     profile,
@@ -145,7 +171,9 @@ function PickraShell() {
   const [storeSubView, setStoreSubView] = useState<StoreSubView>('catalog');
   const [pendingStoreEditProduct, setPendingStoreEditProduct] =
     useState<DirectProduct | null>(null);
-  const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
+  const [selectedPostId, setSelectedPostId] = useState<string | null>(
+    resolveInitialPostRef
+  );
   const [storyBeingEdited, setStoryBeingEdited] = useState<BlogPost | null>(
     null
   );
@@ -208,7 +236,11 @@ function PickraShell() {
 
   const selectedPost = useMemo(() => {
     if (!selectedPostId) return null;
-    return publishedPosts.find((p) => p.id === selectedPostId) || null;
+    return (
+      publishedPosts.find(
+        (p) => p.id === selectedPostId || p.slug === selectedPostId
+      ) || null
+    );
   }, [selectedPostId, publishedPosts]);
 
   const leadPost = publishedPosts[0] || null;
@@ -228,6 +260,16 @@ function PickraShell() {
       );
     });
   }, [publishedPosts, blogCategory, blogSearch]);
+
+  const totalPublishedProductOffers = useMemo(
+    () => publishedOffers.filter((offer) => offer.kind !== 'service').length,
+    [publishedOffers]
+  );
+
+  const totalPublishedServiceOffers = useMemo(
+    () => publishedOffers.filter((offer) => offer.kind === 'service').length,
+    [publishedOffers]
+  );
 
   const filteredProducts = useMemo(() => {
     const q = productSearch.trim().toLowerCase();
@@ -326,6 +368,29 @@ function PickraShell() {
     }
   }, [canAccessCreatorAdmin, isOfferModalOpen]);
 
+  function syncPublicUrlState(
+    nextSection: ActiveSection,
+    nextPostSlugOrId: string | null = null
+  ) {
+    try {
+      const url = new URL(window.location.href);
+      if (nextPostSlugOrId) {
+        url.searchParams.delete('section');
+        url.searchParams.set('post', nextPostSlugOrId);
+      } else {
+        url.searchParams.delete('post');
+        if (nextSection === 'blog' || nextSection === 'journal') {
+          url.searchParams.delete('section');
+        } else if (nextSection !== 'studio' && nextSection !== 'write') {
+          url.searchParams.set('section', nextSection);
+        }
+      }
+      window.history.replaceState({}, '', url.toString());
+    } catch {
+      // ignore URL history errors
+    }
+  }
+
   function navigateToSection(
     section: ActiveSection,
     targetStoreSubView: StoreSubView = 'catalog'
@@ -333,12 +398,14 @@ function PickraShell() {
     setSelectedPostId(null);
     if (section === 'studio' && !canOpenBackendGate) {
       setActiveSection(firstEnabledPublicSection);
+      syncPublicUrlState(firstEnabledPublicSection, null);
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
     if (section === 'write') {
       if (!canAccessCreatorAdmin) {
         setActiveSection(firstEnabledPublicSection);
+        syncPublicUrlState(firstEnabledPublicSection, null);
         window.scrollTo({ top: 0, behavior: 'smooth' });
         return;
       }
@@ -347,7 +414,9 @@ function PickraShell() {
     if (section === 'store') {
       setStoreSubView(targetStoreSubView);
     }
-    setActiveSection(section === 'journal' ? 'blog' : section);
+    const resolved = section === 'journal' ? 'blog' : section;
+    setActiveSection(resolved);
+    syncPublicUrlState(resolved, null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -359,6 +428,7 @@ function PickraShell() {
   function openPost(post: BlogPost) {
     setSelectedPostId(post.id);
     setActiveSection('blog');
+    syncPublicUrlState('blog', post.slug || post.id);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -1031,7 +1101,35 @@ function PickraShell() {
                 </div>
               </div>
 
-              {filteredProducts.length === 0 ? (
+              {loadingOffers && totalPublishedProductOffers === 0 ? (
+                <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-7">
+                  {[1, 2, 3].map((n) => (
+                    <div
+                      key={n}
+                      className="h-72 rounded-xl bg-[#F3EFE8] border border-stone-200/70 animate-pulse"
+                    />
+                  ))}
+                </div>
+              ) : totalPublishedProductOffers === 0 ? (
+                <div className="mt-8 py-14 px-6 bg-white border border-stone-200/90 rounded-2xl text-center space-y-3">
+                  <p className="font-serif text-lg font-medium text-stone-900">
+                    No Product Affiliate recommendations are published yet
+                  </p>
+                  <p className="text-xs text-stone-600 max-w-md mx-auto leading-relaxed">
+                    Curated partner hardware and digital tool recommendations
+                    will appear here once published.
+                  </p>
+                  {canAccessCreatorAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => openNewAffiliateModal('products')}
+                      className="mt-2 px-4 py-2 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-lg cursor-pointer"
+                    >
+                      + Add Affiliate Product
+                    </button>
+                  )}
+                </div>
+              ) : filteredProducts.length === 0 ? (
                 <div className="py-16 text-center">
                   <p className="text-sm text-stone-600">
                     No affiliate products match your current filter selection.
@@ -1196,7 +1294,35 @@ function PickraShell() {
                 </div>
               </div>
 
-              {filteredServices.length === 0 ? (
+              {loadingOffers && totalPublishedServiceOffers === 0 ? (
+                <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-7">
+                  {[1, 2, 3].map((n) => (
+                    <div
+                      key={n}
+                      className="h-72 rounded-xl bg-[#F3EFE8] border border-stone-200/70 animate-pulse"
+                    />
+                  ))}
+                </div>
+              ) : totalPublishedServiceOffers === 0 ? (
+                <div className="mt-8 py-14 px-6 bg-white border border-stone-200/90 rounded-2xl text-center space-y-3">
+                  <p className="font-serif text-lg font-medium text-stone-900">
+                    No Service Affiliate listings are published yet
+                  </p>
+                  <p className="text-xs text-stone-600 max-w-md mx-auto leading-relaxed">
+                    Recommended specialist services and partner agencies will
+                    appear here once published.
+                  </p>
+                  {canAccessCreatorAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => openNewAffiliateModal('services')}
+                      className="mt-2 px-4 py-2 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] rounded-lg cursor-pointer"
+                    >
+                      + Add Affiliate Service
+                    </button>
+                  )}
+                </div>
+              ) : filteredServices.length === 0 ? (
                 <div className="py-16 text-center">
                   <p className="text-sm text-stone-600">
                     No professional services match your current filter
@@ -1279,7 +1405,10 @@ function PickraShell() {
         ) : selectedPost && isBlogSection ? (
           <ArticleReader
             post={selectedPost}
-            onBack={() => setSelectedPostId(null)}
+            onBack={() => {
+              setSelectedPostId(null);
+              syncPublicUrlState('blog', null);
+            }}
             onSelectPost={openPost}
             onEditInEditor={
               canAccessCreatorAdmin ? openBlockEditorForPost : undefined
@@ -1305,8 +1434,46 @@ function PickraShell() {
              MODULE 1: BLOG PAGE (PURE EDITORIAL — NO STORE/AFFILIATE MIXING)
              =============================================================== */
           <div>
+            {publicDataError && (
+              <div className="max-w-[1200px] mx-auto px-5 sm:px-8 pt-6">
+                <div
+                  role="alert"
+                  className="p-4 bg-red-50 border border-red-200 rounded-xl flex flex-wrap items-center justify-between gap-4 text-xs text-red-900"
+                >
+                  <div className="flex items-start gap-2.5">
+                    <AlertCircle className="w-4 h-4 text-red-700 shrink-0 mt-0.5" />
+                    <span>{publicDataError}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={retryPublicData}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Retry Loading Blog</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* SECTION 1: Lead Blog Story Hero */}
-            {leadPost ? (
+            {loadingPosts && publishedPosts.length === 0 ? (
+              <section
+                aria-live="polite"
+                className="max-w-[1200px] mx-auto px-5 sm:px-8 pt-8 sm:pt-12 pb-12 border-b border-stone-200/90"
+              >
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-stretch animate-pulse">
+                  <div className="lg:col-span-6 space-y-4 py-4">
+                    <div className="h-3 w-48 bg-[#F3EFE8] rounded" />
+                    <div className="h-10 w-5/6 bg-[#F3EFE8] rounded" />
+                    <div className="h-4 w-full bg-[#F3EFE8] rounded" />
+                    <div className="h-4 w-3/4 bg-[#F3EFE8] rounded" />
+                    <div className="h-10 w-40 bg-[#F3EFE8] rounded-lg mt-6" />
+                  </div>
+                  <div className="lg:col-span-6 min-h-[280px] rounded-xl bg-[#F3EFE8]" />
+                </div>
+              </section>
+            ) : leadPost ? (
               <section className="max-w-[1200px] mx-auto px-5 sm:px-8 pt-8 sm:pt-12 pb-12 border-b border-stone-200/90">
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-stretch">
                   <div className="lg:col-span-6 flex flex-col justify-between py-2">
@@ -1411,14 +1578,19 @@ function PickraShell() {
 
                     <div className="mt-8 pt-6 border-t border-stone-200/80 flex flex-wrap items-center justify-between gap-4">
                       <div className="flex flex-wrap items-center gap-2.5">
-                        <button
-                          type="button"
-                          onClick={() => openPost(leadPost)}
+                        <a
+                          href={`?post=${encodeURIComponent(
+                            leadPost.slug || leadPost.id
+                          )}`}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            openPost(leadPost);
+                          }}
                           className="inline-flex items-center gap-2 px-5 py-3 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
                         >
-                          <span>Read Full Blog</span>
+                          <span>Read Full Article</span>
                           <ArrowRight className="w-4 h-4" />
-                        </button>
+                        </a>
 
                         {canAccessCreatorAdmin && (
                           <button
@@ -1495,9 +1667,9 @@ function PickraShell() {
                 <h1 className="font-serif text-3xl font-medium text-stone-900">
                   Pickra Global Editorial Blog
                 </h1>
-                <p className="mt-2 text-sm text-stone-600">
+                <p className="mt-2 text-sm text-stone-600 max-w-xl mx-auto">
                   Long-form essays, field guides, embedded videos, and visual
-                  dispatches.
+                  dispatches—open to all readers without signing in.
                 </p>
                 {canAccessCreatorAdmin && (
                   <button
@@ -1588,14 +1760,41 @@ function PickraShell() {
                 </div>
               </div>
 
-              {loadingData && publishedPosts.length === 0 ? (
-                <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-7">
-                  {[1, 2, 3].map((n) => (
-                    <div
-                      key={n}
-                      className="h-80 rounded-xl bg-[#F3EFE8] border border-stone-200/70"
-                    />
-                  ))}
+              {loadingPosts && publishedPosts.length === 0 ? (
+                <div className="mt-8 space-y-4" aria-live="polite">
+                  <div className="text-xs text-stone-500">
+                    Loading published blog articles...
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-7">
+                    {[1, 2, 3].map((n) => (
+                      <div
+                        key={n}
+                        className="h-80 rounded-xl bg-[#F3EFE8] border border-stone-200/70 animate-pulse"
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : publishedPosts.length === 0 ? (
+                <div className="mt-10 py-14 px-6 text-center bg-white border border-stone-200/90 rounded-2xl space-y-3">
+                  <BookOpen className="w-7 h-7 text-[#9A3412] mx-auto" />
+                  <h3 className="font-serif text-xl font-medium text-stone-900">
+                    No published blog articles are available yet
+                  </h3>
+                  <p className="text-sm text-stone-600 max-w-lg mx-auto leading-relaxed">
+                    Published essays, field guides, and dispatches appear here
+                    automatically for all public visitors as soon as they go
+                    live.
+                  </p>
+                  {canAccessCreatorAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => openBlockEditorForPost(null)}
+                      className="mt-2 inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg cursor-pointer"
+                    >
+                      <PenSquare className="w-3.5 h-3.5" />
+                      <span>Publish First Article</span>
+                    </button>
+                  )}
                 </div>
               ) : filteredBlogPosts.length === 0 ? (
                 <div className="mt-10 py-12 text-center bg-white border border-stone-200/80 rounded-xl">
@@ -1661,10 +1860,20 @@ function PickraShell() {
                             <span>
                               By {post.authorName || 'Pickra Editorial'}
                             </span>
-                            <span className="font-semibold text-stone-900 group-hover:text-[#9A3412] inline-flex items-center gap-1">
-                              <span>Read Blog</span>
+                            <a
+                              href={`?post=${encodeURIComponent(
+                                post.slug || post.id
+                              )}`}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                openPost(post);
+                              }}
+                              className="font-semibold text-stone-900 group-hover:text-[#9A3412] inline-flex items-center gap-1"
+                            >
+                              <span>Read Full Article</span>
                               <ArrowRight className="w-3.5 h-3.5" />
-                            </span>
+                            </a>
                           </div>
 
                           {canAccessCreatorAdmin && (

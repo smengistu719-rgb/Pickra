@@ -97,6 +97,8 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
     clearPromoCode,
     placeDirectOrder,
     siteConfig,
+    cartInitialStep,
+    setCartInitialStep,
   } = useFirebaseApp();
 
   const [step, setStep] = useState<'bag' | 'checkout' | 'confirmed'>('bag');
@@ -142,6 +144,24 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
       setPromoInput(appliedPromoCode);
     }
   }, [appliedPromoCode]);
+
+  useEffect(() => {
+    if (!isCartOpen) return;
+    if (
+      cartInitialStep === 'checkout' &&
+      cartItems.length > 0 &&
+      siteConfig.storeCheckoutEnabled !== false
+    ) {
+      setStep('checkout');
+      setCartInitialStep('bag');
+    }
+  }, [
+    isCartOpen,
+    cartInitialStep,
+    cartItems.length,
+    siteConfig.storeCheckoutEnabled,
+    setCartInitialStep,
+  ]);
 
   if (!isCartOpen) return null;
 
@@ -208,6 +228,7 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
 
   function handleClose() {
     setIsCartOpen(false);
+    setCartInitialStep('bag');
     if (step === 'confirmed') {
       setStep('bag');
       setConfirmedOrder(null);

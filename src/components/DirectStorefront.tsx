@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  AlertCircle,
+  ArrowUpDown,
   Check,
   Copy,
   CreditCard,
@@ -11,6 +13,7 @@ import {
   LogOut,
   Package,
   Plus,
+  RefreshCw,
   Search,
   ShoppingBag,
   Store,
@@ -99,6 +102,9 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
 }) => {
   const {
     user,
+    loadingProducts,
+    publicDataError,
+    retryPublicData,
     isCreatorAdmin,
     isActiveSeller,
     isSellerSuspended,
@@ -116,6 +122,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
     appliedCampaign,
     setIsCartOpen,
     addToCart,
+    buyNowProduct,
     applyPromoCode,
     openAuthModal,
     signOutUser,
@@ -149,6 +156,9 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
     'all'
   );
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
+  const [sortBy, setSortBy] = useState<
+    'featured' | 'newest' | 'price_asc' | 'price_desc' | 'title_asc'
+  >('featured');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCampaignIndex, setActiveCampaignIndex] = useState(0);
   const [copiedCampaignId, setCopiedCampaignId] = useState<string | null>(null);
@@ -290,7 +300,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
 
   const filteredProducts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return publishedDirectProducts.filter((prod) => {
+    const matched = publishedDirectProducts.filter((prod) => {
       if (kindFilter !== 'all' && prod.kind !== kindFilter) return false;
       if (categoryFilter !== 'All' && prod.category !== categoryFilter) {
         return false;
@@ -305,7 +315,34 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
         (prod.sellerName || '').toLowerCase().includes(q)
       );
     });
-  }, [publishedDirectProducts, kindFilter, categoryFilter, searchQuery]);
+
+    const sorted = [...matched];
+    sorted.sort((a, b) => {
+      if (sortBy === 'price_asc') {
+        return a.priceCents - b.priceCents || b.updatedAtMs - a.updatedAtMs;
+      }
+      if (sortBy === 'price_desc') {
+        return b.priceCents - a.priceCents || b.updatedAtMs - a.updatedAtMs;
+      }
+      if (sortBy === 'title_asc') {
+        return a.title.localeCompare(b.title);
+      }
+      if (sortBy === 'newest') {
+        return (
+          (b.createdAtMs || b.updatedAtMs) - (a.createdAtMs || a.updatedAtMs)
+        );
+      }
+      if (a.featured !== b.featured) return a.featured ? -1 : 1;
+      return b.updatedAtMs - a.updatedAtMs;
+    });
+    return sorted;
+  }, [
+    publishedDirectProducts,
+    kindFilter,
+    categoryFilter,
+    searchQuery,
+    sortBy,
+  ]);
 
   const spotlightCampaign =
     publishedCampaigns[activeCampaignIndex] || publishedCampaigns[0] || null;
@@ -1190,7 +1227,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
             )}
           </div>
 
-          {/* Filter & Search Bar */}
+          {/* Filter, Sort & Search Bar */}
           <div className="mt-8 flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-6 border-b border-stone-200">
             <div className="flex flex-wrap items-center gap-3">
               <div className="inline-flex items-center gap-1 p-1 bg-[#F3EFE8] rounded-lg">
@@ -1220,7 +1257,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                 ariaLabel="Filter direct store by collection"
                 value={categoryFilter}
                 options={storeCategoryOptions}
-                prefixOptions={[{ value: 'All', label: 'All Collections' }]}
+                prefixOptions={[{ value: 'All', label: 'All Categories' }]}
                 onChange={setCategoryFilter}
                 canEdit={isCreatorAdmin}
                 onAddOption={(opt) => addDropdownOption('storeCategories', opt)}
@@ -1231,10 +1268,38 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                 onDeleteOption={(opt) =>
                   deleteDropdownOption('storeCategories', opt)
                 }
-                placeholder="Collection"
+                placeholder="Category"
                 compact
                 selectClassName="px-3 py-2 text-xs font-medium bg-white border border-stone-200 rounded-lg text-stone-700 focus:outline-none focus:border-[#9A3412]"
               />
+
+              <div className="inline-flex items-center gap-1.5">
+                <ArrowUpDown
+                  className="w-3.5 h-3.5 text-stone-400 shrink-0"
+                  aria-hidden="true"
+                />
+                <select
+                  aria-label="Sort store products"
+                  value={sortBy}
+                  onChange={(e) =>
+                    setSortBy(
+                      e.target.value as
+                        | 'featured'
+                        | 'newest'
+                        | 'price_asc'
+                        | 'price_desc'
+                        | 'title_asc'
+                    )
+                  }
+                  className="px-3 py-2 text-xs font-medium bg-white border border-stone-200 rounded-lg text-stone-700 focus:outline-none focus:border-[#9A3412] cursor-pointer"
+                >
+                  <option value="featured">Sort: Featured</option>
+                  <option value="newest">Sort: Newest Arrivals</option>
+                  <option value="price_asc">Sort: Price Low to High</option>
+                  <option value="price_desc">Sort: Price High to Low</option>
+                  <option value="title_asc">Sort: Name A–Z</option>
+                </select>
+              </div>
             </div>
 
             <div className="relative w-full lg:w-72">
@@ -1259,20 +1324,95 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
             </div>
           </div>
 
-          {/* Direct Product Grid */}
-          {filteredProducts.length === 0 ? (
-            <div className="py-16 text-center">
+          {/* Public Database Error Banner with Retry */}
+          {publicDataError && (
+            <div
+              role="alert"
+              className="mt-6 p-4 bg-red-50 border border-red-200 rounded-xl flex flex-wrap items-center justify-between gap-4 text-xs text-red-900"
+            >
+              <div className="flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 text-red-700 shrink-0 mt-0.5" />
+                <span>{publicDataError}</span>
+              </div>
+              <button
+                type="button"
+                onClick={retryPublicData}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Retry Loading Store</span>
+              </button>
+            </div>
+          )}
+
+          {/* Direct Product Grid / Loading Skeletons / Honest Empty States */}
+          {loadingProducts && publishedDirectProducts.length === 0 ? (
+            <div
+              aria-live="polite"
+              className="mt-8 space-y-4"
+            >
+              <div className="text-xs text-stone-500">
+                Loading published store catalog...
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {[1, 2, 3].map((n) => (
+                  <div
+                    key={n}
+                    className="bg-white border border-stone-200/80 rounded-xl overflow-hidden animate-pulse"
+                  >
+                    <div className="aspect-[4/3] bg-[#F3EFE8]" />
+                    <div className="p-6 space-y-3">
+                      <div className="h-3 w-1/3 bg-[#F3EFE8] rounded" />
+                      <div className="h-5 w-4/5 bg-[#F3EFE8] rounded" />
+                      <div className="h-3 w-full bg-[#F3EFE8] rounded" />
+                      <div className="h-9 w-full bg-[#F3EFE8] rounded-lg mt-4" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : publishedDirectProducts.length === 0 ? (
+            <div className="mt-8 py-14 px-6 bg-white border border-stone-200/90 rounded-2xl text-center space-y-3">
+              <Package className="w-7 h-7 text-[#9A3412] mx-auto" />
+              <h3 className="font-serif text-xl font-medium text-stone-900">
+                No published products are available in the Store yet
+              </h3>
+              <p className="text-sm text-stone-600 max-w-lg mx-auto leading-relaxed">
+                Approved physical editions and instant digital downloads appear
+                here automatically once published to the Pickra Store. No
+                account is required to browse or check out when items go live.
+              </p>
+              {(isCreatorAdmin || isActiveSeller) && (
+                <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+                  <button
+                    type="button"
+                    onClick={openNewProductModal}
+                    className="inline-flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg transition-colors cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>
+                      {isCreatorAdmin
+                        ? 'Publish First Store Product'
+                        : 'Submit Product for Approval'}
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : filteredProducts.length === 0 ? (
+            <div className="mt-8 py-14 px-6 bg-white border border-stone-200/90 rounded-2xl text-center">
               <p className="text-sm text-stone-600">
-                No store products match your filter criteria.
+                No store products match your active search or category filter.
               </p>
               <button
                 type="button"
                 onClick={() => {
                   setKindFilter('all');
                   setCategoryFilter('All');
+                  setSortBy('featured');
                   setSearchQuery('');
                 }}
-                className="mt-4 px-4 py-2 text-xs font-semibold text-stone-800 bg-[#F3EFE8] rounded-lg cursor-pointer"
+                className="mt-4 px-4 py-2 text-xs font-semibold text-stone-800 bg-[#F3EFE8] hover:bg-stone-200 rounded-lg cursor-pointer"
               >
                 Reset Store Filters
               </button>
@@ -2768,7 +2908,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                   {selectedProduct.deliveryNote}
                 </div>
 
-                <div className="pt-2 flex items-center gap-3">
+                <div className="pt-2 flex flex-wrap items-center gap-2.5">
                   <select
                     aria-label="Select quantity"
                     value={detailQty}
@@ -2793,17 +2933,35 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                       addToCart(selectedProduct.id, detailQty, true);
                       setSelectedProduct(null);
                     }}
-                    className="flex-1 inline-flex items-center justify-center gap-2 px-5 py-2.5 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] disabled:bg-stone-300 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-stone-900 bg-[#F3EFE8] hover:bg-stone-200 disabled:bg-stone-200 disabled:text-stone-400 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
                   >
                     <ShoppingBag className="w-4 h-4" />
                     <span>
                       {selectedProduct.stockCount <= 0
                         ? 'Out of Stock'
-                        : `Add to Bag · ${formatPriceCents(
-                            selectedProduct.priceCents * detailQty
-                          )}`}
+                        : 'Add to Bag'}
                     </span>
                   </button>
+
+                  {siteConfig.storeCheckoutEnabled !== false && (
+                    <button
+                      type="button"
+                      disabled={selectedProduct.stockCount <= 0}
+                      onClick={() => {
+                        buyNowProduct(selectedProduct.id, detailQty);
+                        setSelectedProduct(null);
+                      }}
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 px-5 py-2.5 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] disabled:bg-stone-300 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+                    >
+                      <span>
+                        {selectedProduct.stockCount <= 0
+                          ? 'Sold Out'
+                          : `Buy Now · ${formatPriceCents(
+                              selectedProduct.priceCents * detailQty
+                            )}`}
+                      </span>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

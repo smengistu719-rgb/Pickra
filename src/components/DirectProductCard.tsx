@@ -36,13 +36,14 @@ export const DirectProductCard: React.FC<DirectProductCardProps> = ({
   onDelete,
   onChangeImage,
 }) => {
-  const { addToCart } = useFirebaseApp();
+  const { addToCart, buyNowProduct, siteConfig } = useFirebaseApp();
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const [justAdded, setJustAdded] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
 
   const isOutOfStock = product.stockCount <= 0;
+  const checkoutDisabled = isOutOfStock || siteConfig.storeCheckoutEnabled === false;
   const hasMarkdown =
     product.compareAtCents > product.priceCents && product.compareAtCents > 0;
   const savingsPercent = hasMarkdown
@@ -58,6 +59,21 @@ export const DirectProductCard: React.FC<DirectProductCardProps> = ({
     addToCart(product.id, 1, true);
     setJustAdded(true);
     window.setTimeout(() => setJustAdded(false), 1400);
+  }
+
+  function handleBuyNow(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (isOutOfStock) return;
+    if (siteConfig.storeCheckoutEnabled === false) {
+      addToCart(product.id, 1, true);
+      return;
+    }
+    buyNowProduct(product.id, 1);
+  }
+
+  function handleInspect(e: React.MouseEvent) {
+    e.stopPropagation();
+    onInspectProduct?.(product);
   }
 
   async function handlePhotoFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -347,6 +363,12 @@ export const DirectProductCard: React.FC<DirectProductCardProps> = ({
             <span className="font-medium text-[#9A3412]">
               {getDirectKindLabel(product)}
             </span>
+            {product.category && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>{product.category}</span>
+              </>
+            )}
             <span aria-hidden="true">·</span>
             <span>By {product.sellerName || 'Pickra Studio'}</span>
             {product.videoUrl?.trim() && (
@@ -429,7 +451,7 @@ export const DirectProductCard: React.FC<DirectProductCardProps> = ({
         </h3>
 
         <p className="mt-2 text-sm text-stone-600 leading-relaxed line-clamp-3 flex-1">
-          {product.subtitle}
+          {product.subtitle || product.summary}
         </p>
 
         <div className="mt-3 pt-3 border-t border-stone-100 flex items-center justify-between gap-2 text-xs text-stone-500">
@@ -443,36 +465,67 @@ export const DirectProductCard: React.FC<DirectProductCardProps> = ({
           </span>
         </div>
 
-        <div className="mt-4 pt-4 border-t border-stone-200/80 flex items-center justify-between gap-3">
-          <div className="flex items-baseline gap-2">
-            <span className="font-mono text-[15px] font-semibold text-stone-900 tabular-nums">
-              {formatPriceCents(product.priceCents)}
-            </span>
-            {hasMarkdown && (
-              <span className="font-mono text-xs text-stone-400 line-through tabular-nums">
-                {formatPriceCents(product.compareAtCents)}
+        <div className="mt-4 pt-4 border-t border-stone-200/80 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-baseline gap-2">
+              <span className="font-mono text-base font-semibold text-stone-900 tabular-nums">
+                {formatPriceCents(product.priceCents)}
               </span>
-            )}
+              {hasMarkdown && (
+                <span className="font-mono text-xs text-stone-400 line-through tabular-nums">
+                  {formatPriceCents(product.compareAtCents)}
+                </span>
+              )}
+            </div>
+
+            <button
+              type="button"
+              disabled={isOutOfStock}
+              onClick={handleAdd}
+              title={isOutOfStock ? 'Sold out' : 'Add to shopping bag'}
+              className="inline-flex items-center gap-1 text-xs font-medium text-stone-600 hover:text-[#9A3412] disabled:text-stone-400 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            >
+              {justAdded ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-700" />
+                  <span className="text-emerald-800 font-semibold">Added</span>
+                </>
+              ) : (
+                <>
+                  <ShoppingBag className="w-3.5 h-3.5" />
+                  <span>+ Bag</span>
+                </>
+              )}
+            </button>
           </div>
 
-          <button
-            type="button"
-            disabled={isOutOfStock}
-            onClick={handleAdd}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] disabled:bg-stone-300 rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
-          >
-            {justAdded ? (
-              <>
-                <Check className="w-3.5 h-3.5" />
-                <span>Added</span>
-              </>
-            ) : (
-              <>
-                <ShoppingBag className="w-3.5 h-3.5" />
-                <span>{isOutOfStock ? 'Sold Out' : 'Add to Bag'}</span>
-              </>
+          <div className="flex items-center gap-2">
+            {onInspectProduct && (
+              <button
+                type="button"
+                onClick={handleInspect}
+                className="flex-1 px-3 py-2 text-xs font-semibold text-stone-900 bg-[#F3EFE8] hover:bg-stone-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap text-center"
+              >
+                View Details
+              </button>
             )}
-          </button>
+
+            <button
+              type="button"
+              disabled={isOutOfStock}
+              onClick={handleBuyNow}
+              className="flex-1 inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-[#1C1917] hover:bg-[#9A3412] disabled:bg-stone-300 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+            >
+              <ShoppingBag className="w-3.5 h-3.5" />
+              <span>
+                {isOutOfStock
+                  ? 'Sold Out'
+                  : checkoutDisabled
+                  ? 'Add to Bag'
+                  : 'Buy Now'}
+              </span>
+            </button>
+          </div>
         </div>
       </div>
     </article>
