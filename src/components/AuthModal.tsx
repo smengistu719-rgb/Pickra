@@ -165,13 +165,13 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
       <div className="flex items-start justify-between gap-4 pb-5 border-b border-stone-200/80">
         <div>
           <div className="text-xs font-medium text-[#9A3412]">
-            Pickra Account &amp; Creator Dashboard
+            Pickras Account &amp; Creator Dashboard
           </div>
           <h2 className="mt-1 font-serif text-2xl font-medium text-stone-900">
             {heading ||
               (mode === 'signup'
-                ? 'Create your Pickra account'
-                : 'Sign in to Pickra')}
+                ? 'Create your Pickras account'
+                : 'Sign in to Pickras')}
           </h2>
           <p className="mt-1 text-xs text-stone-600 leading-relaxed max-w-lg">
             {subheading ||
@@ -403,7 +403,7 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
               />
               <span className="text-xs text-stone-700 leading-relaxed">
                 <strong className="text-stone-900">
-                  Sell Physical or Digital Products on Pickra Store
+                  Sell Physical or Digital Products on Pickras Store
                 </strong>{' '}
                 — get your personal seller dashboard and receive 90% net payouts.
               </span>
@@ -528,7 +528,7 @@ export const AuthPanel: React.FC<AuthPanelProps> = ({
               <span>
                 {asSeller
                   ? 'Create Creator Seller Account'
-                  : 'Create Pickra Account'}
+                  : 'Create Pickras Account'}
               </span>
             </>
           ) : (

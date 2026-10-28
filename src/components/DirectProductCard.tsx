@@ -120,7 +120,7 @@ export const DirectProductCard: React.FC<DirectProductCardProps> = ({
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 text-[11px] text-stone-500">
               <span className="font-medium text-[#9A3412] truncate">
-                {product.sellerName || 'Pickra Store'}
+                {product.sellerName || 'Pickras Store'}
               </span>
               <span aria-hidden="true">·</span>
               <span>{getDirectKindLabel(product)}</span>
@@ -158,7 +158,7 @@ export const DirectProductCard: React.FC<DirectProductCardProps> = ({
   if (variant === 'inline') {
     return (
       <aside
-        aria-label={`Pickra Store Product: ${product.title}`}
+        aria-label={`Pickras Store Product: ${product.title}`}
         className="my-8 bg-white border border-stone-300/90 rounded-xl p-5 sm:p-6 text-stone-900"
       >
         {sharedPhotoInput}
@@ -189,7 +189,7 @@ export const DirectProductCard: React.FC<DirectProductCardProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-1.5 text-xs text-stone-500">
                 <span className="font-semibold text-[#9A3412]">
-                  By {product.sellerName || 'Pickra Studio'}
+                  By {product.sellerName || 'Pickras Studio'}
                 </span>
                 <span aria-hidden="true">·</span>
                 <span>{getDirectKindLabel(product)}</span>
@@ -370,7 +370,7 @@ export const DirectProductCard: React.FC<DirectProductCardProps> = ({
               </>
             )}
             <span aria-hidden="true">·</span>
-            <span>By {product.sellerName || 'Pickra Studio'}</span>
+            <span>By {product.sellerName || 'Pickras Studio'}</span>
             {product.videoUrl?.trim() && (
               <>
                 <span aria-hidden="true">·</span>

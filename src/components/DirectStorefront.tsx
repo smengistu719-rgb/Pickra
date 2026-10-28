@@ -235,7 +235,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
   >(undefined);
   const [campTitle, setCampTitle] = useState('');
   const [campDescription, setCampDescription] = useState('');
-  const [campPromoCode, setCampPromoCode] = useState('PICKRA15');
+  const [campPromoCode, setCampPromoCode] = useState('PICKRAS15');
   const [campDiscountPercent, setCampDiscountPercent] = useState('15');
   const [campMinOrderUsd, setCampMinOrderUsd] = useState('0');
   const [campChannel, setCampChannel] =
@@ -585,7 +585,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
         text: isCreatorAdmin
           ? editingProductId
             ? 'Store product updated and live.'
-            : 'Product published to the Pickra Store.'
+            : 'Product published to the Pickras Store.'
           : editingProductId
           ? 'Product updated and submitted for admin review before public listing.'
           : 'Product saved and submitted for admin approval before appearing in the public Store.',
@@ -605,7 +605,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
     setEditingCampaignId(undefined);
     setCampTitle('');
     setCampDescription('');
-    setCampPromoCode('PICKRA15');
+    setCampPromoCode('PICKRAS15');
     setCampDiscountPercent('15');
     setCampMinOrderUsd('0');
     setCampChannel('Storefront Banner');
@@ -947,7 +947,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
             >
               {isCreatorAdmin || isActiveSeller
                 ? `Seller Studio (${mySellerProducts.length})`
-                : 'Sell on Pickra'}
+                : 'Sell on Pickras'}
             </button>
           </div>
 
@@ -1379,7 +1379,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
               </h3>
               <p className="text-sm text-stone-600 max-w-lg mx-auto leading-relaxed">
                 Approved physical editions and instant digital downloads appear
-                here automatically once published to the Pickra Store. No
+                here automatically once published to the Pickras Store. No
                 account is required to browse or check out when items go live.
               </p>
               {(isCreatorAdmin || isActiveSeller) && (
@@ -1457,7 +1457,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
       )}
 
       {/* =================================================================
-          SUB-VIEW 2: SELL ON PICKRA — CREATOR MARKETPLACE & PAYOUTS
+          SUB-VIEW 2: SELL ON PICKRAS — CREATOR MARKETPLACE & PAYOUTS
          ================================================================= */}
       {subView === 'sell' && (
         <div className="mt-8 space-y-8">
@@ -1469,12 +1469,12 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                     Creator Commerce Program · Physical &amp; Digital Products
                   </div>
                   <h2 className="mt-2 font-serif text-2xl sm:text-3xl font-medium text-stone-900">
-                    Create your Pickra Seller Account, publish products, and get
+                    Create your Pickras Seller Account, publish products, and get
                     paid on every sale
                   </h2>
                   <p className="mt-3 text-sm text-stone-600 leading-relaxed">
                     Independent creators, designers, and hardware makers can
-                    open a storefront on Pickra in under a minute. Register with
+                    open a storefront on Pickras in under a minute. Register with
                     your Email &amp; Password or Google account, upload photos
                     of your physical goods or digital downloads, set your
                     pricing, and receive automatic 90% net payouts when
@@ -1509,7 +1509,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                     </h3>
                     <p className="mt-1 text-xs text-stone-600 leading-relaxed">
                       Every sale records your 90% net payout in your live ledger
-                      (10% Pickra marketplace fee) with transparent settlement
+                      (10% Pickras marketplace fee) with transparent settlement
                       tracking.
                     </p>
                   </div>
@@ -2053,7 +2053,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
                       </h2>
                       <p className="text-xs text-stone-500">
                         {isCreatorAdmin || isActiveSeller
-                          ? 'Manage your physical inventory and digital downloads. Seller submissions are reviewed by the Pickra admin before appearing in the public Store.'
+                          ? 'Manage your physical inventory and digital downloads. Seller submissions are reviewed by the Pickras admin before appearing in the public Store.'
                           : 'Complete and activate your Seller Storefront & Payout Account on the left before adding or managing Store products.'}
                       </p>
                     </div>
@@ -2744,7 +2744,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
           >
             <div className="flex items-center justify-between gap-4 pb-4 border-b border-stone-200">
               <div className="text-xs text-stone-500">
-                By {selectedProduct.sellerName || 'Pickra Studio'} ·{' '}
+                By {selectedProduct.sellerName || 'Pickras Studio'} ·{' '}
                 {selectedProduct.category} · SKU{' '}
                 <span className="font-mono text-stone-800">
                   {selectedProduct.sku}
@@ -2990,7 +2990,7 @@ export const DirectStorefront: React.FC<DirectStorefrontProps> = ({
             <div className="flex items-center justify-between gap-4 pb-4 border-b border-stone-200">
               <div>
                 <div className="text-xs text-[#9A3412] font-medium">
-                  Pickra Creator Marketplace
+                  Pickras Creator Marketplace
                 </div>
                 <h2 className="font-serif text-xl font-medium text-stone-900">
                   {editingProductId

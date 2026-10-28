@@ -355,7 +355,7 @@ export const ArticleReader: React.FC<ArticleReaderProps> = ({
             <div>
               <div className="pb-3 border-b border-stone-200/80">
                 <span className="text-xs font-medium text-stone-500">
-                  Pickra Blog Archive
+                  Pickras Blog Archive
                 </span>
                 <h3 className="mt-0.5 font-serif text-lg font-medium text-stone-900">
                   More From the Blog

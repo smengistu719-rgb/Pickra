@@ -524,7 +524,7 @@
         "status": {
           "type": "string",
           "maxLength": 20,
-          "enum": ["draft", "published", "archived"],
+          "enum": ["draft", "published", "active", "approved", "archived"],
           "description": "Storefront listing status with terminal archived state."
         },
         "createdAt": {

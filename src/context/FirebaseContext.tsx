@@ -33,6 +33,14 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import {
+  collection as liteCollection,
+  doc as liteDoc,
+  getDoc as getLiteDoc,
+  getDocs as getLiteDocs,
+  query as liteQuery,
+  where as liteWhere,
+} from 'firebase/firestore/lite';
+import {
   auth,
   db,
   formatFirebaseAuthError,
@@ -40,6 +48,7 @@ import {
   generateSafeDocId,
   googleProvider,
   handleFirestoreError,
+  liteDb,
   OperationType,
   toSafePromoCode,
   toSafeSku,
@@ -502,6 +511,12 @@ function buildDefaultDropdownOptions(): Record<DropdownListKey, string[]> {
   };
 }
 
+function rebrandLegacyCopy(raw: string): string {
+  return raw
+    .replace(/\bPickra\b/g, 'Pickras')
+    .replace(/https:\/\/pickra\.studio\b/g, 'https://pickras.studio');
+}
+
 function loadInitialAdminUiPrefs(): AdminUiPrefsState {
   const defaults: AdminUiPrefsState = {
     dropdownOptions: buildDefaultDropdownOptions(),
@@ -518,7 +533,7 @@ function loadInitialAdminUiPrefs(): AdminUiPrefsState {
         const candidate = parsed.dropdownOptions[k];
         if (Array.isArray(candidate) && candidate.length > 0) {
           mergedDrops[k] = candidate
-            .map((s) => String(s).trim())
+            .map((s) => rebrandLegacyCopy(String(s).trim()))
             .filter(Boolean);
         }
       }
@@ -533,12 +548,12 @@ function loadInitialAdminUiPrefs(): AdminUiPrefsState {
           mergedHeaders[k] = {
             kicker:
               typeof c.kicker === 'string'
-                ? c.kicker
+                ? rebrandLegacyCopy(c.kicker)
                 : DEFAULT_SECTION_HEADERS[k].kicker,
-            title: c.title,
+            title: rebrandLegacyCopy(c.title),
             subtitle:
               typeof c.subtitle === 'string'
-                ? c.subtitle
+                ? rebrandLegacyCopy(c.subtitle)
                 : DEFAULT_SECTION_HEADERS[k].subtitle,
           };
         }
@@ -558,7 +573,7 @@ function buildSeedDigitalBundleAsset(product: DirectProduct): DeliveredDigitalAs
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>${product.title} — Pickra Digital Edition</title>
+<title>${product.title} — Pickras Digital Edition</title>
 <style>
   body { font-family: Georgia, serif; max-width: 720px; margin: 48px auto; padding: 0 24px; color: #1c1917; background: #faf8f5; line-height: 1.7; }
   .badge { font-family: system-ui, sans-serif; font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: #9a3412; font-weight: 700; }
@@ -568,7 +583,7 @@ function buildSeedDigitalBundleAsset(product: DirectProduct): DeliveredDigitalAs
 </style>
 </head>
 <body>
-  <div class="badge">Pickra Verified Digital Edition · SKU ${product.sku}</div>
+  <div class="badge">Pickras Verified Digital Edition · SKU ${product.sku}</div>
   <h1>${product.title}</h1>
   <p>${product.subtitle}</p>
   <div class="box">
@@ -596,17 +611,17 @@ const DEFAULT_SITE_TAGLINE =
   'Independent editorial blog, multi-creator store, and curated product & service affiliate directories.';
 
 export const DEFAULT_ABOUT_MISSION =
-  'Pickra is an independent digital publication and creator marketplace built around editorial clarity, transparent commerce, and direct creator empowerment. Rather than blending paid placements into editorial journalism, Pickra separates every experience into four dedicated pillars so readers, buyers, and independent creators always know how each item is produced, fulfilled, and disclosed.';
+  'Pickras is an independent digital publication and creator marketplace built around editorial clarity, transparent commerce, and direct creator empowerment. Rather than blending paid placements into editorial journalism, Pickras separates every experience into four dedicated pillars so readers, buyers, and independent creators always know how each item is produced, fulfilled, and disclosed.';
 
 export const DEFAULT_ABOUT_STORY =
-  'On the Pickra Blog, our editorial desk publishes long-form dispatches, field guides, and technical essays in distraction-free color themes. In the Pickra Store, verified independent creators sell original physical goods and vaulted digital downloads—receiving 90% net payouts while buyers enjoy frictionless guest or account checkout. Alongside the Store, our Product Affiliate and Service Affiliate directories curate vetted hardware, software, and specialist talent across Amazon, Digistore24, Fiverr, Upwork, and global partner networks with full FTC transparency.';
+  'On the Pickras Blog, our editorial desk publishes long-form dispatches, field guides, and technical essays in distraction-free color themes. In the Pickras Store, verified independent creators sell original physical goods and vaulted digital downloads—receiving 90% net payouts while buyers enjoy frictionless guest or account checkout. Alongside the Store, our Product Affiliate and Service Affiliate directories curate vetted hardware, software, and specialist talent across Amazon, Digistore24, Fiverr, Upwork, and global partner networks with full FTC transparency.';
 
 export const DEFAULT_CONTACT_EMAIL = 'mengistushimelis@gmail.com';
 export const DEFAULT_CONTACT_PHONE = 'Direct Desk · Mon–Sat, 09:00–18:00 EAT';
 export const DEFAULT_CONTACT_LOCATION = 'Addis Ababa & Global Digital Desk';
 
 export const DEFAULT_PRIVACY_POLICY_SUMMARY =
-  'Pickra enforces strict role-based data minimization across every module. Account emails, affiliate tracking tags, and seller payout credentials (Telebirr, Bank Transfer, CBE Birr, PayPal, Wise) are isolated inside owner-only private Firestore vaults and never exposed on public profiles. Guest and member Store orders are visible solely to the buyer, the fulfilling seller, and the Pickra administrator, using masked payment references rather than raw card numbers. Digital deliverables are protected in a locked vault until a verified purchase completes.';
+  'Pickras enforces strict role-based data minimization across every module. Account emails, affiliate tracking tags, and seller payout credentials (Telebirr, Bank Transfer, CBE Birr, PayPal, Wise) are isolated inside owner-only private Firestore vaults and never exposed on public profiles. Guest and member Store orders are visible solely to the buyer, the fulfilling seller, and the Pickras administrator, using masked payment references rather than raw card numbers. Digital deliverables are protected in a locked vault until a verified purchase completes.';
 
 const VALID_BLOG_THEMES: BlogColorTheme[] = [
   'classic',
@@ -675,7 +690,7 @@ function parseOfferDoc(id: string, data: Record<string, unknown>): AffiliateOffe
   return {
     id,
     authorId: String(data.authorId || ''),
-    authorName: String(data.authorName || 'Pickra Editorial'),
+    authorName: String(data.authorName || 'Pickras Editorial'),
     title: String(data.title || ''),
     kind: (data.kind as AffiliateOffer['kind']) || 'physical',
     platform: (data.platform as AffiliateOffer['platform']) || 'Amazon',
@@ -705,7 +720,7 @@ function parsePostDoc(id: string, data: Record<string, unknown>): BlogPost {
   return {
     id,
     authorId: String(data.authorId || ''),
-    authorName: String(data.authorName || 'Pickra Editorial'),
+    authorName: String(data.authorName || 'Pickras Editorial'),
     title: String(data.title || ''),
     subtitle: String(data.subtitle || ''),
     slug: String(data.slug || id),
@@ -735,7 +750,7 @@ function parseDirectProductDoc(
   data: Record<string, unknown>
 ): DirectProduct {
   const normalizedStatus: PublishStatus =
-    data.status === 'active'
+    data.status === 'active' || data.status === 'approved'
       ? 'published'
       : (data.status as PublishStatus) || 'draft';
   const rawApproval = String(data.approvalStatus || '');
@@ -754,7 +769,7 @@ function parseDirectProductDoc(
   return {
     id,
     sellerId: String(data.sellerId || ''),
-    sellerName: String(data.sellerName || 'Pickra Studio'),
+    sellerName: String(data.sellerName || 'Pickras Studio'),
     title: String(data.title || ''),
     subtitle: String(data.subtitle || ''),
     kind: (data.kind as DirectProductKind) || 'physical',
@@ -853,7 +868,7 @@ function parseDirectOrderDoc(
     sellerId,
     sellerName: String(
       data.sellerName ||
-        (sellerId === 'editorial_desk' ? 'Pickra House Studio' : 'Creator Seller')
+        (sellerId === 'editorial_desk' ? 'Pickras House Studio' : 'Creator Seller')
     ),
     orderNumber: String(data.orderNumber || id),
     buyerName: String(data.buyerName || ''),
@@ -1030,7 +1045,7 @@ function parseAnalyticsEventDoc(
     channel: (data.channel as AnalyticsChannel) || 'blog',
     targetId: String(data.targetId || ''),
     targetTitle: String(data.targetTitle || 'Item'),
-    platform: String(data.platform || 'Pickra'),
+    platform: String(data.platform || 'Pickras'),
     valueCents: Number(data.valueCents || 0),
     createdAtMs: timestampToMs(data.createdAt),
   };
@@ -1302,7 +1317,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       siteTagline: DEFAULT_SITE_TAGLINE,
       announcementEnabled: false,
       announcementText:
-        'Free tracked courier shipping on Pickra Store physical orders over $95 · Use code PICKRA15',
+        'Free tracked courier shipping on Pickras Store physical orders over $95 · Use code PICKRAS15',
       announcementCtaLabel: 'Shop Direct',
       announcementTargetSection: 'store',
       freeShippingThresholdCents: DEFAULT_FREE_SHIPPING_THRESHOLD_CENTS,
@@ -1450,8 +1465,8 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
             uid: currentUser.uid,
             displayName: defaultName,
             bio: initialIsSeller
-              ? 'Independent creator selling on Pickra Store.'
-              : 'Pickra editorial & creator store member.',
+              ? 'Independent creator selling on Pickras Store.'
+              : 'Pickras editorial & creator store member.',
             isSeller: initialIsSeller,
             sellerStatus: initialSellerStatus,
             storeName: initialStoreName,
@@ -1463,8 +1478,8 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
             uid: currentUser.uid,
             displayName: defaultName,
             bio: initialIsSeller
-              ? 'Independent creator selling on Pickra Store.'
-              : 'Pickra editorial & creator store member.',
+              ? 'Independent creator selling on Pickras Store.'
+              : 'Pickras editorial & creator store member.',
             isSeller: initialIsSeller,
             sellerStatus: initialSellerStatus,
             storeName: initialStoreName,
@@ -1515,6 +1530,16 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           ).slice(0, VALIDATION_LIMITS.DISPLAY_NAME_MAX);
         }
       } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err || '');
+        if (msg.includes('client is offline') || msg.includes('unavailable')) {
+          return (
+            currentUser.displayName ||
+            currentUser.email?.split('@')[0] ||
+            'Member'
+          )
+            .trim()
+            .slice(0, VALIDATION_LIMITS.DISPLAY_NAME_MAX);
+        }
         handleFirestoreError(err, OperationType.WRITE, userPath);
       }
 
@@ -1632,7 +1657,10 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           });
         }
       } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, privatePath);
+        const msg = err instanceof Error ? err.message : String(err || '');
+        if (!msg.includes('client is offline') && !msg.includes('unavailable')) {
+          handleFirestoreError(err, OperationType.WRITE, privatePath);
+        }
       }
 
       try {
@@ -1659,11 +1687,11 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
                 eventType: item.eventType || 'post_view',
                 channel: item.channel || 'blog',
                 targetId: sanitizeSafeId(String(item.targetId || 'item')),
-                targetTitle: String(item.targetTitle || 'Pickra Item').slice(
+                targetTitle: String(item.targetTitle || 'Pickras Item').slice(
                   0,
                   VALIDATION_LIMITS.EVENT_TITLE_MAX
                 ),
-                platform: String(item.platform || 'Pickra').slice(
+                platform: String(item.platform || 'Pickras').slice(
                   0,
                   VALIDATION_LIMITS.EVENT_PLATFORM_MAX
                 ),
@@ -1719,7 +1747,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         );
       })
       .catch((err) => {
-        console.error('User bootstrap warning:', err);
+        console.warn('User bootstrap warning:', err);
       });
 
     return () => {
@@ -1753,22 +1781,127 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     );
     const publishedProductsQuery = query(
       collection(db, 'directProducts'),
-      where('status', 'in', ['published', 'active'])
+      where('status', 'in', ['published', 'active', 'approved'])
     );
     const publishedCampaignsQuery = query(
       collection(db, 'campaigns'),
       where('status', '==', 'published')
     );
 
+    const liteSiteConfigRef = liteDoc(liteDb, 'siteConfig', 'main');
+    const liteOffersQuery = liteQuery(
+      liteCollection(liteDb, 'offers'),
+      liteWhere('status', '==', 'published')
+    );
+    const litePostsQuery = liteQuery(
+      liteCollection(liteDb, 'posts'),
+      liteWhere('status', 'in', ['published', 'active'])
+    );
+    const liteProductsQuery = liteQuery(
+      liteCollection(liteDb, 'directProducts'),
+      liteWhere('status', 'in', ['published', 'active', 'approved'])
+    );
+    const liteCampaignsQuery = liteQuery(
+      liteCollection(liteDb, 'campaigns'),
+      liteWhere('status', '==', 'published')
+    );
+
+    let siteConfigResolved = false;
+    let offersResolved = false;
+    let postsResolved = false;
+    let productsResolved = false;
+    let campaignsResolved = false;
+
     const formatPublicListenerError = (label: string, err: unknown) => {
-      console.error(`Public Firestore read warning (${label}):`, err);
-      return `Unable to load ${label} from the Pickra database right now. Please check your connection and retry.`;
+      console.warn(`Public Firestore read notice (${label}):`, err);
+      return `Unable to load ${label} from the Pickras database right now. Please check your connection and retry.`;
     };
+
+    const fetchSiteConfigViaRest = () =>
+      getLiteDoc(liteSiteConfigRef).then((snap) => {
+        if (cancelled) return;
+        siteConfigResolved = true;
+        if (snap.exists()) {
+          setFirestoreSiteConfig(
+            parseSiteConfigDoc(snap.data() as Record<string, unknown>, false)
+          );
+        } else {
+          setFirestoreSiteConfig(null);
+        }
+      });
+
+    const fetchOffersViaRest = () =>
+      getLiteDocs(liteOffersQuery).then((snap) => {
+        if (cancelled) return;
+        offersResolved = true;
+        const items = snap.docs.map((d) =>
+          parseOfferDoc(d.id, d.data() as Record<string, unknown>)
+        );
+        items.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+        setPublicFirestoreOffers(items);
+        setLoadingOffers(false);
+      });
+
+    const fetchPostsViaRest = () =>
+      getLiteDocs(litePostsQuery).then((snap) => {
+        if (cancelled) return;
+        postsResolved = true;
+        const items = snap.docs.map((d) =>
+          parsePostDoc(d.id, d.data() as Record<string, unknown>)
+        );
+        items.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+        setPublicFirestorePosts(items);
+        setLoadingPosts(false);
+      });
+
+    const fetchProductsViaRest = () =>
+      getLiteDocs(liteProductsQuery).then((snap) => {
+        if (cancelled) return;
+        productsResolved = true;
+        const items = snap.docs.map((d) =>
+          parseDirectProductDoc(d.id, d.data() as Record<string, unknown>)
+        );
+        items.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+        setPublicFirestoreProducts(items);
+        setLoadingProducts(false);
+      });
+
+    const fetchCampaignsViaRest = () =>
+      getLiteDocs(liteCampaignsQuery).then((snap) => {
+        if (cancelled) return;
+        campaignsResolved = true;
+        const items = snap.docs.map((d) =>
+          parseCampaignDoc(d.id, d.data() as Record<string, unknown>)
+        );
+        items.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+        setPublicFirestoreCampaigns(items);
+      });
+
+    // Fast stateless HTTPS REST backup if WebChannel long-polling takes >2.5s on a restricted network
+    const restFallbackTimer = window.setTimeout(() => {
+      if (cancelled) return;
+      if (!siteConfigResolved) {
+        void fetchSiteConfigViaRest().catch(() => {});
+      }
+      if (!offersResolved) {
+        void fetchOffersViaRest().catch(() => {});
+      }
+      if (!postsResolved) {
+        void fetchPostsViaRest().catch(() => {});
+      }
+      if (!productsResolved) {
+        void fetchProductsViaRest().catch(() => {});
+      }
+      if (!campaignsResolved) {
+        void fetchCampaignsViaRest().catch(() => {});
+      }
+    }, 2500);
 
     const unsubSiteConfig = onSnapshot(
       siteConfigRef,
       (snap) => {
         if (cancelled) return;
+        siteConfigResolved = true;
         if (snap.exists()) {
           setFirestoreSiteConfig(
             parseSiteConfigDoc(snap.data() as Record<string, unknown>, false)
@@ -1777,22 +1910,10 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           setFirestoreSiteConfig(null);
         }
       },
-      (err) => {
-        console.error('Public siteConfig listener warning:', err);
-        void getDoc(siteConfigRef)
-          .then((snap) => {
-            if (cancelled) return;
-            if (snap.exists()) {
-              setFirestoreSiteConfig(
-                parseSiteConfigDoc(snap.data() as Record<string, unknown>, false)
-              );
-            } else {
-              setFirestoreSiteConfig(null);
-            }
-          })
-          .catch(() => {
-            // keep default site configuration if unreachable
-          });
+      () => {
+        void fetchSiteConfigViaRest().catch(() => {
+          // keep default site configuration if unreachable
+        });
       }
     );
 
@@ -1800,6 +1921,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       publishedOffersQuery,
       (snap) => {
         if (cancelled) return;
+        offersResolved = true;
         const items = snap.docs.map((d) =>
           parseOfferDoc(d.id, d.data() as Record<string, unknown>)
         );
@@ -1808,23 +1930,13 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         setLoadingOffers(false);
       },
       (err) => {
-        void getDocs(publishedOffersQuery)
-          .then((snap) => {
-            if (cancelled) return;
-            const items = snap.docs.map((d) =>
-              parseOfferDoc(d.id, d.data() as Record<string, unknown>)
-            );
-            items.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-            setPublicFirestoreOffers(items);
-            setLoadingOffers(false);
-          })
-          .catch((fallbackErr) => {
-            if (cancelled) return;
-            setPublicDataError(
-              formatPublicListenerError('partner offers', fallbackErr || err)
-            );
-            setLoadingOffers(false);
-          });
+        void fetchOffersViaRest().catch((fallbackErr) => {
+          if (cancelled) return;
+          setPublicDataError(
+            formatPublicListenerError('partner offers', fallbackErr || err)
+          );
+          setLoadingOffers(false);
+        });
       }
     );
 
@@ -1832,6 +1944,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       publishedPostsQuery,
       (snap) => {
         if (cancelled) return;
+        postsResolved = true;
         const items = snap.docs.map((d) =>
           parsePostDoc(d.id, d.data() as Record<string, unknown>)
         );
@@ -1840,23 +1953,13 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         setLoadingPosts(false);
       },
       (err) => {
-        void getDocs(publishedPostsQuery)
-          .then((snap) => {
-            if (cancelled) return;
-            const items = snap.docs.map((d) =>
-              parsePostDoc(d.id, d.data() as Record<string, unknown>)
-            );
-            items.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-            setPublicFirestorePosts(items);
-            setLoadingPosts(false);
-          })
-          .catch((fallbackErr) => {
-            if (cancelled) return;
-            setPublicDataError(
-              formatPublicListenerError('blog articles', fallbackErr || err)
-            );
-            setLoadingPosts(false);
-          });
+        void fetchPostsViaRest().catch((fallbackErr) => {
+          if (cancelled) return;
+          setPublicDataError(
+            formatPublicListenerError('blog articles', fallbackErr || err)
+          );
+          setLoadingPosts(false);
+        });
       }
     );
 
@@ -1864,6 +1967,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       publishedProductsQuery,
       (snap) => {
         if (cancelled) return;
+        productsResolved = true;
         const items = snap.docs.map((d) =>
           parseDirectProductDoc(d.id, d.data() as Record<string, unknown>)
         );
@@ -1872,23 +1976,13 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         setLoadingProducts(false);
       },
       (err) => {
-        void getDocs(publishedProductsQuery)
-          .then((snap) => {
-            if (cancelled) return;
-            const items = snap.docs.map((d) =>
-              parseDirectProductDoc(d.id, d.data() as Record<string, unknown>)
-            );
-            items.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-            setPublicFirestoreProducts(items);
-            setLoadingProducts(false);
-          })
-          .catch((fallbackErr) => {
-            if (cancelled) return;
-            setPublicDataError(
-              formatPublicListenerError('store products', fallbackErr || err)
-            );
-            setLoadingProducts(false);
-          });
+        void fetchProductsViaRest().catch((fallbackErr) => {
+          if (cancelled) return;
+          setPublicDataError(
+            formatPublicListenerError('store products', fallbackErr || err)
+          );
+          setLoadingProducts(false);
+        });
       }
     );
 
@@ -1896,31 +1990,23 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       publishedCampaignsQuery,
       (snap) => {
         if (cancelled) return;
+        campaignsResolved = true;
         const items = snap.docs.map((d) =>
           parseCampaignDoc(d.id, d.data() as Record<string, unknown>)
         );
         items.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
         setPublicFirestoreCampaigns(items);
       },
-      (err) => {
-        void getDocs(publishedCampaignsQuery)
-          .then((snap) => {
-            if (cancelled) return;
-            const items = snap.docs.map((d) =>
-              parseCampaignDoc(d.id, d.data() as Record<string, unknown>)
-            );
-            items.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-            setPublicFirestoreCampaigns(items);
-          })
-          .catch(() => {
-            // campaigns are optional promotional banners
-          });
-        console.warn('Public campaigns listener warning:', err);
+      () => {
+        void fetchCampaignsViaRest().catch(() => {
+          // campaigns are optional promotional banners
+        });
       }
     );
 
     return () => {
       cancelled = true;
+      window.clearTimeout(restFallbackTimer);
       unsubSiteConfig();
       unsubOffers();
       unsubPosts();
@@ -2597,11 +2683,11 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   async function persistTelemetryEvent(payload: PendingTelemetryPayload) {
     const cleanTargetId = sanitizeSafeId(payload.targetId, 'item');
     const cleanOwnerId = sanitizeSafeId(payload.targetOwnerId, 'editorial_desk');
-    const cleanTitle = (payload.targetTitle.trim() || 'Pickra Item').slice(
+    const cleanTitle = (payload.targetTitle.trim() || 'Pickras Item').slice(
       0,
       VALIDATION_LIMITS.EVENT_TITLE_MAX
     );
-    const cleanPlatform = (payload.platform.trim() || 'Pickra').slice(
+    const cleanPlatform = (payload.platform.trim() || 'Pickras').slice(
       0,
       VALIDATION_LIMITS.EVENT_PLATFORM_MAX
     );
@@ -2703,7 +2789,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       channel: 'store',
       targetId: product.id,
       targetTitle: product.title,
-      platform: 'Pickra Store',
+      platform: 'Pickras Store',
       valueCents: product.priceCents * Math.max(1, quantity),
     });
 
@@ -3003,7 +3089,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
         );
       }
       throw new Error(
-        'Permission denied: only the authorized Pickra Website Owner can manage blog posts, affiliate listings, campaigns, or global settings.'
+        'Permission denied: only the authorized Pickras Website Owner can manage blog posts, affiliate listings, campaigns, or global settings.'
       );
     }
   }
@@ -4459,7 +4545,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     >();
     for (const line of resolvedLines) {
       const sId = line.product.sellerId || 'editorial_desk';
-      const sName = line.product.sellerName || 'Pickra Studio';
+      const sName = line.product.sellerName || 'Pickras Studio';
       const bucket = groupedBySeller.get(sId);
       if (bucket) {
         bucket.lines.push(line);
@@ -5426,7 +5512,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       channel: 'store',
       targetId: product.id,
       targetTitle: product.title,
-      platform: 'Pickra Store',
+      platform: 'Pickras Store',
       valueCents: product.priceCents,
     });
   }

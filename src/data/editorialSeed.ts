@@ -6,14 +6,14 @@ import {
 } from '../types';
 
 export const DEFAULT_DISCLOSURE =
-  'Reader-supported journal: When you purchase physical products, digital tools, or commission freelance specialists through links in this article, Pickra may earn an affiliate commission at no extra cost to you.';
+  'Reader-supported journal: When you purchase physical products, digital tools, or commission freelance specialists through links in this article, Pickras may earn an affiliate commission at no extra cost to you.';
 
 export const SEED_DIRECT_PRODUCTS: DirectProduct[] = [
   {
     id: 'seed_prod_monograph',
     sellerId: 'editorial_desk',
-    sellerName: 'Pickra Studio Editions',
-    title: 'Pickra Field Notes Vol. I — Linen Hardcover Monograph & Brass Pen',
+    sellerName: 'Pickras Studio Editions',
+    title: 'Pickras Field Notes Vol. I — Linen Hardcover Monograph & Brass Pen',
     subtitle:
       'Smyth-sewn archival oatmeal linen journal paired with a precision-turned solid C360 brass fountain pen.',
     kind: 'physical',
@@ -25,14 +25,14 @@ export const SEED_DIRECT_PRODUCTS: DirectProduct[] = [
     badgeLabel: 'First Pressing',
     imageKey: 'edition',
     summary:
-      'Designed in-house by Pickra and sold directly from our studio warehouse. Features 192 numbered dot-grid pages on 120gsm acid-free fountain-pen friendly stock alongside a balanced raw brass pocket instrument.',
+      'Designed in-house by Pickras and sold directly from our studio warehouse. Features 192 numbered dot-grid pages on 120gsm acid-free fountain-pen friendly stock alongside a balanced raw brass pocket instrument.',
     highlights: [
       'Smyth-sewn lay-flat binding wrapped in Belgian oatmeal bookcloth',
       '120gsm Japanese archival paper with zero fountain-pen bleed',
       'Includes solid machined brass pen with German Schmidt fine nib',
       'Numbered first-edition belly band with woven ribbon marker',
     ],
-    deliveryNote: 'Ships directly from Pickra within 48 hours via tracked insured courier',
+    deliveryNote: 'Ships directly from Pickras within 48 hours via tracked insured courier',
     featured: true,
     status: 'published',
     isSeed: true,
@@ -42,8 +42,8 @@ export const SEED_DIRECT_PRODUCTS: DirectProduct[] = [
   {
     id: 'seed_prod_desk_valet',
     sellerId: 'editorial_desk',
-    sellerName: 'Pickra Studio Editions',
-    title: 'Pickra Modular Desk Valet — Matte Anodized Aluminum & American Walnut',
+    sellerName: 'Pickras Studio Editions',
+    title: 'Pickras Modular Desk Valet — Matte Anodized Aluminum & American Walnut',
     subtitle:
       'Two-piece CNC-milled everyday carry tray and solid walnut vertical device dock engineered for calm workspaces.',
     kind: 'physical',
@@ -60,7 +60,7 @@ export const SEED_DIRECT_PRODUCTS: DirectProduct[] = [
       'CNC-machined 6061 aluminum tray with micro-grooved anti-scratch floor',
       'Kiln-dried American walnut upright stand with hidden USB-C channel',
       'Cork-lined base pads protect wood, stone, and linoleum desktops',
-      'Backed by Pickra lifetime structural studio warranty',
+      'Backed by Pickras lifetime structural studio warranty',
     ],
     deliveryNote: 'Ships directly in plastic-free molded pulp packaging within 2 business days',
     featured: true,
@@ -72,8 +72,8 @@ export const SEED_DIRECT_PRODUCTS: DirectProduct[] = [
   {
     id: 'seed_prod_publisher_kit',
     sellerId: 'editorial_desk',
-    sellerName: 'Pickra Digital Press',
-    title: 'Pickra Publisher & Affiliate Revenue OS — Complete Notion + Figma Kit',
+    sellerName: 'Pickras Digital Press',
+    title: 'Pickras Publisher & Affiliate Revenue OS — Complete Notion + Figma Kit',
     subtitle:
       'Our exact internal editorial calendar, direct-to-reader product launch playbook, and sponsor attribution ledger.',
     kind: 'digital',
@@ -85,12 +85,12 @@ export const SEED_DIRECT_PRODUCTS: DirectProduct[] = [
     badgeLabel: 'Instant Access',
     imageKey: 'digital',
     summary:
-      'Sold directly by Pickra with zero middleman fees. Duplicate our complete editorial pipeline, product launch checklist, UTM campaign generator, and Figma article graphic templates in under ten minutes.',
+      'Sold directly by Pickras with zero middleman fees. Duplicate our complete editorial pipeline, product launch checklist, UTM campaign generator, and Figma article graphic templates in under ten minutes.',
     highlights: [
       'One-click Notion workspace template with affiliate + direct store P&L views',
       '28 customizable Figma social card, product launch, and media kit frames',
       '90-day direct product launch & email sequence blueprint (PDF + Markdown)',
-      'Includes lifetime v2 updates directly in your Pickra purchase history',
+      'Includes lifetime v2 updates directly in your Pickras purchase history',
     ],
     deliveryNote: 'Instant digital download & workspace access unlocked upon order confirmation',
     featured: false,
@@ -102,7 +102,7 @@ export const SEED_DIRECT_PRODUCTS: DirectProduct[] = [
   {
     id: 'seed_prod_lut_monograph',
     sellerId: 'editorial_desk',
-    sellerName: 'Pickra Digital Press',
+    sellerName: 'Pickras Digital Press',
     title: 'Warm Archival Studio LUTs & Tabletop Lighting Field Manual',
     subtitle:
       'Twelve color-accurate 3D LUTs (.cube) and a 64-page lighting diagram guide for natural-light product photography.',
@@ -134,15 +134,15 @@ export const SEED_CAMPAIGNS: MarketingCampaign[] = [
   {
     id: 'seed_camp_launch15',
     authorId: 'editorial_desk',
-    title: 'Pickra Direct Launch Week — Save 15% on Studio Editions & Digital Kits',
+    title: 'Pickras Direct Launch Week — Save 15% on Studio Editions & Digital Kits',
     description:
-      'Celebrate the opening of Pickra Direct Store. Apply code PICKRA15 at checkout on any direct physical edition or instant digital toolkit over $40, plus complimentary tracked shipping over $95.',
-    promoCode: 'PICKRA15',
+      'Celebrate the opening of Pickras Direct Store. Apply code PICKRAS15 at checkout on any direct physical edition or instant digital toolkit over $40, plus complimentary tracked shipping over $95.',
+    promoCode: 'PICKRAS15',
     discountPercent: 15,
     minOrderCents: 4000,
     channel: 'Storefront Banner',
     featuredProductId: 'seed_prod_monograph',
-    ctaLabel: 'Apply PICKRA15 Offer',
+    ctaLabel: 'Apply PICKRAS15 Offer',
     expiresLabel: 'Through November 30, 2026',
     status: 'published',
     isSeed: true,
@@ -154,7 +154,7 @@ export const SEED_CAMPAIGNS: MarketingCampaign[] = [
     authorId: 'editorial_desk',
     title: 'Creator Desk Bundle — 20% Off Orders Over $120',
     description:
-      'Pair any physical Pickra desk object with a digital workflow kit to unlock 20% bundle savings and free priority courier dispatch.',
+      'Pair any physical Pickras desk object with a digital workflow kit to unlock 20% bundle savings and free priority courier dispatch.',
     promoCode: 'BUNDLE20',
     discountPercent: 20,
     minOrderCents: 12000,
@@ -173,7 +173,7 @@ export const SEED_OFFERS: AffiliateOffer[] = [
   {
     id: 'seed_offer_planar_dac',
     authorId: 'editorial_desk',
-    authorName: 'Pickra Editorial',
+    authorName: 'Pickras Editorial',
     title: 'Audeze MM-100 Open-Back Reference Headphones & Balanced Desktop DAC',
     kind: 'physical',
     platform: 'Amazon',
@@ -197,7 +197,7 @@ export const SEED_OFFERS: AffiliateOffer[] = [
   {
     id: 'seed_offer_digistore_os',
     authorId: 'editorial_desk',
-    authorName: 'Pickra Editorial',
+    authorName: 'Pickras Editorial',
     title: 'Modular Editorial & Solopreneur Operations Suite (v4 Blueprint)',
     kind: 'digital',
     platform: 'Digistore24',
@@ -221,7 +221,7 @@ export const SEED_OFFERS: AffiliateOffer[] = [
   {
     id: 'seed_offer_upwork_architect',
     authorId: 'editorial_desk',
-    authorName: 'Pickra Editorial',
+    authorName: 'Pickras Editorial',
     title: 'Top-Rated Plus Full-Stack Web & Conversion Performance Engineering',
     kind: 'service',
     platform: 'Upwork',
@@ -245,7 +245,7 @@ export const SEED_OFFERS: AffiliateOffer[] = [
   {
     id: 'seed_offer_fiverr_brand',
     authorId: 'editorial_desk',
-    authorName: 'Pickra Editorial',
+    authorName: 'Pickras Editorial',
     title: 'Fiverr Pro Editorial Identity, Packaging & Custom Type Direction',
     kind: 'service',
     platform: 'Fiverr',
@@ -269,7 +269,7 @@ export const SEED_OFFERS: AffiliateOffer[] = [
   {
     id: 'seed_offer_field_ssd',
     authorId: 'editorial_desk',
-    authorName: 'Pickra Editorial',
+    authorName: 'Pickras Editorial',
     title: 'SanDisk Extreme PRO 2TB NVMe Rugged Field SSD & Waxed Folio Kit',
     kind: 'physical',
     platform: 'Amazon',
@@ -293,7 +293,7 @@ export const SEED_OFFERS: AffiliateOffer[] = [
   {
     id: 'seed_offer_gumroad_seo',
     authorId: 'editorial_desk',
-    authorName: 'Pickra Editorial',
+    authorName: 'Pickras Editorial',
     title: 'Programmatic Content & Affiliate Search Intent Playbook',
     kind: 'digital',
     platform: 'Gumroad',
@@ -320,7 +320,7 @@ export const SEED_POSTS: BlogPost[] = [
   {
     id: 'seed_post_lean_media_stack',
     authorId: 'editorial_desk',
-    authorName: 'Pickra Editorial',
+    authorName: 'Pickras Editorial',
     title: 'The Independent Publisher’s Craft: Editorial Focus, Rhythm, and Archival Standards',
     subtitle:
       'How small editorial desks maintain rigorous testing, timeless typography, and weekly publishing discipline without newsroom bloat.',
@@ -353,7 +353,7 @@ When every draft moves through research, structural edit, visual verification, a
 Even the sharpest prose loses readers if pages shift during load or typography feels cramped. Generous line height, warm paper contrast, and clear section hierarchy keep attention where it belongs: on ideas worth revisiting months and years later.`,
     attachedOfferIds: [],
     disclosureText:
-      'Independent Editorial Journal: Essays, field notes, and tutorials published by the Pickra editorial desk.',
+      'Independent Editorial Journal: Essays, field notes, and tutorials published by the Pickras editorial desk.',
     featured: true,
     status: 'published',
     publishedLabel: 'October 24, 2026',
@@ -364,7 +364,7 @@ Even the sharpest prose loses readers if pages shift during load or typography f
   {
     id: 'seed_post_field_kit_storage',
     authorId: 'editorial_desk',
-    authorName: 'Pickra Editorial',
+    authorName: 'Pickras Editorial',
     title: 'Two Weeks Documenting Architecture & Craft With Natural Window Light',
     subtitle:
       'Field lessons from photographing workshops, studios, and tactile materials on location without artificial lighting rigs.',
@@ -391,7 +391,7 @@ Balancing white point manually around 5200K preserves warm morning shadows and c
 Original field photographs compound in value when paired with clear technical notes, focal-length context, and honest observations that remain useful to readers years after publication.`,
     attachedOfferIds: [],
     disclosureText:
-      'Independent Editorial Journal: Essays, field notes, and tutorials published by the Pickra editorial desk.',
+      'Independent Editorial Journal: Essays, field notes, and tutorials published by the Pickras editorial desk.',
     featured: false,
     status: 'published',
     publishedLabel: 'October 19, 2026',
@@ -402,7 +402,7 @@ Original field photographs compound in value when paired with clear technical no
   {
     id: 'seed_post_delegating_creative_ops',
     authorId: 'editorial_desk',
-    authorName: 'Pickra Editorial',
+    authorName: 'Pickras Editorial',
     title: 'Structuring Technical Documentation & Clear Creative Briefs for Distributed Teams',
     subtitle:
       'A practical framework for writing concise one-page specifications, defining acceptance criteria, and keeping async collaboration calm.',
@@ -423,7 +423,7 @@ Whenever a task repeats more than three times—whether preparing diagrams, veri
 Great collaborators do their sharpest work when scope boundaries are unmistakable. State the core objective in two sentences, list concrete deliverables, attach two visual or structural references, and explicitly note what is out of scope before work begins.`,
     attachedOfferIds: [],
     disclosureText:
-      'Independent Editorial Journal: Essays, field notes, and tutorials published by the Pickra editorial desk.',
+      'Independent Editorial Journal: Essays, field notes, and tutorials published by the Pickras editorial desk.',
     featured: false,
     status: 'published',
     publishedLabel: 'October 12, 2026',

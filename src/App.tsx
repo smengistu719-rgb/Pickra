@@ -70,6 +70,9 @@ function resolveInitialSection(): ActiveSection {
       .split('/')[0]
       ?.toLowerCase();
     const sec = (params.get('section') || pathSegment || '').toLowerCase();
+    if (sec === 'admin' || sec === 'studio') {
+      return 'studio';
+    }
     if (
       sec === 'blog' ||
       sec === 'journal' ||
@@ -80,8 +83,7 @@ function resolveInitialSection(): ActiveSection {
       sec === 'about' ||
       sec === 'contact' ||
       sec === 'privacy' ||
-      sec === 'write' ||
-      sec === 'studio'
+      sec === 'write'
     ) {
       if (sec === 'journal') return 'blog';
       if (sec === 'shop') return 'store';
@@ -140,18 +142,26 @@ function PickraShell() {
     resetSectionHeader,
   } = useFirebaseApp();
 
+  const isOwnerEmailConfigured = Boolean(
+    BOOTSTRAPPED_ADMIN_EMAIL.trim().length > 0 &&
+      BOOTSTRAPPED_ADMIN_EMAIL.includes('@')
+  );
+
   const canAccessCreatorAdmin = Boolean(
     user &&
       !user.isAnonymous &&
       (isCreatorAdmin ||
-        (user.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase() &&
+        (isOwnerEmailConfigured &&
+          user.email?.toLowerCase() ===
+            BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase() &&
           user.emailVerified))
   );
 
-  // Allow owner with unverified email to reach the Backend gate screen to verify
+  // Allow verified admins/co-admins and unverified owner email (to complete verification) into Backend gate
   const canOpenBackendGate = Boolean(
     canAccessCreatorAdmin ||
-      (user &&
+      (isOwnerEmailConfigured &&
+        user &&
         !user.isAnonymous &&
         user.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase())
   );
@@ -165,6 +175,9 @@ function PickraShell() {
 
   const [activeSection, setActiveSection] = useState<ActiveSection>(
     resolveInitialSection
+  );
+  const [adminDeniedNotice, setAdminDeniedNotice] = useState<string | null>(
+    null
   );
   const [contactPresetCategory, setContactPresetCategory] =
     useState<ContactIssueCategory>('general');
@@ -328,37 +341,59 @@ function PickraShell() {
   ]);
 
   useEffect(() => {
-    if (!authReady || !adminRoleReady) return;
-    if (activeSection === 'studio' && !canOpenBackendGate) {
-      setActiveSection(firstEnabledPublicSection);
-      try {
-        const url = new URL(window.location.href);
-        if (url.searchParams.get('section') === 'studio') {
-          url.searchParams.delete('section');
-          window.history.replaceState({}, '', url.toString());
-        }
-      } catch {
-        // ignore URL history errors
-      }
+    const handlePopState = () => {
+      setActiveSection(resolveInitialSection());
+      setSelectedPostId(resolveInitialPostRef());
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  useEffect(() => {
+    if (canOpenBackendGate && adminDeniedNotice) {
+      setAdminDeniedNotice(null);
     }
-    if (activeSection === 'write' && !canAccessCreatorAdmin) {
+  }, [canOpenBackendGate, adminDeniedNotice]);
+
+  useEffect(() => {
+    if (!authReady) return;
+    // Allow logged-out visitors on /admin so the Website Owner can authenticate at /admin.
+    // Once a non-anonymous user is signed in and admin role verification completes,
+    // immediately block & redirect any unauthorized user (buyer, seller, reader, promoter).
+    if (
+      activeSection === 'studio' &&
+      user &&
+      !user.isAnonymous &&
+      adminRoleReady &&
+      !canOpenBackendGate
+    ) {
+      const fallbackTarget: ActiveSection = storeModuleEnabled
+        ? 'store'
+        : firstEnabledPublicSection;
+      setAdminDeniedNotice(
+        `Access denied: /admin is restricted to the verified Website Owner. Signed-in buyer, seller, reader, and promoter accounts (${
+          user.email || 'unauthorized account'
+        }) cannot access administrative tools.`
+      );
+      setActiveSection(fallbackTarget);
+      syncPublicUrlState(fallbackTarget, null, true);
+    }
+    if (
+      activeSection === 'write' &&
+      adminRoleReady &&
+      !canAccessCreatorAdmin
+    ) {
       setActiveSection(firstEnabledPublicSection);
-      try {
-        const url = new URL(window.location.href);
-        if (url.searchParams.get('section') === 'write') {
-          url.searchParams.delete('section');
-          window.history.replaceState({}, '', url.toString());
-        }
-      } catch {
-        // ignore URL history errors
-      }
+      syncPublicUrlState(firstEnabledPublicSection, null, true);
     }
   }, [
     authReady,
     adminRoleReady,
     activeSection,
+    user,
     canOpenBackendGate,
     canAccessCreatorAdmin,
+    storeModuleEnabled,
     firstEnabledPublicSection,
   ]);
 
@@ -370,22 +405,46 @@ function PickraShell() {
 
   function syncPublicUrlState(
     nextSection: ActiveSection,
-    nextPostSlugOrId: string | null = null
+    nextPostSlugOrId: string | null = null,
+    replaceHistory = false
   ) {
     try {
       const url = new URL(window.location.href);
+      url.searchParams.delete('section');
       if (nextPostSlugOrId) {
-        url.searchParams.delete('section');
+        url.pathname = '/';
         url.searchParams.set('post', nextPostSlugOrId);
       } else {
         url.searchParams.delete('post');
-        if (nextSection === 'blog' || nextSection === 'journal') {
-          url.searchParams.delete('section');
-        } else if (nextSection !== 'studio' && nextSection !== 'write') {
-          url.searchParams.set('section', nextSection);
+        if (nextSection === 'studio') {
+          url.pathname = '/admin';
+        } else if (nextSection === 'store') {
+          url.pathname = '/store';
+        } else if (nextSection === 'blog' || nextSection === 'journal') {
+          url.pathname = '/';
+        } else if (nextSection === 'products') {
+          url.pathname = '/products';
+        } else if (nextSection === 'services') {
+          url.pathname = '/services';
+        } else if (nextSection === 'about') {
+          url.pathname = '/about';
+        } else if (nextSection === 'contact') {
+          url.pathname = '/contact';
+        } else if (nextSection === 'privacy') {
+          url.pathname = '/privacy';
+        } else if (nextSection === 'write') {
+          url.pathname = '/write';
+        }
+        if (nextSection !== 'store') {
+          url.searchParams.delete('promo');
         }
       }
-      window.history.replaceState({}, '', url.toString());
+      const nextUrl = url.toString();
+      if (replaceHistory || nextUrl === window.location.href) {
+        window.history.replaceState({}, '', nextUrl);
+      } else {
+        window.history.pushState({}, '', nextUrl);
+      }
     } catch {
       // ignore URL history errors
     }
@@ -396,16 +455,28 @@ function PickraShell() {
     targetStoreSubView: StoreSubView = 'catalog'
   ) {
     setSelectedPostId(null);
-    if (section === 'studio' && !canOpenBackendGate) {
-      setActiveSection(firstEnabledPublicSection);
-      syncPublicUrlState(firstEnabledPublicSection, null);
+    if (section === 'studio') {
+      if (user && !user.isAnonymous && adminRoleReady && !canOpenBackendGate) {
+        const fallbackTarget: ActiveSection = storeModuleEnabled
+          ? 'store'
+          : firstEnabledPublicSection;
+        setAdminDeniedNotice(
+          `Access denied: /admin is restricted to the verified Website Owner.`
+        );
+        setActiveSection(fallbackTarget);
+        syncPublicUrlState(fallbackTarget, null, true);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        return;
+      }
+      setActiveSection('studio');
+      syncPublicUrlState('studio', null);
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
     if (section === 'write') {
       if (!canAccessCreatorAdmin) {
         setActiveSection(firstEnabledPublicSection);
-        syncPublicUrlState(firstEnabledPublicSection, null);
+        syncPublicUrlState(firstEnabledPublicSection, null, true);
         window.scrollTo({ top: 0, behavior: 'smooth' });
         return;
       }
@@ -648,7 +719,7 @@ function PickraShell() {
           </h1>
           <p className="text-sm text-stone-600 leading-relaxed">
             This module is currently paused for maintenance or curation. Please
-            explore the other active Pickra sections above.
+            explore the other active Pickras sections above.
           </p>
           {firstEnabledPublicSection !== activeSection && (
             <div className="pt-2">
@@ -696,14 +767,14 @@ function PickraShell() {
         <div className="max-w-[1200px] mx-auto flex items-center justify-between gap-8 px-5 sm:px-8 py-4">
           {/* Zone 1: Single text element wordmark */}
           <a
-            href="#pickra"
+            href="#pickras"
             onClick={(e) => {
               e.preventDefault();
               navigateToSection(firstEnabledPublicSection);
             }}
             className="font-serif text-xl font-semibold tracking-tight text-stone-900 whitespace-nowrap shrink-0"
           >
-            Pickra
+            Pickras
           </a>
 
           {/* Zone 2: Independent Module Navigation Links */}
@@ -956,7 +1027,45 @@ function PickraShell() {
         </div>
       </header>
 
-      {/* Main Content — 4 Completely Independent Modules + Admin Console */}
+      {/* Unauthorized /admin Access Denied Redirect Notice */}
+      {adminDeniedNotice && (
+        <div
+          role="alert"
+          className="bg-red-50 border-b border-red-200 text-red-900"
+        >
+          <div className="max-w-[1200px] mx-auto px-5 sm:px-8 py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2">
+              <Lock className="w-3.5 h-3.5 text-red-700 shrink-0" />
+              <span>{adminDeniedNotice}</span>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              {user && !user.isAnonymous && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setAdminDeniedNotice(null);
+                    await signOutUser();
+                    navigateToSection('studio');
+                  }}
+                  className="font-semibold text-red-900 underline underline-offset-4 hover:text-stone-900 cursor-pointer whitespace-nowrap"
+                >
+                  Sign Out &amp; Owner Login
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setAdminDeniedNotice(null)}
+                aria-label="Dismiss access notice"
+                className="p-1 text-red-700 hover:text-red-950 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Main Content — 4 Completely Independent Modules + Private /admin Portal */}
       <main className="flex-1">
         {activeSection === 'write' && canAccessCreatorAdmin ? (
           <MediumBlockEditor
@@ -966,10 +1075,16 @@ function PickraShell() {
               setSelectedPostId(savedPostId);
               setStoryBeingEdited(null);
               setActiveSection('blog');
+              syncPublicUrlState('blog', savedPostId);
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
           />
-        ) : activeSection === 'studio' && canOpenBackendGate ? (
+        ) : activeSection === 'studio' &&
+          (!authReady ||
+            !user ||
+            user.isAnonymous ||
+            !adminRoleReady ||
+            canOpenBackendGate) ? (
           <PublisherStudio
             onOpenPublishedPost={openPost}
             onOpenBlockEditor={openBlockEditorForPost}
@@ -977,7 +1092,7 @@ function PickraShell() {
           />
         ) : activeSection === 'store' ? (
           !storeModuleEnabled && !canAccessCreatorAdmin ? (
-            renderPausedModuleNotice('Pickra Store')
+            renderPausedModuleNotice('Pickras Store')
           ) : (
             <DirectStorefront
               key={storeSubView}
@@ -1401,7 +1516,7 @@ function PickraShell() {
             onOpenContactWithCategory={openContactPage}
           />
         ) : !blogModuleEnabled && !canAccessCreatorAdmin ? (
-          renderPausedModuleNotice('Pickra Blog')
+          renderPausedModuleNotice('Pickras Blog')
         ) : selectedPost && isBlogSection ? (
           <ArticleReader
             post={selectedPost}
@@ -1605,7 +1720,7 @@ function PickraShell() {
                       </div>
 
                       <span className="text-xs text-stone-500">
-                        By {leadPost.authorName || 'Pickra Editorial'}
+                        By {leadPost.authorName || 'Pickras Editorial'}
                       </span>
                     </div>
                   </div>
@@ -1648,7 +1763,7 @@ function PickraShell() {
                 <div className="mt-8 pt-5 border-t border-stone-200/80 flex flex-wrap items-center justify-between gap-4 text-xs text-stone-500">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium text-stone-800">
-                      Pickra Global Editorial Journal
+                      Pickras Global Editorial Journal
                     </span>
                     <span aria-hidden="true">·</span>
                     <span>
@@ -1665,7 +1780,7 @@ function PickraShell() {
             ) : (
               <section className="max-w-[1200px] mx-auto px-5 sm:px-8 py-14 border-b border-stone-200/90 text-center">
                 <h1 className="font-serif text-3xl font-medium text-stone-900">
-                  Pickra Global Editorial Blog
+                  Pickras Global Editorial Blog
                 </h1>
                 <p className="mt-2 text-sm text-stone-600 max-w-xl mx-auto">
                   Long-form essays, field guides, embedded videos, and visual
@@ -1858,7 +1973,7 @@ function PickraShell() {
 
                           <div className="mt-5 pt-4 border-t border-stone-200/80 flex items-center justify-between text-xs text-stone-500">
                             <span>
-                              By {post.authorName || 'Pickra Editorial'}
+                              By {post.authorName || 'Pickras Editorial'}
                             </span>
                             <a
                               href={`?post=${encodeURIComponent(
@@ -1969,8 +2084,8 @@ function PickraShell() {
               <div>
                 <div className="text-xs font-medium text-[#9A3412]">
                   {offerModalModule === 'services'
-                    ? 'Pickra Service Affiliate Module'
-                    : 'Pickra Product Affiliate Module'}
+                    ? 'Pickras Service Affiliate Module'
+                    : 'Pickras Product Affiliate Module'}
                 </div>
                 <h2 className="font-serif text-xl font-medium text-stone-900">
                   {editingOfferId
@@ -2382,7 +2497,7 @@ function PickraShell() {
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
             <div className="max-w-xl">
               <span className="font-serif text-lg font-semibold text-stone-900">
-                Pickra
+                Pickras
               </span>
               <p className="mt-1.5 text-xs text-stone-600 leading-relaxed">
                 {siteConfig.siteTagline}
@@ -2522,7 +2637,7 @@ function PickraShell() {
             </div>
 
             <span className="text-stone-400 whitespace-nowrap shrink-0">
-              © {new Date().getFullYear()} Pickra · Protected Vault &amp; Independent Publishing
+              © {new Date().getFullYear()} Pickras · Protected Vault &amp; Independent Publishing
             </span>
           </div>
         </div>

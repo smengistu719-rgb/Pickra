@@ -1108,7 +1108,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
         subtitle:
           autoSubtitle.length >= 8
             ? autoSubtitle
-            : `${title.trim()} — independent Pickra editorial story.`,
+            : `${title.trim()} — independent Pickras editorial story.`,
         category,
         readTimeMinutes: minutes,
         coverImageKey: coverImageValue || 'workspace',
@@ -1167,7 +1167,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
             <span>Editorial Composer Restricted</span>
           </div>
           <h1 className="font-serif text-2xl sm:text-3xl font-medium text-stone-900">
-            Blog publishing is reserved for the Pickra website owner
+            Blog publishing is reserved for the Pickras website owner
           </h1>
           <p className="text-sm text-stone-600 leading-relaxed">
             Readers can browse all published Blog dispatches freely. Sign in

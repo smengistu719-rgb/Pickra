@@ -94,7 +94,7 @@ export const DEFAULT_POST_CATEGORIES: string[] = [
 ];
 
 export const DEFAULT_BLOG_SAVED_LINKS: string[] = [
-  'Pickra Editorial Guidelines :: https://pickra.studio/editorial-standards',
+  'Pickras Editorial Guidelines :: https://pickras.studio/editorial-standards',
   'Creative Commons License Reference :: https://creativecommons.org/licenses/by/4.0/',
   'MDN Web Documentation :: https://developer.mozilla.org/',
 ];
@@ -269,7 +269,7 @@ export const DEFAULT_SECTION_HEADERS: Record<SectionHeaderKey, SectionHeaderCopy
     subtitle: 'Vetted physical gear, digital software, and specialist services across global partner networks.',
   },
   storeMasthead: {
-    kicker: 'Pickra Store · Physical & Digital Releases',
+    kicker: 'Pickras Store · Physical & Digital Releases',
     title: 'Shop Direct from Verified Creators — Guest Checkout Supported',
     subtitle:
       'Browse and purchase physical goods or instant digital downloads (PDFs, ZIPs, Excel tools, eBooks, HTML templates) directly without signing in.',
@@ -287,20 +287,20 @@ export const DEFAULT_SECTION_HEADERS: Record<SectionHeaderKey, SectionHeaderCopy
       'Handpicked designers, engineers, editors, and consultants across Fiverr, Upwork, Toptal, 99designs, and specialist partner platforms.',
   },
   aboutMasthead: {
-    kicker: 'About Pickra · Editorial Publication & Creator Commerce',
+    kicker: 'About Pickras · Editorial Publication & Creator Commerce',
     title: 'Independent Publishing, Direct Creator Goods & Vetted Partner Directories',
     subtitle:
-      'Pickra unites four distinct modules under a single editorial standard: an independent Blog, a verified multi-creator Store, a curated Product Affiliate directory, and a specialist Service Affiliate directory.',
+      'Pickras unites four distinct modules under a single editorial standard: an independent Blog, a verified multi-creator Store, a curated Product Affiliate directory, and a specialist Service Affiliate directory.',
   },
   contactMasthead: {
     kicker: 'Contact Us & Confidential Support',
-    title: 'Reach the Pickra Desk or Report a Private Issue',
+    title: 'Reach the Pickras Desk or Report a Private Issue',
     subtitle:
-      'Questions about a Store order, digital download, creator seller account, affiliate partnership, or a confidential privacy/data matter? Send a direct encrypted inquiry to the Pickra team.',
+      'Questions about a Store order, digital download, creator seller account, affiliate partnership, or a confidential privacy/data matter? Send a direct encrypted inquiry to the Pickras team.',
   },
   privacyMasthead: {
     kicker: 'Privacy, Data Protection & Private Issues',
-    title: 'How Pickra Protects Buyer, Seller & Reader Privacy',
+    title: 'How Pickras Protects Buyer, Seller & Reader Privacy',
     subtitle:
       'Clear, enforceable privacy commitments backed by split-collection Firestore isolation, vaulted digital assets, masked payment references, and confidential private-issue escalation.',
   },
@@ -663,7 +663,7 @@ export const CONTACT_CATEGORY_OPTIONS: {
   {
     value: 'general',
     label: 'General Editorial or Platform Inquiry',
-    hint: 'Questions about Pickra stories, feedback, or general inquiries.',
+    hint: 'Questions about Pickras stories, feedback, or general inquiries.',
   },
   {
     value: 'order_support',

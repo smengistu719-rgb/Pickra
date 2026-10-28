@@ -280,7 +280,7 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
       className="fixed inset-0 z-50 flex justify-end bg-stone-950/40 backdrop-blur-[1px]"
       role="dialog"
       aria-modal="true"
-      aria-label="Pickra Direct Shopping Bag"
+      aria-label="Pickras Direct Shopping Bag"
       onClick={handleClose}
     >
       <div
@@ -489,7 +489,7 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
             <div className="py-16 text-center">
               <ShoppingBag className="w-8 h-8 text-stone-300 mx-auto" />
               <h3 className="mt-3 font-serif text-xl font-medium text-stone-900">
-                Your Pickra bag is empty
+                Your Pickras bag is empty
               </h3>
               <p className="mt-1.5 text-sm text-stone-600 max-w-xs mx-auto leading-relaxed">
                 Browse creator products and purchase physical or digital items
@@ -662,7 +662,7 @@ export const ShoppingBagDrawer: React.FC<ShoppingBagDrawerProps> = ({
                     onChange={(e) =>
                       setPromoInput(e.target.value.toUpperCase())
                     }
-                    placeholder="e.g., PICKRA15"
+                    placeholder="e.g., PICKRAS15"
                     maxLength={24}
                     className="flex-1 px-3 py-2 text-xs font-mono uppercase bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
                   />

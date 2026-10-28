@@ -178,7 +178,7 @@ export const AboutUsPage: React.FC<AboutUsPageProps> = ({
 
           <div>
             <label className="block text-xs font-medium text-stone-700 mb-1.5">
-              How Pickra Works &amp; Editorial Story
+              How Pickras Works &amp; Editorial Story
             </label>
             <textarea
               rows={5}
@@ -230,7 +230,7 @@ export const AboutUsPage: React.FC<AboutUsPageProps> = ({
               Platform Commitments
             </div>
             <h3 className="font-serif text-xl font-medium text-stone-900">
-              Why Pickra keeps every module independent
+              Why Pickras keeps every module independent
             </h3>
             <div className="divide-y divide-stone-200/90 text-xs text-stone-700">
               <div className="py-3 first:pt-0">
@@ -277,7 +277,7 @@ export const AboutUsPage: React.FC<AboutUsPageProps> = ({
             Four Independent Pillars
           </div>
           <h2 className="mt-1 font-serif text-2xl font-medium text-stone-900">
-            Explore Pickra&apos;s Dedicated Modules
+            Explore Pickras&apos;s Dedicated Modules
           </h2>
         </div>
 
@@ -392,7 +392,7 @@ export const AboutUsPage: React.FC<AboutUsPageProps> = ({
             Have an editorial inquiry, partnership proposal, or private issue?
           </h3>
           <p className="text-xs sm:text-sm text-stone-600 leading-relaxed">
-            Reach the Pickra desk directly or review our full Privacy, Data Protection &amp; Private Issues policy.
+            Reach the Pickras desk directly or review our full Privacy, Data Protection &amp; Private Issues policy.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3 shrink-0">
@@ -734,7 +734,7 @@ export const ContactUsPage: React.FC<ContactUsPageProps> = ({
               <span>Reporting Private Issues &amp; Data Requests</span>
             </div>
             <p className="text-xs text-stone-700 leading-relaxed">
-              Every message submitted through this form is stored inside a restricted Firestore collection (<span className="font-mono text-[11px]">/contactMessages</span>) accessible exclusively to you and the verified Pickra administrator—never publicly readable or indexed.
+              Every message submitted through this form is stored inside a restricted Firestore collection (<span className="font-mono text-[11px]">/contactMessages</span>) accessible exclusively to you and the verified Pickras administrator—never publicly readable or indexed.
             </p>
             <div className="pt-1 flex flex-wrap items-center gap-3 text-xs">
               <button
@@ -791,7 +791,7 @@ export const ContactUsPage: React.FC<ContactUsPageProps> = ({
                   {submittedTicket.category === 'privacy_issue'
                     ? 'private issue report'
                     : 'message'}{' '}
-                  has been delivered privately to the Pickra administrator. Replies will be sent to{' '}
+                  has been delivered privately to the Pickras administrator. Replies will be sent to{' '}
                   <span className="font-mono">{submittedTicket.senderEmail}</span>.
                 </p>
               </div>
@@ -918,7 +918,7 @@ export const ContactUsPage: React.FC<ContactUsPageProps> = ({
 
               <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <p className="text-[11px] text-stone-500">
-                  Protected by Pickra&apos;s confidential inquiry rules — never visible to other users.
+                  Protected by Pickras&apos;s confidential inquiry rules — never visible to other users.
                 </p>
                 <button
                   type="submit"
@@ -946,7 +946,7 @@ export const ContactUsPage: React.FC<ContactUsPageProps> = ({
                   Your Recent Inquiries &amp; Private Reports
                 </h3>
                 <p className="text-xs text-stone-500">
-                  Visible only to your session/account and the Pickra administrator.
+                  Visible only to your session/account and the Pickras administrator.
                 </p>
               </div>
 
@@ -971,7 +971,7 @@ export const ContactUsPage: React.FC<ContactUsPageProps> = ({
                     {msg.adminNote && (
                       <div className="mt-2 p-2.5 bg-[#FBF9F5] border border-stone-200 rounded-lg text-xs text-stone-800">
                         <span className="font-semibold text-[#9A3412]">
-                          Pickra Desk Response:{' '}
+                          Pickras Desk Response:{' '}
                         </span>
                         {msg.adminNote}
                       </div>
@@ -1204,7 +1204,7 @@ export const PrivacyAndLegalPage: React.FC<PrivacyAndLegalPageProps> = ({
             Zero Raw Card Storage &amp; Strict Order Access
           </h3>
           <p className="text-xs sm:text-sm text-stone-600 leading-relaxed">
-            Visitors may purchase Store items as guests without registering an account. Pickra never collects or stores full 16-digit card numbers or CVV codes—only masked confirmation references (such as last-4 digits or Telebirr/CBE Birr/PayPal receipt IDs). Order records are restricted to the buyer, the fulfilling seller, and the Pickra administrator.
+            Visitors may purchase Store items as guests without registering an account. Pickras never collects or stores full 16-digit card numbers or CVV codes—only masked confirmation references (such as last-4 digits or Telebirr/CBE Birr/PayPal receipt IDs). Order records are restricted to the buyer, the fulfilling seller, and the Pickras administrator.
           </p>
         </div>
 
@@ -1252,7 +1252,7 @@ export const PrivacyAndLegalPage: React.FC<PrivacyAndLegalPageProps> = ({
             Access, Correction, Deletion &amp; Confidential Escalation
           </h3>
           <p className="text-xs sm:text-sm text-stone-600 leading-relaxed">
-            Pickra uses browser local storage strictly for functional shopping-bag persistence, promo codes, and guest order receipts on your device—never for third-party behavioral ad tracking. You may request account deletion, order PII removal, copyright review, or confidential escalation at any time.
+            Pickras uses browser local storage strictly for functional shopping-bag persistence, promo codes, and guest order receipts on your device—never for third-party behavioral ad tracking. You may request account deletion, order PII removal, copyright review, or confidential escalation at any time.
           </p>
         </div>
       </div>
@@ -1267,7 +1267,7 @@ export const PrivacyAndLegalPage: React.FC<PrivacyAndLegalPageProps> = ({
             Need to report a private account, payment, copyright, or personal data issue?
           </h3>
           <p className="text-xs sm:text-sm text-stone-600 leading-relaxed">
-            Submit a confidential report directly to the Pickra administrator. Submissions are restricted at the database rule level so only you and the site owner can view them.
+            Submit a confidential report directly to the Pickras administrator. Submissions are restricted at the database rule level so only you and the site owner can view them.
           </p>
         </div>
         <button

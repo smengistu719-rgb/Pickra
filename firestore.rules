@@ -43,7 +43,7 @@ service cloud.firestore {
         request.auth.token.email_verified == true &&
         request.auth.token.email is string &&
         request.auth.token.email.size() <= 254 &&
-        request.auth.token.email == 'mengistushimelis@gmail.com';
+        request.auth.token.email.lower() == 'mengistushimelis@gmail.com';
     }
 
     function isAdmin() {
@@ -304,7 +304,7 @@ service cloud.firestore {
         isValidHighlightsList(data.highlights) &&
         data.deliveryNote is string && data.deliveryNote.size() >= 2 && data.deliveryNote.size() <= 200 &&
         data.featured is bool &&
-        data.status is string && data.status.size() <= 20 && data.status in ['draft', 'published', 'active', 'archived'] &&
+        data.status is string && data.status.size() <= 20 && data.status in ['draft', 'published', 'active', 'approved', 'archived'] &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
     }
@@ -767,11 +767,11 @@ service cloud.firestore {
     // 6. Storefront Products (Active Sellers Manage Own Listings Subject to Admin Approval; Atomic Checkout Stock Decrements)
     match /directProducts/{productId} {
       allow get: if isValidId(productId) && (
-        existing().status in ['published', 'active'] ||
+        existing().status in ['published', 'active', 'approved'] ||
         (isSignedIn() && existing().sellerId == request.auth.uid) ||
         isAdmin()
       );
-      allow list: if existing().status in ['published', 'active'] ||
+      allow list: if existing().status in ['published', 'active', 'approved'] ||
         (isSignedIn() && existing().sellerId == request.auth.uid) ||
         isBootstrappedAdmin();
       allow create: if isVerifiedUser() &&
@@ -848,7 +848,7 @@ service cloud.firestore {
           // Action 3: Atomic Checkout Physical Inventory Decrement (Guest or Signed-In Buyer)
           (
             existing().kind == 'physical' &&
-            existing().status == 'published' &&
+            existing().status in ['published', 'active', 'approved'] &&
             'lastOrderRef' in incoming() &&
             isValidId(incoming().lastOrderRef) &&
             incoming().stockCount < existing().stockCount &&

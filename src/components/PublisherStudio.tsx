@@ -142,6 +142,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
 }) => {
   const {
     user,
+    authReady,
     isBootstrappedCreator,
     isCreatorAdmin,
     adminRoleReady,
@@ -288,7 +289,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
   const [prodDigitalFileName, setProdDigitalFileName] = useState('');
   const [prodDigitalFileType, setProdDigitalFileType] = useState('');
   const [prodDeliveryNote, setProdDeliveryNote] = useState(
-    'Ships in 48 hours from Pickra Studio'
+    'Ships in 48 hours from Pickras Studio'
   );
   const [prodSummary, setProdSummary] = useState('');
   const [prodHighlightsText, setProdHighlightsText] = useState('');
@@ -383,7 +384,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     useState(true);
   const [cfgServiceAffiliateEnabled, setCfgServiceAffiliateEnabled] =
     useState(true);
-  const [cfgShowStarterSeeds, setCfgShowStarterSeeds] = useState(true);
+  const [cfgShowStarterSeeds, setCfgShowStarterSeeds] = useState(false);
   const [cfgAboutMission, setCfgAboutMission] = useState(DEFAULT_ABOUT_MISSION);
   const [cfgAboutStory, setCfgAboutStory] = useState(DEFAULT_ABOUT_STORY);
   const [cfgContactEmail, setCfgContactEmail] = useState(DEFAULT_CONTACT_EMAIL);
@@ -607,7 +608,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
       revenueDisplay: string;
     }[] = [
       {
-        channel: 'Pickra Direct Store',
+        channel: 'Pickras Direct Store',
         role: 'Store Marketplace',
         activeItems: allManageableDirectProducts.filter(
           (p) =>
@@ -886,7 +887,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     setProdDigitalFileUrl('');
     setProdDigitalFileName('');
     setProdDigitalFileType('');
-    setProdDeliveryNote('Ships in 48 hours from Pickra Studio');
+    setProdDeliveryNote('Ships in 48 hours from Pickras Studio');
     setProdSummary('');
     setProdHighlightsText('');
     setProdFeatured(true);
@@ -986,7 +987,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
 
       await saveDirectProduct(input);
       resetProductComposer();
-      notify('ok', 'Store product saved and synced to Pickra Storefront.');
+      notify('ok', 'Store product saved and synced to Pickras Storefront.');
     } catch (err) {
       notify(
         'err',
@@ -1443,7 +1444,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
         privacyPolicySummary: cfgPrivacyPolicy,
       };
       await saveSiteConfig(payload);
-      notify('ok', 'Global Pickra site configuration saved and published live.');
+      notify('ok', 'Global Pickras site configuration saved and published live.');
     } catch (err) {
       notify(
         'err',
@@ -1546,7 +1547,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
   // CSV Exports
   function handleExportTelemetryCsv() {
     downloadCsvFile(
-      `pickra-telemetry-${new Date().toISOString().slice(0, 10)}.csv`,
+      `pickras-telemetry-${new Date().toISOString().slice(0, 10)}.csv`,
       [
         'Timestamp',
         'Event Type',
@@ -1570,7 +1571,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
 
   function handleExportOrdersCsv() {
     downloadCsvFile(
-      `pickra-direct-orders-${new Date().toISOString().slice(0, 10)}.csv`,
+      `pickras-direct-orders-${new Date().toISOString().slice(0, 10)}.csv`,
       [
         'Order Number',
         'Created At',
@@ -1604,7 +1605,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
           o.buyerEmail,
           o.paymentMethod || 'Card',
           o.paymentReference || '—',
-          o.sellerName || 'Pickra Studio',
+          o.sellerName || 'Pickras Studio',
           o.fulfillmentType,
           o.itemsSummary,
           o.promoCode,
@@ -1622,7 +1623,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
 
   function handleExportInventoryCsv() {
     downloadCsvFile(
-      `pickra-store-inventory-${new Date().toISOString().slice(0, 10)}.csv`,
+      `pickras-store-inventory-${new Date().toISOString().slice(0, 10)}.csv`,
       [
         'SKU',
         'Title',
@@ -1638,7 +1639,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
       filteredDirectProducts.map((p) => [
         p.sku,
         p.title,
-        p.sellerName || 'Pickra Studio',
+        p.sellerName || 'Pickras Studio',
         p.kind,
         p.category,
         p.isSeed ? 'approved' : p.approvalStatus || 'approved',
@@ -1652,7 +1653,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
 
   function handleExportProductAffiliateCsv() {
     downloadCsvFile(
-      `pickra-product-affiliates-${new Date().toISOString().slice(0, 10)}.csv`,
+      `pickras-product-affiliates-${new Date().toISOString().slice(0, 10)}.csv`,
       [
         'Title',
         'Platform',
@@ -1678,7 +1679,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
 
   function handleExportServiceAffiliateCsv() {
     downloadCsvFile(
-      `pickra-service-affiliates-${new Date().toISOString().slice(0, 10)}.csv`,
+      `pickras-service-affiliates-${new Date().toISOString().slice(0, 10)}.csv`,
       [
         'Title',
         'Platform',
@@ -1704,7 +1705,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
 
   function handleExportInquiriesCsv() {
     downloadCsvFile(
-      `pickra-inquiries-${new Date().toISOString().slice(0, 10)}.csv`,
+      `pickras-inquiries-${new Date().toISOString().slice(0, 10)}.csv`,
       [
         'Created At',
         'Status',
@@ -1730,57 +1731,106 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     );
   }
 
-  // GATE 1: Signed-out Creator Authentication Prompt
-  if (!user) {
+  const isOwnerAccountConfigured = Boolean(
+    BOOTSTRAPPED_ADMIN_EMAIL.trim().length > 0 &&
+      BOOTSTRAPPED_ADMIN_EMAIL.includes('@')
+  );
+
+  // GATE 0: Initial Firebase Auth State Resolution
+  if (!authReady) {
+    return (
+      <section className="max-w-[960px] mx-auto px-5 sm:px-8 py-16">
+        <div className="bg-white border border-stone-200/90 rounded-xl p-8 space-y-4 animate-pulse">
+          <div className="h-4 w-56 bg-stone-200/70 rounded" />
+          <div className="h-8 w-80 bg-stone-200/70 rounded" />
+          <div className="h-24 w-full bg-[#F3EFE8] rounded-lg" />
+        </div>
+      </section>
+    );
+  }
+
+  // GATE 1: Signed-out Website Owner Authentication Portal (/admin)
+  if (!user || user.isAnonymous) {
     return (
       <section className="max-w-[1160px] mx-auto px-5 sm:px-8 py-12 sm:py-16">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           <div className="lg:col-span-7 bg-white border border-stone-200/90 rounded-2xl p-8 sm:p-10 space-y-6">
             <div>
-              <p className="text-xs font-medium text-[#9A3412]">
-                Pickra Creator Backend · Management &amp; Monitoring Console
-              </p>
+              <div className="inline-flex items-center gap-1.5 text-xs font-medium text-[#9A3412]">
+                <Lock className="w-3.5 h-3.5" />
+                <span>
+                  Pickras Private Admin Portal · /admin · Website Owner Only
+                </span>
+              </div>
               <h1 className="mt-2 font-serif text-3xl sm:text-4xl font-medium text-stone-900">
-                Manage and monitor your entire Pickra publication and store
+                Sign in to govern your Pickras publication, store, and sellers
               </h1>
               <p className="mt-4 text-sm sm:text-base text-stone-600 leading-relaxed">
-                Sign in with your verified Website Owner account to monitor
-                users and sellers, approve marketplace products, manage customer
-                orders and transactions, and govern all four independent
-                modules.
+                This portal is strictly restricted to the verified Pickras
+                Website Owner. Buyers, sellers, blog readers, and affiliate
+                promoters are denied access to administrative routes and
+                protected by zero-trust Firebase Security Rules.
               </p>
             </div>
 
-            <div className="space-y-5 pt-6 border-t border-stone-200/80">
-              <div>
-                <h3 className="text-sm font-semibold text-stone-900">
-                  01. Live Traffic, Users &amp; Seller Governance
-                </h3>
-                <p className="mt-1 text-xs text-stone-600 leading-relaxed">
-                  Monitor registered accounts, activate or suspend sellers, and
-                  review seller products before Storefront publication.
+            {!isOwnerAccountConfigured ? (
+              <div className="p-5 bg-amber-50 border border-amber-200 rounded-xl space-y-2.5 text-xs text-amber-950 leading-relaxed">
+                <strong className="font-semibold block text-sm text-stone-900">
+                  Secure Website Owner Setup Required
+                </strong>
+                <p>
+                  No primary Website Owner email is currently configured. Automatic
+                  administrator elevation is disabled to prevent unauthorized
+                  takeover.
                 </p>
+                <ol className="list-decimal pl-4 space-y-1">
+                  <li>
+                    Set <span className="font-mono">BOOTSTRAPPED_ADMIN_EMAIL</span>{' '}
+                    to your verified owner email and match{' '}
+                    <span className="font-mono">isBootstrappedAdmin()</span> in{' '}
+                    <span className="font-mono">firestore.rules</span>, or
+                  </li>
+                  <li>
+                    Provision your verified Firebase Auth UID in the protected{' '}
+                    <span className="font-mono">/admins/&#123;uid&#125;</span>{' '}
+                    collection via the Firebase Console, then sign in on the
+                    right.
+                  </li>
+                </ol>
               </div>
-              <div>
-                <h3 className="text-sm font-semibold text-stone-900">
-                  02. Four Independent Modules
-                </h3>
-                <p className="mt-1 text-xs text-stone-600 leading-relaxed">
-                  Manage Blog, Store, Product Affiliate, and Service Affiliate
-                  as dedicated, isolated workflows with full edit and removal
-                  permissions.
-                </p>
+            ) : (
+              <div className="space-y-5 pt-6 border-t border-stone-200/80">
+                <div>
+                  <h3 className="text-sm font-semibold text-stone-900">
+                    01. Users, Sellers &amp; Product Approvals
+                  </h3>
+                  <p className="mt-1 text-xs text-stone-600 leading-relaxed">
+                    Monitor registered accounts, activate or suspend sellers,
+                    and approve or reject submitted products before public Store
+                    publication.
+                  </p>
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-stone-900">
+                    02. Four Independent Modules
+                  </h3>
+                  <p className="mt-1 text-xs text-stone-600 leading-relaxed">
+                    Manage Blog articles, Store listings, Product Affiliate
+                    links, and Service Affiliate links as isolated workflows.
+                  </p>
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-stone-900">
+                    03. Orders, Payouts &amp; Website Settings
+                  </h3>
+                  <p className="mt-1 text-xs text-stone-600 leading-relaxed">
+                    Manage customer orders, audit payment references, settle 90%
+                    creator payouts, respond to inquiries, and update global
+                    site settings.
+                  </p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-sm font-semibold text-stone-900">
-                  03. Orders, Transactions &amp; Site Controls
-                </h3>
-                <p className="mt-1 text-xs text-stone-600 leading-relaxed">
-                  Audit customer payment methods and references, settle 90%
-                  creator payouts, and control global module visibility.
-                </p>
-              </div>
-            </div>
+            )}
 
             {onOpenDirectStore && (
               <div className="pt-2">
@@ -1790,7 +1840,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                   className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-medium text-stone-800 bg-[#F3EFE8] hover:bg-stone-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
                 >
                   <ShoppingBag className="w-4 h-4 text-[#9A3412]" />
-                  <span>Browse Public Storefront</span>
+                  <span>Return to Public Store</span>
                 </button>
               </div>
             )}
@@ -1800,8 +1850,8 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
             <AuthPanel
               defaultMode="signin"
               defaultAsSeller={false}
-              heading="Sign in to Creator Backend"
-              subheading="Sign in with your verified owner account (Email & Password or Google) to manage all Pickra systems."
+              heading="Website Owner Login"
+              subheading="Authenticate with your verified administrator account (Google or verified Email & Password). Non-admin accounts will be redirected."
             />
           </div>
         </div>
@@ -1813,7 +1863,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
   if (!adminRoleReady) {
     return (
       <section className="max-w-[960px] mx-auto px-5 sm:px-8 py-16">
-        <div className="bg-white border border-stone-200/90 rounded-xl p-8 space-y-4">
+        <div className="bg-white border border-stone-200/90 rounded-xl p-8 space-y-4 animate-pulse">
           <div className="h-4 w-48 bg-stone-200/70 rounded" />
           <div className="h-8 w-80 bg-stone-200/70 rounded" />
           <div className="h-24 w-full bg-[#F3EFE8] rounded-lg" />
@@ -2064,7 +2114,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
               {isBootstrappedCreator ? 'Owner Console' : 'Co-Admin Console'}
             </div>
             <div className="mt-0.5 text-sm font-semibold text-stone-900 truncate">
-              {profile?.displayName || user.displayName || 'Pickra Creator'}
+              {profile?.displayName || user.displayName || 'Pickras Creator'}
             </div>
             <div className="text-[11px] font-mono text-stone-500 truncate">
               {user.email}
@@ -2144,7 +2194,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
           <div className="bg-white border border-stone-200/90 rounded-xl px-5 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-4">
             <div className="min-w-0">
               <div className="flex items-center gap-2 text-xs text-stone-500">
-                <span>Pickra Admin</span>
+                <span>Pickras Admin</span>
                 <span aria-hidden="true">/</span>
                 <span className="font-medium text-stone-900">
                   {activeNavMeta.label}
@@ -2679,7 +2729,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                     Registered Users &amp; Seller Account Governance ({filteredUsers.length})
                   </h2>
                   <p className="mt-1 text-xs text-stone-500">
-                    Monitor registered Pickra accounts, activate or suspend seller privileges (enforced in both UI and Firestore security rules), and manage Co-Admin access.
+                    Monitor registered Pickras accounts, activate or suspend seller privileges (enforced in both UI and Firestore security rules), and manage Co-Admin access.
                   </p>
                 </div>
 
@@ -2750,7 +2800,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                         <div className="min-w-0 flex-1 space-y-1">
                           <div className="flex flex-wrap items-center gap-2 text-xs">
                             <span className="font-semibold text-sm text-stone-900">
-                              {acct.displayName || 'Pickra Member'}
+                              {acct.displayName || 'Pickras Member'}
                             </span>
                             {acct.storeName && (
                               <span className="px-2 py-0.5 text-[11px] font-medium bg-[#F3EFE8] text-stone-800 rounded">
@@ -3171,7 +3221,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                     maxLength={140}
                     value={prodTitle}
                     onChange={(e) => setProdTitle(e.target.value)}
-                    placeholder="e.g., Pickra Archival Desk Tray"
+                    placeholder="e.g., Pickras Archival Desk Tray"
                     className="w-full px-3 py-2 text-sm bg-[#FBF9F5] border border-stone-300 rounded-lg focus:outline-none focus:border-[#9A3412]"
                   />
                 </div>
@@ -3209,7 +3259,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                           setProdStock('999');
                         } else {
                           setProdDeliveryNote(
-                            'Ships in 48 hours from Pickra Studio'
+                            'Ships in 48 hours from Pickras Studio'
                           );
                         }
                       }}
@@ -3679,7 +3729,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                                 </span>
                                 <span aria-hidden="true">·</span>
                                 <span>
-                                  By {prod.sellerName || 'Pickra Studio'}
+                                  By {prod.sellerName || 'Pickras Studio'}
                                 </span>
                                 <span aria-hidden="true">·</span>
                                 <span className="font-mono tabular-nums">
@@ -4416,7 +4466,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                             <div className="text-xs text-stone-600">
                               Seller:{' '}
                               <strong>
-                                {order.sellerName || 'Pickra Studio'}
+                                {order.sellerName || 'Pickras Studio'}
                               </strong>{' '}
                               · Creator Share:{' '}
                               <span className="font-mono font-semibold text-stone-900 tabular-nums">
@@ -5868,7 +5918,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                     Global Website, Module Visibility &amp; Commerce Configuration
                   </h2>
                   <p className="mt-1 text-xs text-stone-500">
-                    Changes saved here update the live Pickra masthead, independent module switches, announcement ribbon, shipping thresholds, and checkout master switch immediately.
+                    Changes saved here update the live Pickras masthead, independent module switches, announcement ribbon, shipping thresholds, and checkout master switch immediately.
                   </p>
                 </div>
 
@@ -5879,7 +5929,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                       Independent Module Visibility Switches
                     </div>
                     <div className="text-[11px] text-stone-500">
-                      Enable or pause any of Pickra&apos;s four standalone modules across public navigation.
+                      Enable or pause any of Pickras&apos;s four standalone modules across public navigation.
                     </div>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs text-stone-800">
@@ -5952,7 +6002,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                         Site-Wide Announcement Ribbon
                       </div>
                       <div className="text-[11px] text-stone-500">
-                        Display a top announcement bar above the Pickra navigation header.
+                        Display a top announcement bar above the Pickras navigation header.
                       </div>
                     </div>
                     <input
@@ -5974,7 +6024,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                       maxLength={180}
                       value={cfgAnnouncementText}
                       onChange={(e) => setCfgAnnouncementText(e.target.value)}
-                      placeholder="e.g., Spring Issue Live · Free shipping over $95 with code PICKRA15"
+                      placeholder="e.g., Spring Issue Live · Free shipping over $95 with code PICKRAS15"
                       className="w-full px-3 py-2 text-xs bg-[#FBF9F5] border border-stone-300 rounded-lg"
                     />
                   </div>
@@ -6070,7 +6120,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                       className="mt-0.5 accent-[#9A3412]"
                     />
                     <span>
-                      <strong>Display Starter Showcase Items</strong> — uncheck when you want Pickra to display only your own saved Firestore posts, products, and affiliate links.
+                      <strong>Display Starter Showcase Items</strong> — uncheck when you want Pickras to display only your own saved Firestore posts, products, and affiliate links.
                     </span>
                   </label>
                 </div>
@@ -6241,7 +6291,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                         maxLength={64}
                         value={amazonTag}
                         onChange={(e) => setAmazonTag(e.target.value)}
-                        placeholder="pickra-20"
+                        placeholder="pickras-20"
                         className="w-full px-3 py-2 text-xs font-mono bg-[#FBF9F5] border border-stone-300 rounded-lg"
                       />
                     </div>
@@ -6254,7 +6304,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                         maxLength={64}
                         value={digistoreId}
                         onChange={(e) => setDigistoreId(e.target.value)}
-                        placeholder="pickra_media"
+                        placeholder="pickras_media"
                         className="w-full px-3 py-2 text-xs font-mono bg-[#FBF9F5] border border-stone-300 rounded-lg"
                       />
                     </div>
@@ -6277,7 +6327,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                         Creator &amp; Co-Admin Access Registry
                       </h3>
                       <p className="mt-0.5 text-xs text-stone-500">
-                        Manage who can access this Pickra Admin dashboard and publish global content.
+                        Manage who can access this Pickras Admin dashboard and publish global content.
                       </p>
                     </div>
                     <ShieldCheck className="w-4 h-4 text-[#9A3412] shrink-0" />

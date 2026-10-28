@@ -1,10 +1,47 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
+import {
+  doc,
+  Firestore,
+  getDocFromServer,
+  getFirestore,
+  initializeFirestore,
+  setLogLevel,
+} from 'firebase/firestore';
+import {
+  doc as liteDoc,
+  getDoc as getLiteDoc,
+  getFirestore as getLiteFirestore,
+} from 'firebase/firestore/lite';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+function createFirestoreInstance(): Firestore {
+  if (typeof window !== 'undefined') {
+    // Suppress noisy internal WebChannel backoff logs on transient network switches;
+    // explicit permission/operation errors are still logged via handleFirestoreError.
+    setLogLevel('silent');
+    try {
+      return initializeFirestore(
+        app,
+        {
+          experimentalForceLongPolling: true,
+          experimentalLongPollingOptions: {
+            timeoutSeconds: 20,
+          },
+        },
+        firebaseConfig.firestoreDatabaseId
+      );
+    } catch {
+      return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+    }
+  }
+  return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+}
+
+export const db = createFirestoreInstance();
+export const liteDb = getLiteFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
@@ -33,14 +70,24 @@ export function formatFirebaseAuthError(error: unknown): string {
     code === 'auth/unauthorized-domain' ||
     rawMessage.includes('unauthorized-domain')
   ) {
-    return 'Google popup sign-in is restricted on this preview domain. Please use Email & Password right below to create your account or sign in immediately.';
+    const host =
+      typeof window !== 'undefined' && window.location?.hostname
+        ? window.location.hostname
+        : 'this domain';
+    return `Google sign-in requires "${host}" to be added in Firebase Console → Authentication → Settings → Authorized domains (project xerotic-rex-xzp2g), or sign in with Email & Password once enabled.`;
+  }
+  if (
+    code === 'auth/operation-not-allowed' ||
+    rawMessage.includes('operation-not-allowed')
+  ) {
+    return 'Email & Password sign-in is currently disabled in Firebase Authentication. Click "Sign in with Google Account" above, or enable Email/Password in Firebase Console → Authentication → Sign-in method.';
   }
   if (
     code === 'auth/email-already-in-use' ||
     rawMessage.includes('EMAIL_EXISTS') ||
     rawMessage.includes('email-already-in-use')
   ) {
-    return 'An account with this email already exists on Pickra. Switch to the "Sign In" tab to log in with your password or Google.';
+    return 'An account with this email already exists on Pickras. Switch to the "Sign In" tab to log in with your password or Google.';
   }
   if (
     code === 'auth/invalid-credential' ||
@@ -123,7 +170,24 @@ async function testConnection() {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Please check your Firebase configuration.');
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        return;
+      }
+      try {
+        await getLiteDoc(liteDoc(liteDb, 'siteConfig', 'main'));
+      } catch (liteError) {
+        const liteMsg =
+          liteError instanceof Error ? liteError.message : String(liteError || '');
+        if (
+          liteMsg.includes('Project') ||
+          liteMsg.includes('Database') ||
+          liteMsg.includes('API key') ||
+          liteMsg.includes('NOT_FOUND') ||
+          liteMsg.includes('INVALID_ARGUMENT')
+        ) {
+          console.error('Please check your Firebase configuration.');
+        }
+      }
     }
   }
 }
@@ -329,7 +393,7 @@ export function triggerDigitalAssetDownload(url: string, fileName?: string): voi
   const anchor = document.createElement('a');
   anchor.href = cleanUrl;
   if (cleanUrl.startsWith('data:')) {
-    anchor.download = (fileName || 'pickra-digital-download').trim();
+    anchor.download = (fileName || 'pickras-digital-download').trim();
   } else {
     anchor.target = '_blank';
     anchor.rel = 'noopener noreferrer';
@@ -447,7 +511,7 @@ export function toSafePromoCode(input: string): string {
     .trim()
     .replace(/[^A-Z0-9_-]+/g, '')
     .slice(0, 24);
-  return cleaned.length >= 3 ? cleaned : 'PICKRA10';
+  return cleaned.length >= 3 ? cleaned : 'PICKRAS10';
 }
 
 export function formatPriceCents(cents: number): string {
