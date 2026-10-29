@@ -29,6 +29,12 @@ import {
   where,
 } from 'firebase/firestore/lite';
 import firebaseConfig from './firebase-applet-config.json';
+import {
+  isAuthorizedOwnerEmail,
+  isOwnerAccountConfigured,
+  sanitizePublicContactEmail,
+  sha256Hex,
+} from './src/utils/ownerAuth';
 
 export interface DirtyDozenAssertion {
   id: number;
@@ -65,7 +71,7 @@ export const DIRTY_DOZEN_SUITE: DirtyDozenAssertion[] = [
     operation: 'create',
     expectedOutcome: 'PERMISSION_DENIED',
     enforcedGate:
-      'isBootstrappedAdmin() -> request.auth.token.email_verified == true && email.lower() == mengistushimelis@gmail.com',
+      'isBootstrappedAdmin() -> request.auth.token.email_verified == true && email.lower() == shimelis.mengistu23@gmail.com',
   },
   {
     id: 3,
@@ -203,25 +209,19 @@ type AdminGateOutcome =
 
 function evaluateAdminRouteDecision(params: {
   ownerEmailConfigured: boolean;
-  bootstrappedEmail: string;
   user: null | { email: string; emailVerified: boolean; isAnonymous?: boolean };
   isCoAdmin: boolean;
 }): AdminGateOutcome {
-  const { ownerEmailConfigured, bootstrappedEmail, user, isCoAdmin } = params;
+  const { ownerEmailConfigured, user, isCoAdmin } = params;
   if (!user || user.isAnonymous) {
     return 'ADMIN_LOGIN_PORTAL';
   }
-  const isVerifiedOwner =
-    ownerEmailConfigured &&
-    user.email.toLowerCase() === bootstrappedEmail.toLowerCase() &&
-    user.emailVerified;
+  const matchesOwner = ownerEmailConfigured && isAuthorizedOwnerEmail(user.email);
+  const isVerifiedOwner = matchesOwner && user.emailVerified;
   if (isVerifiedOwner || isCoAdmin) {
     return 'ADMIN_DASHBOARD_GRANTED';
   }
-  const isUnverifiedOwner =
-    ownerEmailConfigured &&
-    user.email.toLowerCase() === bootstrappedEmail.toLowerCase() &&
-    !user.emailVerified;
+  const isUnverifiedOwner = matchesOwner && !user.emailVerified;
   if (isUnverifiedOwner) {
     return 'VERIFY_OWNER_EMAIL_GATE';
   }
@@ -274,12 +274,28 @@ async function runVerification() {
   assert.match(netlifyToml, /status\s*=\s*200/);
   console.log('  [PASS] /admin, /store, and Netlify SPA 200 fallback routes verified.');
 
-  console.log('\n=== 2. Verifying /admin Portal Access Matrix Across All 5 Personas ===');
-  const ownerEmail = 'mengistushimelis@gmail.com';
+  console.log('\n=== 2. Verifying /admin Portal Access Matrix & Zero-Exposure Owner Auth ===');
+  const authorizedOwnerEmail = 'shimelis.mengistu23@gmail.com';
+  const legacyOwnerEmail = 'mengistushimelis@gmail.com';
+
+  assert.equal(isOwnerAccountConfigured(), true);
+  assert.equal(
+    sha256Hex(authorizedOwnerEmail),
+    '03844f1798c966f370e7a75c6f9b45f7c53256ce99ee49bde9c598f20e8f649b'
+  );
+  assert.equal(isAuthorizedOwnerEmail(authorizedOwnerEmail), true);
+  assert.equal(isAuthorizedOwnerEmail('Shimelis.Mengistu23@gmail.com'), true);
+  assert.equal(isAuthorizedOwnerEmail(legacyOwnerEmail), false);
+  assert.equal(sanitizePublicContactEmail(authorizedOwnerEmail), '');
+  assert.equal(sanitizePublicContactEmail(legacyOwnerEmail), '');
+  assert.equal(
+    sanitizePublicContactEmail('support@example.com'),
+    'support@example.com'
+  );
+
   assert.equal(
     evaluateAdminRouteDecision({
       ownerEmailConfigured: true,
-      bootstrappedEmail: ownerEmail,
       user: null,
       isCoAdmin: false,
     }),
@@ -288,7 +304,6 @@ async function runVerification() {
   assert.equal(
     evaluateAdminRouteDecision({
       ownerEmailConfigured: true,
-      bootstrappedEmail: ownerEmail,
       user: { email: 'buyer@example.com', emailVerified: true },
       isCoAdmin: false,
     }),
@@ -297,7 +312,6 @@ async function runVerification() {
   assert.equal(
     evaluateAdminRouteDecision({
       ownerEmailConfigured: true,
-      bootstrappedEmail: ownerEmail,
       user: { email: 'seller@example.com', emailVerified: true },
       isCoAdmin: false,
     }),
@@ -306,7 +320,6 @@ async function runVerification() {
   assert.equal(
     evaluateAdminRouteDecision({
       ownerEmailConfigured: true,
-      bootstrappedEmail: ownerEmail,
       user: { email: 'promoter@example.com', emailVerified: true },
       isCoAdmin: false,
     }),
@@ -315,17 +328,7 @@ async function runVerification() {
   assert.equal(
     evaluateAdminRouteDecision({
       ownerEmailConfigured: true,
-      bootstrappedEmail: ownerEmail,
-      user: { email: ownerEmail, emailVerified: false },
-      isCoAdmin: false,
-    }),
-    'VERIFY_OWNER_EMAIL_GATE'
-  );
-  assert.equal(
-    evaluateAdminRouteDecision({
-      ownerEmailConfigured: false,
-      bootstrappedEmail: '',
-      user: { email: 'anyone@example.com', emailVerified: true },
+      user: { email: legacyOwnerEmail, emailVerified: true },
       isCoAdmin: false,
     }),
     'REDIRECT_ACCESS_DENIED'
@@ -333,17 +336,32 @@ async function runVerification() {
   assert.equal(
     evaluateAdminRouteDecision({
       ownerEmailConfigured: true,
-      bootstrappedEmail: ownerEmail,
-      user: { email: 'MengistuShimelis@gmail.com', emailVerified: true },
+      user: { email: authorizedOwnerEmail, emailVerified: false },
+      isCoAdmin: false,
+    }),
+    'VERIFY_OWNER_EMAIL_GATE'
+  );
+  assert.equal(
+    evaluateAdminRouteDecision({
+      ownerEmailConfigured: false,
+      user: { email: authorizedOwnerEmail, emailVerified: true },
+      isCoAdmin: false,
+    }),
+    'REDIRECT_ACCESS_DENIED'
+  );
+  assert.equal(
+    evaluateAdminRouteDecision({
+      ownerEmailConfigured: true,
+      user: { email: 'Shimelis.Mengistu23@gmail.com', emailVerified: true },
       isCoAdmin: false,
     }),
     'ADMIN_DASHBOARD_GRANTED'
   );
   console.log(
-    '  [PASS] Logged-out, Buyer, Seller, Promoter, Unconfigured Owner, Unverified Owner, and Verified Admin gates verified.'
+    '  [PASS] Logged-out, Buyer, Seller, Promoter, Revoked Legacy Email, Unverified Owner, and Verified Admin gates verified.'
   );
 
-  console.log('\n=== 3. Static Audit of firestore.rules Invariants ===');
+  console.log('\n=== 3. Static Audit of firestore.rules & Client Source Confidentiality ===');
   const rulesSrc = fs.readFileSync('firestore.rules', 'utf8');
   assert.match(
     rulesSrc,
@@ -352,8 +370,13 @@ async function runVerification() {
   );
   assert.match(
     rulesSrc,
-    /request\.auth\.token\.email\.lower\(\) == 'mengistushimelis@gmail\.com'/,
-    'isBootstrappedAdmin must enforce case-insensitive verified owner email'
+    /request\.auth\.token\.email\.lower\(\) == 'shimelis\.mengistu23@gmail\.com'/,
+    'isBootstrappedAdmin must enforce case-insensitive verified owner email shimelis.mengistu23@gmail.com'
+  );
+  assert.doesNotMatch(
+    rulesSrc,
+    /mengistushimelis@gmail\.com/i,
+    'firestore.rules must not grant admin access to legacy email'
   );
   assert.match(
     rulesSrc,

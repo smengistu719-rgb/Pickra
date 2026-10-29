@@ -24,7 +24,7 @@ import {
   X,
 } from 'lucide-react';
 import {
-  BOOTSTRAPPED_ADMIN_EMAIL,
+  isAuthorizedOwnerEmail,
   PostDraftInput,
   useFirebaseApp,
 } from '../context/FirebaseContext';
@@ -415,8 +415,7 @@ export const MediumBlockEditor: React.FC<MediumBlockEditorProps> = ({
     user &&
       !user.isAnonymous &&
       (isCreatorAdmin ||
-        (user.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase() &&
-          user.emailVerified))
+        (isAuthorizedOwnerEmail(user.email) && user.emailVerified))
   );
 
   const [confirmDeleteStory, setConfirmDeleteStory] = useState(false);

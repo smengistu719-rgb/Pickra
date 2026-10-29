@@ -74,7 +74,7 @@ export function formatFirebaseAuthError(error: unknown): string {
       typeof window !== 'undefined' && window.location?.hostname
         ? window.location.hostname
         : 'this domain';
-    return `Google sign-in requires "${host}" to be added in Firebase Console → Authentication → Settings → Authorized domains (project xerotic-rex-xzp2g), or sign in with Email & Password once enabled.`;
+    return `Google sign-in requires "${host}" to be added under Authorized domains in Firebase Authentication settings, or sign in with Email & Password once enabled.`;
   }
   if (
     code === 'auth/operation-not-allowed' ||

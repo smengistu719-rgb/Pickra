@@ -56,6 +56,12 @@ import {
   VALIDATION_LIMITS,
 } from '../firebase';
 import {
+  isAuthorizedOwnerEmail,
+  isOwnerAccountConfigured,
+  isProtectedAdminEmail,
+  sanitizePublicContactEmail,
+} from '../utils/ownerAuth';
+import {
   AdminRecord,
   AffiliateOffer,
   AnalyticsChannel,
@@ -456,7 +462,12 @@ const GUEST_ORDERS_STORAGE_KEY = 'pickra_guest_orders_v2';
 const DELIVERED_DIGITAL_STORAGE_KEY = 'pickra_delivered_digital_v1';
 const SEED_STOCK_OFFSETS_KEY = 'pickra_seed_stock_offsets_v1';
 const UI_PREFS_STORAGE_KEY = 'pickra_admin_ui_prefs_v2';
-export const BOOTSTRAPPED_ADMIN_EMAIL = 'mengistushimelis@gmail.com';
+export {
+  isAuthorizedOwnerEmail,
+  isOwnerAccountConfigured,
+  isProtectedAdminEmail,
+  sanitizePublicContactEmail,
+};
 
 const FORBIDDEN_DIGITAL_EXTENSIONS = [
   '.exe',
@@ -616,7 +627,7 @@ export const DEFAULT_ABOUT_MISSION =
 export const DEFAULT_ABOUT_STORY =
   'On the Pickras Blog, our editorial desk publishes long-form dispatches, field guides, and technical essays in distraction-free color themes. In the Pickras Store, verified independent creators sell original physical goods and vaulted digital downloads—receiving 90% net payouts while buyers enjoy frictionless guest or account checkout. Alongside the Store, our Product Affiliate and Service Affiliate directories curate vetted hardware, software, and specialist talent across Amazon, Digistore24, Fiverr, Upwork, and global partner networks with full FTC transparency.';
 
-export const DEFAULT_CONTACT_EMAIL = 'mengistushimelis@gmail.com';
+export const DEFAULT_CONTACT_EMAIL = '';
 export const DEFAULT_CONTACT_PHONE = 'Direct Desk · Mon–Sat, 09:00–18:00 EAT';
 export const DEFAULT_CONTACT_LOCATION = 'Addis Ababa & Global Digital Desk';
 
@@ -969,7 +980,7 @@ function parseSiteConfigDoc(
         : DEFAULT_ABOUT_STORY,
     contactEmail:
       typeof data.contactEmail === 'string' && data.contactEmail.trim()
-        ? data.contactEmail
+        ? sanitizePublicContactEmail(data.contactEmail)
         : DEFAULT_CONTACT_EMAIL,
     contactPhone:
       typeof data.contactPhone === 'string'
@@ -1273,10 +1284,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   const isBootstrappedCreator = Boolean(
-    user &&
-      user.emailVerified &&
-      user.email &&
-      user.email.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()
+    user && user.emailVerified && isAuthorizedOwnerEmail(user.email)
   );
 
   const isCreatorAdmin = Boolean(
@@ -1383,10 +1391,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       setAdminRoleReady(true);
       return;
     }
-    if (
-      user.emailVerified &&
-      user.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()
-    ) {
+    if (user.emailVerified && isAuthorizedOwnerEmail(user.email)) {
       setIsCoAdmin(false);
       setAdminRoleReady(true);
       return;
@@ -1671,8 +1676,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
           if (Array.isArray(parsedQueue)) {
             const actorScope: 'customer' | 'creator' =
               currentUser.emailVerified &&
-              currentUser.email?.toLowerCase() ===
-                BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()
+              isAuthorizedOwnerEmail(currentUser.email)
                 ? 'creator'
                 : 'customer';
             for (const item of parsedQueue.slice(0, 15)) {
@@ -2988,10 +2992,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       }
       await ensureUserBootstrapped(cred.user);
 
-      if (
-        cleanEmail.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase() &&
-        !cred.user.emailVerified
-      ) {
+      if (isAuthorizedOwnerEmail(cleanEmail) && !cred.user.emailVerified) {
         try {
           await sendEmailVerification(cred.user);
         } catch {
@@ -3080,10 +3081,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
       throw new Error('Website Owner sign-in required.');
     }
     if (!isCreatorAdmin) {
-      if (
-        user.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase() &&
-        !user.emailVerified
-      ) {
+      if (isAuthorizedOwnerEmail(user.email) && !user.emailVerified) {
         throw new Error(
           'Please verify your owner email address (or sign in with Google) to unlock Admin Dashboard permissions.'
         );
@@ -5081,13 +5079,11 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({
     )
       .trim()
       .slice(0, 4000);
-    const cleanContactEmail = (
+    const cleanContactEmail = sanitizePublicContactEmail(
       input.contactEmail !== undefined
         ? input.contactEmail
         : siteConfig.contactEmail || DEFAULT_CONTACT_EMAIL
-    )
-      .trim()
-      .slice(0, 254);
+    ).slice(0, 254);
     const cleanContactPhone = (
       input.contactPhone !== undefined
         ? input.contactPhone

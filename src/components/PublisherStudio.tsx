@@ -31,7 +31,6 @@ import {
   XCircle,
 } from 'lucide-react';
 import {
-  BOOTSTRAPPED_ADMIN_EMAIL,
   CampaignDraftInput,
   DEFAULT_ABOUT_MISSION,
   DEFAULT_ABOUT_STORY,
@@ -40,6 +39,8 @@ import {
   DEFAULT_CONTACT_PHONE,
   DEFAULT_PRIVACY_POLICY_SUMMARY,
   DirectProductDraftInput,
+  isAuthorizedOwnerEmail,
+  isOwnerAccountConfigured,
   OfferDraftInput,
   SiteConfigInput,
   useFirebaseApp,
@@ -1731,10 +1732,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
     );
   }
 
-  const isOwnerAccountConfigured = Boolean(
-    BOOTSTRAPPED_ADMIN_EMAIL.trim().length > 0 &&
-      BOOTSTRAPPED_ADMIN_EMAIL.includes('@')
-  );
+  const isOwnerAccountReady = isOwnerAccountConfigured();
 
   // GATE 0: Initial Firebase Auth State Resolution
   if (!authReady) {
@@ -1769,34 +1767,21 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                 This portal is strictly restricted to the verified Pickras
                 Website Owner. Buyers, sellers, blog readers, and affiliate
                 promoters are denied access to administrative routes and
-                protected by zero-trust Firebase Security Rules.
+                protected by zero-trust backend security rules.
               </p>
             </div>
 
-            {!isOwnerAccountConfigured ? (
+            {!isOwnerAccountReady ? (
               <div className="p-5 bg-amber-50 border border-amber-200 rounded-xl space-y-2.5 text-xs text-amber-950 leading-relaxed">
                 <strong className="font-semibold block text-sm text-stone-900">
                   Secure Website Owner Setup Required
                 </strong>
                 <p>
-                  No primary Website Owner email is currently configured. Automatic
-                  administrator elevation is disabled to prevent unauthorized
-                  takeover.
+                  No primary Website Owner account is currently configured.
+                  Automatic administrator elevation is disabled to prevent
+                  unauthorized takeover. Configure your verified owner account
+                  in the project security configuration before signing in.
                 </p>
-                <ol className="list-decimal pl-4 space-y-1">
-                  <li>
-                    Set <span className="font-mono">BOOTSTRAPPED_ADMIN_EMAIL</span>{' '}
-                    to your verified owner email and match{' '}
-                    <span className="font-mono">isBootstrappedAdmin()</span> in{' '}
-                    <span className="font-mono">firestore.rules</span>, or
-                  </li>
-                  <li>
-                    Provision your verified Firebase Auth UID in the protected{' '}
-                    <span className="font-mono">/admins/&#123;uid&#125;</span>{' '}
-                    collection via the Firebase Console, then sign in on the
-                    right.
-                  </li>
-                </ol>
               </div>
             ) : (
               <div className="space-y-5 pt-6 border-t border-stone-200/80">
@@ -1875,8 +1860,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
   // GATE 3: Signed-in Non-Owner / Unverified Owner Screen
   if (!isCreatorAdmin) {
     const isUnverifiedOwnerEmail =
-      user.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase() &&
-      !user.emailVerified;
+      isAuthorizedOwnerEmail(user.email) && !user.emailVerified;
 
     return (
       <section className="max-w-[820px] mx-auto px-5 sm:px-8 py-14 sm:py-20">
@@ -1886,20 +1870,27 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
             <span>
               {isUnverifiedOwnerEmail
                 ? 'Verify Owner Email to Unlock Backend'
-                : 'Restricted Creator Console'}
+                : 'Restricted Website Owner Console'}
             </span>
           </div>
           <h1 className="font-serif text-2xl sm:text-3xl font-medium text-stone-900">
             {isUnverifiedOwnerEmail
-              ? 'Confirm your owner email address to unlock full Backend control'
-              : 'This management & monitoring console is restricted to the site creator'}
+              ? 'Confirm your owner email address to unlock full Admin control'
+              : 'Access denied: this console is restricted to the Website Owner'}
           </h1>
           <p className="text-sm text-stone-600 leading-relaxed">
-            You are signed in as{' '}
-            <span className="font-mono text-stone-900">{user.email}</span>.{' '}
-            {isUnverifiedOwnerEmail
-              ? 'For zero-trust security, owner privileges require a verified email token. Click the verification link sent to your inbox and press "Refresh Verification Status", or sign in directly with Google.'
-              : 'Creator Seller and Customer accounts can publish products and get paid under Store -> Seller Studio, or track orders under Store -> My Purchases, while site-wide Backend governance is reserved for the website owner.'}
+            {isUnverifiedOwnerEmail ? (
+              <>
+                You are signed in as{' '}
+                <span className="font-mono text-stone-900">{user.email}</span>.
+                For zero-trust security, administrator privileges require a
+                verified email token. Click the verification link sent to your
+                inbox and press &ldquo;Refresh Access&rdquo;, or sign in
+                directly with Google.
+              </>
+            ) : (
+              'Buyer, seller, reader, and promoter accounts do not have permission to view or manage administrative settings.'
+            )}
           </p>
 
           {feedbackBanner && (
@@ -1922,7 +1913,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                   await refreshAuthUser();
                   setFeedbackBanner({
                     tone: 'ok',
-                    text: 'Checked latest verification status from Firebase Auth.',
+                    text: 'Checked latest verification status.',
                   });
                 }}
                 className="px-4 py-2 text-xs font-semibold text-white bg-[#9A3412] hover:bg-[#7C2D12] rounded-lg cursor-pointer"
@@ -1961,43 +1952,6 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
               </button>
             </div>
           )}
-
-          <div className="p-4 bg-[#FBF9F5] border border-stone-200 rounded-lg flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-[11px] text-stone-500">
-                Your Firebase UID (share with the owner if requesting Co-Admin
-                access)
-              </div>
-              <div className="font-mono text-xs text-stone-900 truncate">
-                {user.uid}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(user.uid);
-                  setCopiedOwnUid(true);
-                  window.setTimeout(() => setCopiedOwnUid(false), 1800);
-                } catch {
-                  // ignore clipboard error
-                }
-              }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-800 bg-white border border-stone-300 hover:bg-stone-100 rounded-lg cursor-pointer whitespace-nowrap shrink-0"
-            >
-              {copiedOwnUid ? (
-                <>
-                  <Check className="w-3.5 h-3.5 text-emerald-700" />
-                  <span>UID Copied</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3.5 h-3.5" />
-                  <span>Copy UID</span>
-                </>
-              )}
-            </button>
-          </div>
 
           <div className="pt-2 flex flex-wrap items-center gap-3">
             <button
@@ -5702,7 +5656,7 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                     Restricted Owner-Only Privacy Vault
                   </h2>
                   <p className="text-xs text-stone-600 max-w-md mx-auto">
-                    Customer Contact Us submissions and confidential Private Issue escalations are encrypted in transit and restricted strictly to the verified primary website owner ({BOOTSTRAPPED_ADMIN_EMAIL}).
+                    Customer Contact Us submissions and confidential Private Issue escalations are encrypted in transit and restricted strictly to the verified primary website owner.
                   </p>
                 </div>
               ) : filteredInquiries.length === 0 ? (
@@ -6138,13 +6092,14 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                       <label className="block text-xs font-medium text-stone-700 mb-1">
-                        Public Contact Email
+                        Public Desk Email (Optional — Owner login stays private)
                       </label>
                       <input
                         type="email"
                         maxLength={254}
                         value={cfgContactEmail}
                         onChange={(e) => setCfgContactEmail(e.target.value)}
+                        placeholder="Optional public alias (leave blank to hide)"
                         className="w-full px-3 py-2 text-xs font-mono bg-[#FBF9F5] border border-stone-300 rounded-lg"
                       />
                     </div>
@@ -6335,13 +6290,13 @@ export const PublisherStudio: React.FC<PublisherStudioProps> = ({
 
                   <div className="text-xs text-stone-600 space-y-1">
                     <div>
-                      Primary Owner:{' '}
+                      Authenticated Admin:{' '}
                       <span className="font-mono text-stone-900">
-                        {BOOTSTRAPPED_ADMIN_EMAIL}
+                        {user.email || 'Verified Session'}
                       </span>
                     </div>
                     <div>
-                      Your UID:{' '}
+                      Your Admin UID:{' '}
                       <span className="font-mono text-stone-800">
                         {user.uid}
                       </span>

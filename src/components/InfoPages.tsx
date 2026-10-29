@@ -22,6 +22,7 @@ import {
   DEFAULT_CONTACT_LOCATION,
   DEFAULT_CONTACT_PHONE,
   DEFAULT_PRIVACY_POLICY_SUMMARY,
+  sanitizePublicContactEmail,
   useFirebaseApp,
 } from '../context/FirebaseContext';
 import {
@@ -563,7 +564,9 @@ export const ContactUsPage: React.FC<ContactUsPageProps> = ({
     }
   }
 
-  const displayEmail = siteConfig.contactEmail || DEFAULT_CONTACT_EMAIL;
+  const displayEmail = sanitizePublicContactEmail(
+    siteConfig.contactEmail || DEFAULT_CONTACT_EMAIL
+  );
   const displayPhone = siteConfig.contactPhone ?? DEFAULT_CONTACT_PHONE;
   const displayLocation =
     siteConfig.contactLocation ?? DEFAULT_CONTACT_LOCATION;
@@ -621,14 +624,14 @@ export const ContactUsPage: React.FC<ContactUsPageProps> = ({
               >
                 <div>
                   <label className="block text-xs font-medium text-stone-700 mb-1">
-                    Support &amp; Editorial Email
+                    Optional Public Support Alias (Leave blank to keep owner email private)
                   </label>
                   <input
                     type="email"
-                    required
                     maxLength={254}
                     value={emailDraft}
                     onChange={(e) => setEmailDraft(e.target.value)}
+                    placeholder="Optional public alias (e.g., support@yourdomain.com)"
                     className="w-full px-3 py-2 text-xs font-mono bg-[#FBF9F5] border border-stone-300 rounded-lg"
                   />
                 </div>
@@ -685,14 +688,20 @@ export const ContactUsPage: React.FC<ContactUsPageProps> = ({
                   <Mail className="w-4 h-4 text-[#9A3412] mt-0.5 shrink-0" />
                   <div>
                     <div className="font-semibold text-stone-900">
-                      Editorial, Store &amp; Privacy Email
+                      Editorial, Store &amp; Privacy Channel
                     </div>
-                    <a
-                      href={`mailto:${displayEmail}`}
-                      className="mt-0.5 inline-block font-mono text-stone-700 hover:text-[#9A3412] underline underline-offset-4 break-all"
-                    >
-                      {displayEmail}
-                    </a>
+                    {displayEmail ? (
+                      <a
+                        href={`mailto:${displayEmail}`}
+                        className="mt-0.5 inline-block font-mono text-stone-700 hover:text-[#9A3412] underline underline-offset-4 break-all"
+                      >
+                        {displayEmail}
+                      </a>
+                    ) : (
+                      <div className="mt-0.5 text-stone-600">
+                        Confidential Encrypted Dispatch Form (Direct to Desk)
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1192,7 +1201,7 @@ export const PrivacyAndLegalPage: React.FC<PrivacyAndLegalPageProps> = ({
             Public Bylines Separated from Private Credentials
           </h3>
           <p className="text-xs sm:text-sm text-stone-600 leading-relaxed">
-            When you create an account via Google or Email &amp; Password, only your display name, optional bio, and storefront name are stored in your public profile. Your email address, affiliate tracking IDs, and payout accounts are isolated inside a private subcollection (<span className="font-mono text-[11px]">/users/&#123;uid&#125;/private/info</span>) readable solely by your authenticated session.
+            When you create an account via Google or Email &amp; Password, only your display name, optional bio, and storefront name are stored in your public profile. Your email address, affiliate tracking IDs, and payout accounts are isolated inside a private encrypted account vault readable solely by your authenticated session.
           </p>
         </div>
 
@@ -1228,7 +1237,7 @@ export const PrivacyAndLegalPage: React.FC<PrivacyAndLegalPageProps> = ({
             Post-Purchase Unlock for Digital Files
           </h3>
           <p className="text-xs sm:text-sm text-stone-600 leading-relaxed">
-            Digital products (PDFs, ZIP archives, Excel workbooks, eBooks, HTML templates, and software tools) are stripped from public storefront listings and stored inside <span className="font-mono text-[11px]">/productSecrets</span>. Download links unlock atomically only after a verified order is completed, and executable malware extensions are strictly blocked on upload.
+            Digital products (PDFs, ZIP archives, Excel workbooks, eBooks, HTML templates, and software tools) are stripped from public storefront listings and stored inside a locked fulfillment vault. Download links unlock atomically only after a verified order is completed, and executable malware extensions are strictly blocked on upload.
           </p>
         </div>
 

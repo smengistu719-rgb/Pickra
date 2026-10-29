@@ -43,7 +43,7 @@ service cloud.firestore {
         request.auth.token.email_verified == true &&
         request.auth.token.email is string &&
         request.auth.token.email.size() <= 254 &&
-        request.auth.token.email.lower() == 'mengistushimelis@gmail.com';
+        request.auth.token.email.lower() == 'shimelis.mengistu23@gmail.com';
     }
 
     function isAdmin() {

@@ -20,9 +20,10 @@ import {
 } from 'lucide-react';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import {
-  BOOTSTRAPPED_ADMIN_EMAIL,
-  OfferDraftInput,
   FirebaseProvider,
+  isAuthorizedOwnerEmail,
+  isOwnerAccountConfigured,
+  OfferDraftInput,
   useFirebaseApp,
 } from './context/FirebaseContext';
 import {
@@ -142,28 +143,24 @@ function PickraShell() {
     resetSectionHeader,
   } = useFirebaseApp();
 
-  const isOwnerEmailConfigured = Boolean(
-    BOOTSTRAPPED_ADMIN_EMAIL.trim().length > 0 &&
-      BOOTSTRAPPED_ADMIN_EMAIL.includes('@')
-  );
+  const isOwnerEmailConfigured = isOwnerAccountConfigured();
 
   const canAccessCreatorAdmin = Boolean(
     user &&
       !user.isAnonymous &&
       (isCreatorAdmin ||
         (isOwnerEmailConfigured &&
-          user.email?.toLowerCase() ===
-            BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase() &&
+          isAuthorizedOwnerEmail(user.email) &&
           user.emailVerified))
   );
 
-  // Allow verified admins/co-admins and unverified owner email (to complete verification) into Backend gate
+  // Allow verified admins/co-admins and unverified owner email (to complete verification at /admin) into Backend gate
   const canOpenBackendGate = Boolean(
     canAccessCreatorAdmin ||
       (isOwnerEmailConfigured &&
         user &&
         !user.isAnonymous &&
-        user.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase())
+        isAuthorizedOwnerEmail(user.email))
   );
 
   const blogModuleEnabled = siteConfig.blogEnabled !== false;
@@ -858,7 +855,7 @@ function PickraShell() {
             >
               Contact Us
             </button>
-            {canOpenBackendGate && (
+            {canAccessCreatorAdmin && (
               <button
                 type="button"
                 onClick={() => navigateToSection('studio')}
@@ -1013,7 +1010,7 @@ function PickraShell() {
               Write
             </button>
           )}
-          {canOpenBackendGate && (
+          {canAccessCreatorAdmin && (
             <button
               type="button"
               onClick={() => navigateToSection('studio')}
@@ -2559,7 +2556,7 @@ function PickraShell() {
                   Service Affiliate
                 </button>
               )}
-              {canOpenBackendGate && (
+              {canAccessCreatorAdmin && (
                 <button
                   type="button"
                   onClick={() => navigateToSection('studio')}
