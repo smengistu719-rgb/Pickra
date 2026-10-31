@@ -71,7 +71,7 @@ export const DIRTY_DOZEN_SUITE: DirtyDozenAssertion[] = [
     operation: 'create',
     expectedOutcome: 'PERMISSION_DENIED',
     enforcedGate:
-      'isBootstrappedAdmin() -> request.auth.token.email_verified == true && email.lower() == shimelis.mengistu23@gmail.com',
+      'isBootstrappedAdmin() -> request.auth.token.email_verified == true && hashing.sha256(email.lower()) == OWNER_SHA256',
   },
   {
     id: 3,
@@ -209,14 +209,21 @@ type AdminGateOutcome =
 
 function evaluateAdminRouteDecision(params: {
   ownerEmailConfigured: boolean;
-  user: null | { email: string; emailVerified: boolean; isAnonymous?: boolean };
+  user: null | {
+    email: string;
+    emailVerified: boolean;
+    isAnonymous?: boolean;
+    matchesOwnerDigest?: boolean;
+  };
   isCoAdmin: boolean;
 }): AdminGateOutcome {
   const { ownerEmailConfigured, user, isCoAdmin } = params;
   if (!user || user.isAnonymous) {
     return 'ADMIN_LOGIN_PORTAL';
   }
-  const matchesOwner = ownerEmailConfigured && isAuthorizedOwnerEmail(user.email);
+  const matchesOwner =
+    ownerEmailConfigured &&
+    (user.matchesOwnerDigest === true || isAuthorizedOwnerEmail(user.email));
   const isVerifiedOwner = matchesOwner && user.emailVerified;
   if (isVerifiedOwner || isCoAdmin) {
     return 'ADMIN_DASHBOARD_GRANTED';
@@ -275,19 +282,15 @@ async function runVerification() {
   console.log('  [PASS] /admin, /store, and Netlify SPA 200 fallback routes verified.');
 
   console.log('\n=== 2. Verifying /admin Portal Access Matrix & Zero-Exposure Owner Auth ===');
-  const authorizedOwnerEmail = 'shimelis.mengistu23@gmail.com';
-  const legacyOwnerEmail = 'mengistushimelis@gmail.com';
-
   assert.equal(isOwnerAccountConfigured(), true);
+  // Standard FIPS 180-4 / RFC 6234 SHA-256 test vector ('abc')
   assert.equal(
-    sha256Hex(authorizedOwnerEmail),
-    '03844f1798c966f370e7a75c6f9b45f7c53256ce99ee49bde9c598f20e8f649b'
+    sha256Hex('abc'),
+    'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'
   );
-  assert.equal(isAuthorizedOwnerEmail(authorizedOwnerEmail), true);
-  assert.equal(isAuthorizedOwnerEmail('Shimelis.Mengistu23@gmail.com'), true);
-  assert.equal(isAuthorizedOwnerEmail(legacyOwnerEmail), false);
-  assert.equal(sanitizePublicContactEmail(authorizedOwnerEmail), '');
-  assert.equal(sanitizePublicContactEmail(legacyOwnerEmail), '');
+  assert.equal(isAuthorizedOwnerEmail('buyer@example.com'), false);
+  assert.equal(isAuthorizedOwnerEmail('seller@example.com'), false);
+  assert.equal(isAuthorizedOwnerEmail(''), false);
   assert.equal(
     sanitizePublicContactEmail('support@example.com'),
     'support@example.com'
@@ -328,15 +331,11 @@ async function runVerification() {
   assert.equal(
     evaluateAdminRouteDecision({
       ownerEmailConfigured: true,
-      user: { email: legacyOwnerEmail, emailVerified: true },
-      isCoAdmin: false,
-    }),
-    'REDIRECT_ACCESS_DENIED'
-  );
-  assert.equal(
-    evaluateAdminRouteDecision({
-      ownerEmailConfigured: true,
-      user: { email: authorizedOwnerEmail, emailVerified: false },
+      user: {
+        email: 'owner@example.com',
+        emailVerified: false,
+        matchesOwnerDigest: true,
+      },
       isCoAdmin: false,
     }),
     'VERIFY_OWNER_EMAIL_GATE'
@@ -344,7 +343,11 @@ async function runVerification() {
   assert.equal(
     evaluateAdminRouteDecision({
       ownerEmailConfigured: false,
-      user: { email: authorizedOwnerEmail, emailVerified: true },
+      user: {
+        email: 'owner@example.com',
+        emailVerified: true,
+        matchesOwnerDigest: true,
+      },
       isCoAdmin: false,
     }),
     'REDIRECT_ACCESS_DENIED'
@@ -352,16 +355,20 @@ async function runVerification() {
   assert.equal(
     evaluateAdminRouteDecision({
       ownerEmailConfigured: true,
-      user: { email: 'Shimelis.Mengistu23@gmail.com', emailVerified: true },
+      user: {
+        email: 'owner@example.com',
+        emailVerified: true,
+        matchesOwnerDigest: true,
+      },
       isCoAdmin: false,
     }),
     'ADMIN_DASHBOARD_GRANTED'
   );
   console.log(
-    '  [PASS] Logged-out, Buyer, Seller, Promoter, Revoked Legacy Email, Unverified Owner, and Verified Admin gates verified.'
+    '  [PASS] Logged-out, Buyer, Seller, Promoter, Unconfigured Owner, Unverified Owner, and Verified Admin gates verified.'
   );
 
-  console.log('\n=== 3. Static Audit of firestore.rules & Client Source Confidentiality ===');
+  console.log('\n=== 3. Static Audit of firestore.rules & Codebase Personal-Detail Hygiene ===');
   const rulesSrc = fs.readFileSync('firestore.rules', 'utf8');
   assert.match(
     rulesSrc,
@@ -370,20 +377,20 @@ async function runVerification() {
   );
   assert.match(
     rulesSrc,
-    /request\.auth\.token\.email\.lower\(\) == 'shimelis\.mengistu23@gmail\.com'/,
-    'isBootstrappedAdmin must enforce case-insensitive verified owner email shimelis.mengistu23@gmail.com'
+    /hashing\.sha256\(request\.auth\.token\.email\.lower\(\)\)\.toHexString\(\)\.lower\(\)\s*==\s*'03844f1798c966f370e7a75c6f9b45f7c53256ce99ee49bde9c598f20e8f649b'/,
+    'isBootstrappedAdmin must verify owner via SHA-256 digest without plaintext personal email'
   );
   assert.doesNotMatch(
     rulesSrc,
-    /mengistushimelis@gmail\.com/i,
-    'firestore.rules must not grant admin access to legacy email'
+    /@gmail\.com/i,
+    'firestore.rules must not contain plaintext personal Gmail addresses'
   );
   assert.match(
     rulesSrc,
     /existing\(\)\.status in \['published', 'active', 'approved'\]/,
     'directProducts must allow public reads for published/active/approved status'
   );
-  console.log('  [PASS] firestore.rules static zero-trust invariants verified.');
+  console.log('  [PASS] firestore.rules static zero-trust & zero-plaintext-PII invariants verified.');
 
   console.log('\n=== 4. Live Firestore Verification — Persona 1: Logged-Out Visitor ===');
   const app = initializeApp(firebaseConfig, 'verification_runner');

@@ -43,7 +43,8 @@ service cloud.firestore {
         request.auth.token.email_verified == true &&
         request.auth.token.email is string &&
         request.auth.token.email.size() <= 254 &&
-        request.auth.token.email.lower() == 'shimelis.mengistu23@gmail.com';
+        hashing.sha256(request.auth.token.email.lower()).toHexString().lower() ==
+          '03844f1798c966f370e7a75c6f9b45f7c53256ce99ee49bde9c598f20e8f649b';
     }
 
     function isAdmin() {

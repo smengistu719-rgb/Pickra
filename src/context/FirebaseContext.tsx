@@ -628,8 +628,8 @@ export const DEFAULT_ABOUT_STORY =
   'On the Pickras Blog, our editorial desk publishes long-form dispatches, field guides, and technical essays in distraction-free color themes. In the Pickras Store, verified independent creators sell original physical goods and vaulted digital downloads—receiving 90% net payouts while buyers enjoy frictionless guest or account checkout. Alongside the Store, our Product Affiliate and Service Affiliate directories curate vetted hardware, software, and specialist talent across Amazon, Digistore24, Fiverr, Upwork, and global partner networks with full FTC transparency.';
 
 export const DEFAULT_CONTACT_EMAIL = '';
-export const DEFAULT_CONTACT_PHONE = 'Direct Desk · Mon–Sat, 09:00–18:00 EAT';
-export const DEFAULT_CONTACT_LOCATION = 'Addis Ababa & Global Digital Desk';
+export const DEFAULT_CONTACT_PHONE = 'Direct Desk · Mon–Sat, 09:00–18:00 UTC';
+export const DEFAULT_CONTACT_LOCATION = 'Global Digital Publication & Commerce Desk';
 
 export const DEFAULT_PRIVACY_POLICY_SUMMARY =
   'Pickras enforces strict role-based data minimization across every module. Account emails, affiliate tracking tags, and seller payout credentials (Telebirr, Bank Transfer, CBE Birr, PayPal, Wise) are isolated inside owner-only private Firestore vaults and never exposed on public profiles. Guest and member Store orders are visible solely to the buyer, the fulfilling seller, and the Pickras administrator, using masked payment references rather than raw card numbers. Digital deliverables are protected in a locked vault until a verified purchase completes.';

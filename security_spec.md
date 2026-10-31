@@ -4,7 +4,7 @@
 
 1. **Global Default-Deny Catch-All:** `match /{document=**} { allow read, write: if false; }` is the first block inside `match /databases/{database}/documents`.
 2. **Trusted Admin Source of Truth:** Admin privileges derive strictly from either:
-   - `isBootstrappedAdmin()` (`request.auth.token.email_verified == true && request.auth.token.email.lower() == 'shimelis.mengistu23@gmail.com'`), or
+   - `isBootstrappedAdmin()` (`request.auth.token.email_verified == true && hashing.sha256(request.auth.token.email.lower()).toHexString().lower() == '03844f1798c966f370e7a75c6f9b45f7c53256ce99ee49bde9c598f20e8f649b'`), or
    - `exists(/databases/$(database)/documents/admins/$(request.auth.uid))`.
    Client-writable profile fields can never grant admin permissions.
 3. **PII Split-Collection Master Gate:**
@@ -35,7 +35,7 @@
 1. **Payload 1 — Shadow Field Privilege Escalation on `/users/user_1` (`create`):**
    `{ uid: "user_1", displayName: "Attacker", bio: "", isAdmin: true, createdAt: SERVER_TIME, updatedAt: SERVER_TIME }` -> **PERMISSION_DENIED** (`hasOnly` rejects `isAdmin`).
 2. **Payload 2 — Unverified Email Spoofing Website Owner on `/posts/post_1` (`create`):**
-   Auth token `{ email: "shimelis.mengistu23@gmail.com", email_verified: false }` -> **PERMISSION_DENIED** (`isBootstrappedAdmin()` requires `email_verified == true`).
+   Auth token `{ email: "<owner-email>", email_verified: false }` -> **PERMISSION_DENIED** (`isBootstrappedAdmin()` requires `email_verified == true`).
 3. **Payload 3 — Non-Owner Reading Private Seller Payout Account `/users/seller_a/private/info` (`get`):**
    Authenticated as `buyer_b` -> **PERMISSION_DENIED** (`isOwner(userId)` fails).
 4. **Payload 4 — Unactivated Buyer Creating Store Product `/directProducts/prod_unactivated` (`create`):**
